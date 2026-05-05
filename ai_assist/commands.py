@@ -11,6 +11,7 @@ INTERACTIVE_COMMANDS = [
     "/clear",
     "/kg-save",
     "/kg-viz",
+    "/awl-viz",
     "/eval-stats",
 ]
 
@@ -31,6 +32,7 @@ CLI_COMMANDS = [
     "/kg-show",
     "/cleanup-actions",
     "/kg-viz",
+    "/awl-viz",
     "/eval-stats",
     "/service",
     "/help",

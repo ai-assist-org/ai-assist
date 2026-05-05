@@ -1011,6 +1011,10 @@ async def tui_interactive_mode(agent: AiAssistAgent, state_manager: StateManager
                     await handle_kg_viz_command(kg_context.knowledge_graph if kg_context else None, console)
                     continue
 
+                if user_input.lower().startswith("/awl-viz"):
+                    await handle_awl_viz_command(user_input, console)
+                    continue
+
                 if user_input.lower().startswith("/kg-save"):
                     parts = user_input.split()
                     if len(parts) > 1:
@@ -1287,6 +1291,59 @@ async def handle_kg_viz_command(kg, console: Console):
     console.print(f"[dim]File: {filepath}[/dim]\n")
 
 
+async def handle_awl_viz_command(user_input: str, console: Console):
+    """Handle /awl-viz command"""
+    from .awl_visualization import discover_awl_scripts, open_awl_visualization
+
+    parts = user_input.split(maxsplit=1)
+    if len(parts) > 1:
+        script_path = parts[1].strip()
+        try:
+            filepath = open_awl_visualization(script_path)
+            console.print("\n[green]AWL visualization opened in browser[/green]")
+            console.print(f"[dim]File: {filepath}[/dim]\n")
+        except FileNotFoundError:
+            console.print(f"\n[red]AWL script not found: {script_path}[/red]\n")
+        except Exception as e:
+            console.print(f"\n[red]Error visualizing AWL script: {e}[/red]\n")
+        return
+
+    scripts = discover_awl_scripts()
+    if not scripts:
+        console.print("\n[yellow]No AWL scripts found.[/yellow]")
+        console.print("[dim]Usage: /awl-viz <script.awl>[/dim]")
+        console.print("[dim]Place .awl files in the current directory or ~/.ai-assist/[/dim]\n")
+        return
+
+    console.print("\n[cyan]Available AWL scripts:[/cyan]")
+    for i, script in enumerate(scripts, 1):
+        try:
+            rel = script.relative_to(Path.cwd())
+        except ValueError:
+            rel = script
+        console.print(f"  [bold]{i}[/bold]. {rel}")
+
+    console.print(f"\n[dim]Enter number (1-{len(scripts)}) or 'q' to cancel:[/dim]")
+    from prompt_toolkit import PromptSession as SelectSession
+
+    select_session: Any = SelectSession()
+    try:
+        choice = await select_session.prompt_async(">> ")
+        choice = choice.strip()
+        if choice.lower() in ("q", "quit", ""):
+            console.print("[dim]Cancelled[/dim]\n")
+            return
+        idx = int(choice) - 1
+        if 0 <= idx < len(scripts):
+            filepath = open_awl_visualization(str(scripts[idx]))
+            console.print("\n[green]AWL visualization opened in browser[/green]")
+            console.print(f"[dim]File: {filepath}[/dim]\n")
+        else:
+            console.print("[red]Invalid selection[/red]\n")
+    except (ValueError, EOFError, KeyboardInterrupt):
+        console.print("[dim]Cancelled[/dim]\n")
+
+
 async def handle_help_command(console: Console):
     """Handle /help command"""
     help_text = """
@@ -1299,6 +1356,7 @@ async def handle_help_command(console: Console):
 - `/clear` - Clear conversation memory (start fresh)
 - `/kg-save [on|off]` - Toggle knowledge graph auto-save
 - `/kg-viz` - Visualize knowledge graph in browser
+- `/awl-viz [script.awl]` - Visualize an AWL workflow in browser
 - `/prompts` - List available MCP prompts
 - `/prompt-info <server/prompt>` - Show detailed prompt info
 - `/server/prompt` - Load an MCP prompt (e.g., `/dci/rca`)

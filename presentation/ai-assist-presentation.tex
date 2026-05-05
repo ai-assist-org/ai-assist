@@ -1394,6 +1394,45 @@ One DSL for all agent orchestration --- goals reuse \texttt{@task}, \texttt{@if}
 \end{columns}
 \end{frame}
 
+% ── Slide: AWL Workflow Visualization ─────────────────────────────
+\begin{frame}[fragile]{AWL Workflow Visualization}
+\textbf{Interactive flowchart diagrams for AWL workflows}
+
+\medskip
+\begin{columns}[T]
+\begin{column}{0.48\textwidth}
+\textbf{Features}
+\begin{itemize}\small
+  \item \texttt{/awl-viz} command opens flowchart in browser
+  \item Dagre + D3.js for automatic graph layout
+  \item Task blocks connected by arrows
+  \item \alert{Variable names} shown on edges (data flow)
+  \item If/else as diamond decision nodes with branches
+  \item Loop/while as dashed-border clusters with back-arrows
+  \item Mouse-over tooltips with full task details
+  \item Zoom and pan support
+\end{itemize}
+\end{column}
+\begin{column}{0.48\textwidth}
+\textbf{Usage}
+\begin{lstlisting}[style=code,language={}]
+# Visualize a specific script
+/awl-viz workflow.awl
+
+# Discover available scripts
+/awl-viz
+
+# CLI mode
+uv run ai-assist /awl-viz workflow.awl
+\end{lstlisting}
+
+\medskip
+{\scriptsize\color{gray}
+Task blocks show brief description; hover reveals full goal, context, constraints, success criteria, hints, and exposed variables.}
+\end{column}
+\end{columns}
+\end{frame}
+
 % ══════════════════════════════════════════════════════════════════
 \section{What's Next?}
 % ══════════════════════════════════════════════════════════════════
@@ -1411,6 +1450,7 @@ One DSL for all agent orchestration --- goals reuse \texttt{@task}, \texttt{@if}
   \item \textcolor{green!60!black}{\checkmark} Extended context (1M tokens on demand) + adaptive limits
   \item \textcolor{green!60!black}{\checkmark} Multi-instance support
   \item \textcolor{green!60!black}{\checkmark} AWL workflow execution from prompts
+  \item \textcolor{green!60!black}{\checkmark} AWL workflow visualization (\texttt{/awl-viz})
 \end{itemize}
 \end{column}
 \begin{column}{0.48\textwidth}

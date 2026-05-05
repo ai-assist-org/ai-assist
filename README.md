@@ -133,6 +133,7 @@ uv run ai-assist
 - `/kg-save [on|off]` - Toggle knowledge graph auto-save
 - `@no-kg <query>` - Suppress KG context injection for a single query
 - `/kg-viz` - Visualize knowledge graph in browser
+- `/awl-viz [script.awl]` - Visualize AWL workflow as interactive flowchart in browser
 - `/prompts` - List available MCP prompts with arguments
 - `/prompt-info <server/prompt>` - Show detailed prompt info
 - `/skill/install <source>@<branch>` - Install an Agent Skill
@@ -525,6 +526,15 @@ Loops support `collect=<var>` to accumulate results across iterations (map-reduc
 
 See [docs/AWL_SPECIFICATIONS.md](docs/AWL_SPECIFICATIONS.md) for the full language reference.
 
+Visualize any AWL workflow as an interactive flowchart diagram in the browser:
+
+```bash
+uv run ai-assist /awl-viz workflow.awl    # Visualize a specific script
+uv run ai-assist /awl-viz                 # Discover and select from available scripts
+```
+
+The visualization shows task blocks connected by arrows with variable names on edges, if/else decision diamonds, loop clusters with back-arrows, and mouse-over tooltips with full task details.
+
 ### Knowledge Graph
 
 Query temporal data and track changes:
@@ -637,6 +647,7 @@ ai-assist/
 │   ├── awl_parser.py      # AWL workflow language parser
 │   ├── awl_expressions.py # AWL expression evaluator
 │   ├── awl_runtime.py     # AWL workflow execution engine
+│   ├── awl_visualization.py # AWL workflow flowchart visualization
 │   └── filesystem_tools.py # Filesystem operations
 ├── emacs/                  # Emacs major mode for AWL files
 ├── tests/                  # Test suite

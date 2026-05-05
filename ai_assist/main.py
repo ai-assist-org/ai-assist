@@ -760,6 +760,7 @@ async def main_async():
                 print("  /kg-changes [hrs]  - Show recent changes (default: 1 hour)")
                 print("  /kg-show <id>      - Show entity details with context")
                 print("  /kg-viz            - Visualize knowledge graph in browser")
+                print("  /awl-viz [script]  - Visualize an AWL workflow in browser")
                 print("  /cleanup-actions   - Archive old completed/failed actions")
                 print("  /eval-stats        - Show evaluation metrics from query traces")
                 print("  /service <sub> [dir] [rpts]   - Manage systemd user service")
@@ -836,6 +837,39 @@ async def main_async():
                 filepath = open_kg_visualization(knowledge_graph)
                 print("Knowledge graph visualization opened in browser")
                 print(f"File: {filepath}")
+            elif command == "awl-viz":
+                from pathlib import Path
+
+                from .awl_visualization import discover_awl_scripts, open_awl_visualization
+
+                if len(sys.argv) > 2:
+                    filepath = open_awl_visualization(sys.argv[2])
+                    print("AWL visualization opened in browser")
+                    print(f"File: {filepath}")
+                else:
+                    scripts = discover_awl_scripts()
+                    if not scripts:
+                        print("No AWL scripts found.")
+                        print("Usage: ai-assist /awl-viz <script.awl>")
+                        sys.exit(0)
+                    print("Available AWL scripts:")
+                    for i, script in enumerate(scripts, 1):
+                        try:
+                            rel = script.relative_to(Path.cwd())
+                        except ValueError:
+                            rel = script
+                        print(f"  {i}. {rel}")
+                    choice = input(f"\nEnter number (1-{len(scripts)}) or 'q' to cancel: ").strip()
+                    if choice.lower() in ("q", "quit", ""):
+                        sys.exit(0)
+                    idx = int(choice) - 1
+                    if 0 <= idx < len(scripts):
+                        filepath = open_awl_visualization(str(scripts[idx]))
+                        print("AWL visualization opened in browser")
+                        print(f"File: {filepath}")
+                    else:
+                        print("Invalid selection")
+                        sys.exit(1)
             elif command == "eval-stats":
                 eval_stats_command()
             elif command == "cleanup-actions":
