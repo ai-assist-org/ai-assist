@@ -1,9 +1,11 @@
 """Tests for task runner"""
 
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from ai_assist.event_sources import EventContext
 from ai_assist.state import StateManager
 from ai_assist.task_runner import TaskResult, TaskRunner
 from ai_assist.tasks import TaskDefinition
@@ -381,3 +383,132 @@ async def test_awl_start_workflow_runs_via_runtime(mock_agent, state_manager, tm
 
     assert result.success is True
     mock_agent.query.assert_called_once()
+
+
+# Event context tests
+
+
+def _make_event_context(**kwargs) -> EventContext:
+    defaults = {
+        "source_type": "mqtt",
+        "event_type": "message",
+        "payload": "CPU usage 95%",
+        "metadata": {"topic": "alerts/cpu", "qos": 0},
+        "timestamp": datetime(2026, 5, 5, 12, 0, 0),
+    }
+    defaults.update(kwargs)
+    return EventContext(**defaults)
+
+
+@pytest.mark.asyncio
+async def test_run_with_event_context_substitutes_vars(mock_agent, state_manager):
+    """Event context variables should be substituted in prompt"""
+    task_def = TaskDefinition(
+        name="MQTT Handler",
+        prompt="Analyze alert: ${event.payload} from ${event.topic}",
+        trigger={"type": "mqtt", "topic": "alerts/#"},
+        notify=False,
+    )
+
+    mock_agent.query.return_value = "Alert analyzed"
+    event = _make_event_context()
+
+    runner = TaskRunner(task_def, mock_agent, state_manager)
+    result = await runner.run(event_context=event)
+
+    assert result.success is True
+    called_prompt = mock_agent.query.call_args[0][0]
+    assert "CPU usage 95%" in called_prompt
+    assert "alerts/cpu" in called_prompt
+    assert "${event.payload}" not in called_prompt
+
+
+@pytest.mark.asyncio
+async def test_run_without_event_context_backward_compat(mock_agent, state_manager):
+    """run() without event_context should work unchanged"""
+    task_def = TaskDefinition(
+        name="Timer Task",
+        prompt="Check DCI failures",
+        interval="5m",
+    )
+
+    mock_agent.query.return_value = "No failures"
+
+    runner = TaskRunner(task_def, mock_agent, state_manager)
+    result = await runner.run()
+
+    assert result.success is True
+    assert result.output == "No failures"
+
+
+@pytest.mark.asyncio
+async def test_run_with_event_context_records_source_in_history(mock_agent, state_manager):
+    """Event source info should be recorded in state history"""
+    task_def = TaskDefinition(
+        name="MQTT Task",
+        prompt="Handle: ${event.payload}",
+        trigger={"type": "mqtt", "topic": "t"},
+        notify=False,
+    )
+
+    mock_agent.query.return_value = "Done"
+    event = _make_event_context()
+
+    runner = TaskRunner(task_def, mock_agent, state_manager)
+    await runner.run(event_context=event)
+
+    history = runner.get_history(limit=1)
+    assert len(history) == 1
+    result_data = history[0].get("result", history[0])
+    assert result_data.get("event_source") == "mqtt"
+
+
+@pytest.mark.asyncio
+async def test_run_with_event_context_publishes_bridge_event(mock_agent, state_manager, tmp_path):
+    """When notify=True and event_context present, should publish BridgeEvent"""
+    task_def = TaskDefinition(
+        name="MQTT Handler",
+        prompt="Analyze: ${event.payload}",
+        trigger={"type": "mqtt", "topic": "alerts/#"},
+        notify=True,
+    )
+
+    mock_agent.query.return_value = "Alert resolved"
+    event = _make_event_context()
+
+    with patch("ai_assist.task_runner.NotificationDispatcher") as mock_nd_cls:
+        mock_nd_cls.return_value.dispatch = AsyncMock(return_value={})
+
+        with patch("ai_assist.task_runner.BridgePublisher") as mock_pub_cls:
+            mock_pub = MagicMock()
+            mock_pub.publish = AsyncMock()
+            mock_pub_cls.return_value = mock_pub
+
+            runner = TaskRunner(task_def, mock_agent, state_manager)
+            result = await runner.run(event_context=event)
+
+            assert result.success is True
+            mock_pub.publish.assert_called_once()
+            bridge_event = mock_pub.publish.call_args[0][0]
+            assert bridge_event.source_task == "MQTT Handler"
+            assert bridge_event.source_type == "mqtt"
+
+
+@pytest.mark.asyncio
+async def test_substitute_event_vars_with_source_type(mock_agent, state_manager):
+    """${event.source_type} should be substituted"""
+    task_def = TaskDefinition(
+        name="Test",
+        prompt="Source: ${event.source_type}",
+        trigger={"type": "dbus"},
+        notify=False,
+    )
+
+    mock_agent.query.return_value = "ok"
+    event = _make_event_context(source_type="dbus")
+
+    runner = TaskRunner(task_def, mock_agent, state_manager)
+    await runner.run(event_context=event)
+
+    called_prompt = mock_agent.query.call_args[0][0]
+    assert "Source: dbus" in called_prompt

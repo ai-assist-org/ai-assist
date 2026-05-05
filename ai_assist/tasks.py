@@ -12,11 +12,12 @@ import yaml
 
 @dataclass
 class TaskDefinition:
-    """Definition of a user-defined periodic task"""
+    """Definition of a user-defined periodic task or event-triggered task"""
 
     name: str
     prompt: str
-    interval: str  # e.g., "5m", "1h", "morning on weekdays", "9:00 on monday,friday"
+    interval: str | None = None  # e.g., "5m", "1h", "morning on weekdays"
+    trigger: dict[str, Any] | None = None  # e.g., {"type": "mqtt", "topic": "alerts/#"}
     description: str | None = None
     enabled: bool = True
     conditions: list[dict] = field(default_factory=list)
@@ -28,19 +29,29 @@ class TaskDefinition:
     notification_channels: list[str] = field(default_factory=lambda: ["console"])
 
     @property
+    def is_event_triggered(self) -> bool:
+        return self.trigger is not None
+
+    @property
     def interval_seconds(self) -> int:
         """Convert interval string to seconds (for simple intervals)"""
+        if self.interval is None:
+            raise ValueError("Event-triggered tasks have no interval")
         return TaskLoader.parse_interval(self.interval)
 
     @property
     def is_interval_with_range(self) -> bool:
         """Check if this is an interval-with-range schedule (e.g. '1h between 9:00 and 23:00')"""
+        if self.interval is None:
+            return False
         lower = self.interval.lower()
         return " between " in lower and " and " in lower
 
     @property
     def is_time_based(self) -> bool:
         """Check if this is a time-based schedule"""
+        if self.interval is None:
+            return False
         return " on " in self.interval.lower() and not self.is_interval_with_range
 
     @property
@@ -76,7 +87,8 @@ class TaskDefinition:
         return cls(
             name=task_data["name"],
             prompt=task_data["prompt"],
-            interval=task_data["interval"],
+            interval=task_data.get("interval"),
+            trigger=task_data.get("trigger"),
             description=task_data.get("description"),
             enabled=task_data.get("enabled", True),
             conditions=task_data.get("conditions", []),
@@ -91,8 +103,16 @@ class TaskDefinition:
             raise ValueError("Task name is required")
         if not self.prompt:
             raise ValueError("Task prompt is required")
-        if not self.interval:
-            raise ValueError("Task interval is required")
+
+        if self.interval is None and self.trigger is None:
+            raise ValueError("Task must have either 'interval' or 'trigger'")
+        if self.interval is not None and self.trigger is not None:
+            raise ValueError("Task cannot have both 'interval' and 'trigger'")
+
+        if self.trigger is not None:
+            if "type" not in self.trigger:
+                raise ValueError("Trigger must have a 'type' field")
+            return
 
         # Validate MCP prompt format if applicable
         if self.is_mcp_prompt:
@@ -101,14 +121,14 @@ class TaskDefinition:
             except ValueError as e:
                 raise ValueError(f"Invalid MCP prompt reference: {e}") from e
 
-        # Validate interval format
+        # Validate interval format (trigger tasks return early above, so interval is set here)
+        assert self.interval is not None
         try:
             if self.is_interval_with_range:
                 TaskLoader.parse_interval_with_range(self.interval)
             elif self.is_time_based:
                 TaskLoader.parse_time_schedule(self.interval)
             else:
-                # Validate interval_seconds can be computed
                 _ = self.interval_seconds
         except ValueError as e:
             raise ValueError(f"Invalid interval '{self.interval}': {e}") from e

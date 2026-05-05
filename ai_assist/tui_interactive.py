@@ -606,6 +606,12 @@ async def tui_interactive_mode(agent: AiAssistAgent, state_manager: StateManager
     notification_watcher = NotificationWatcher(console)
     await notification_watcher.start()
 
+    # Start event bridge watching (events from /monitor process)
+    from .event_bridge import BridgeWatcher
+
+    bridge_watcher = BridgeWatcher(console, get_config_dir() / "events.jsonl")
+    await bridge_watcher.start()
+
     # Inner execution uses the agent's renderer (set by query_with_feedback)
     agent.on_inner_execution = agent.renderer.on_inner_execution
 
@@ -1117,6 +1123,7 @@ async def tui_interactive_mode(agent: AiAssistAgent, state_manager: StateManager
         # Stop watchers on exit
         await config_watcher.stop()
         await notification_watcher.stop()
+        await bridge_watcher.stop()
 
         # Restore terminal to the state saved before prompt_toolkit modified it
         if saved_terminal_attrs is not None:

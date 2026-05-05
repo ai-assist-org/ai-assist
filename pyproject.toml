@@ -19,6 +19,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+mqtt = ["aiomqtt>=2.0.0"]
+dbus = ["dbus-next>=0.2.3"]
 dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.24.0",
@@ -146,7 +148,7 @@ exclude = [
 ]
 
 [[tool.mypy.overrides]]
-module = ["mcp.*", "watchdog.*", "sqlite_vec.*", "fastembed.*"]
+module = ["mcp.*", "watchdog.*", "sqlite_vec.*", "fastembed.*", "aiomqtt.*", "dbus_next.*"]
 ignore_missing_imports = true
 
 [tool.pylint.main]

@@ -1,12 +1,16 @@
 """Execute user-defined tasks and track state"""
 
 import logging
+import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
 from .agent import AiAssistAgent
 from .conditions import ActionExecutor, ConditionEvaluator
+from .config import get_config_dir
+from .event_bridge import BridgeEvent, BridgePublisher
+from .event_sources import EventContext
 from .notification_dispatcher import Notification, NotificationDispatcher
 from .state import StateManager
 from .tasks import TaskDefinition
@@ -40,15 +44,27 @@ class TaskRunner:
         sanitized = "".join(c if c.isalnum() or c in "-_" else "_" for c in self.task_def.name)
         return f"task_{sanitized}"
 
-    async def run(self) -> TaskResult:
+    def _substitute_event_vars(self, prompt: str, event: EventContext) -> str:
+        prompt = prompt.replace("${event.payload}", event.payload)
+        prompt = prompt.replace("${event.source_type}", event.source_type)
+        prompt = prompt.replace("${event.timestamp}", event.timestamp.isoformat())
+        for key, value in event.metadata.items():
+            prompt = prompt.replace(f"${{event.{key}}}", str(value))
+        return prompt
+
+    async def run(self, event_context: EventContext | None = None) -> TaskResult:
         """Execute the task and return results"""
         timestamp = datetime.now()
 
         try:
+            prompt = self.task_def.prompt
+            if event_context is not None:
+                prompt = self._substitute_event_vars(prompt, event_context)
+
             # Detect and execute built-in, AWL goals, MCP prompts, or natural language
-            if self.task_def.prompt == "__builtin__:kg_synthesis":
+            if prompt == "__builtin__:kg_synthesis":
                 output = await self.agent._run_synthesis_from_kg()
-            elif self.task_def.prompt.endswith(".awl"):
+            elif prompt.endswith(".awl"):
                 output = await self._run_awl_script()
             elif self.task_def.is_mcp_prompt:
                 server_name, prompt_name = self.task_def.parse_mcp_prompt()
@@ -56,8 +72,7 @@ class TaskRunner:
                     server_name, prompt_name, self.task_def.prompt_arguments, max_turns=self.task_def.max_turns
                 )
             else:
-                # Existing natural language path
-                output = await self.agent.query(self.task_def.prompt, max_turns=self.task_def.max_turns)
+                output = await self.agent.query(prompt, max_turns=self.task_def.max_turns)
 
             evaluator = ConditionEvaluator()
             metadata = evaluator.extract_metadata(output)
@@ -85,15 +100,17 @@ class TaskRunner:
                 },
             )
 
-            self.state_manager.append_history(
-                self.state_key,
-                {
-                    "task_name": self.task_def.name,
-                    "success": True,
-                    "timestamp": timestamp.isoformat(),
-                    "metadata": metadata,
-                },
-            )
+            history_entry = {
+                "task_name": self.task_def.name,
+                "success": True,
+                "timestamp": timestamp.isoformat(),
+                "metadata": metadata,
+            }
+            if event_context is not None:
+                history_entry["event_source"] = event_context.source_type
+                history_entry["event_metadata"] = event_context.metadata
+
+            self.state_manager.append_history(self.state_key, history_entry)
 
             result = TaskResult(
                 task_name=self.task_def.name, success=True, output=output, timestamp=timestamp, metadata=metadata
@@ -102,6 +119,10 @@ class TaskRunner:
             # Dispatch notification if configured
             if self.task_def.notify:
                 await self._send_notification(result)
+
+            # Publish bridge event for interactive process
+            if self.task_def.notify and event_context is not None:
+                await self._publish_bridge_event(result, event_context)
 
             return result
 
@@ -200,6 +221,26 @@ class TaskRunner:
     def get_history(self, limit: int = 10) -> list[dict]:
         """Get historical execution results"""
         return self.state_manager.get_history(self.state_key, limit=limit)
+
+    async def _publish_bridge_event(self, result: TaskResult, event_context: EventContext) -> None:
+        """Publish a bridge event for the interactive process"""
+        try:
+            events_file = get_config_dir() / "events.jsonl"
+            publisher = BridgePublisher(events_file)
+            bridge_event = BridgeEvent(
+                id=f"evt-{uuid.uuid4().hex[:12]}",
+                timestamp=result.timestamp,
+                type="notify",
+                source_task=self.task_def.name,
+                source_type=event_context.source_type,
+                title=f"Event: {self.task_def.name}",
+                body=result.output[:500] if result.output else "",
+                event_data=event_context.metadata,
+                level="success" if result.success else "error",
+            )
+            await publisher.publish(bridge_event)
+        except Exception:
+            logger.exception("Failed to publish bridge event")
 
     async def _send_failure_notification(self, result: TaskResult):
         """Always send a notification on task failure, regardless of notify setting.

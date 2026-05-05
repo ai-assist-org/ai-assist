@@ -9,6 +9,7 @@ from typing import Any
 from .agent import AiAssistAgent
 from .config import get_config_dir
 from .config_watcher import ConfigWatcher
+from .event_sources import EventSourceManager
 from .file_watchdog import FileWatchdog
 from .knowledge_graph import KnowledgeGraph
 from .schedule_loader import ScheduleLoader
@@ -56,6 +57,9 @@ class MonitoringScheduler:
         self.file_watchdog: FileWatchdog | None = None
         self.config_watcher: ConfigWatcher | None = None
 
+        # Event source manager (MQTT, DBUS, etc.)
+        self.event_source_manager: EventSourceManager | None = None
+
         # Scheduled actions (one-shot future executions)
         self.action_manager: Any = None
         self.action_task_handle: asyncio.Task | None = None
@@ -76,10 +80,12 @@ class MonitoringScheduler:
             runners = []
             for task_def in task_defs:
                 if task_def.enabled:
-                    # Use TaskRunner - agent decides automatically when to use KG
                     runner = TaskRunner(task_def, self.agent, self.state_manager)
                     runners.append(runner)
-                    print(f"Loaded monitor: {task_def.name} (interval: {task_def.interval})")
+                    if task_def.is_event_triggered and task_def.trigger is not None:
+                        print(f"Loaded monitor: {task_def.name} (trigger: {task_def.trigger.get('type', '?')})")
+                    else:
+                        print(f"Loaded monitor: {task_def.name} (interval: {task_def.interval})")
                 else:
                     print(f"Skipping disabled monitor: {task_def.name}")
 
@@ -104,7 +110,10 @@ class MonitoringScheduler:
                 if task_def.enabled:
                     runner = TaskRunner(task_def, self.agent, self.state_manager)
                     runners.append(runner)
-                    print(f"Loaded task: {task_def.name} (interval: {task_def.interval})")
+                    if task_def.is_event_triggered and task_def.trigger is not None:
+                        print(f"Loaded task: {task_def.name} (trigger: {task_def.trigger.get('type', '?')})")
+                    else:
+                        print(f"Loaded task: {task_def.name} (interval: {task_def.interval})")
                 else:
                     print(f"Skipping disabled task: {task_def.name}")
 
@@ -120,6 +129,9 @@ class MonitoringScheduler:
         print("=" * 60)
 
         try:
+            # Stop event sources before reload
+            await self._stop_event_sources()
+
             # Load new schedules
             new_monitors = self._load_monitors()
             new_tasks = self._load_user_tasks()
@@ -140,8 +152,10 @@ class MonitoringScheduler:
             self.monitors = new_monitors
             self.user_tasks = new_tasks
 
-            # Restart monitor tasks
+            # Restart timer-based monitor tasks
             for monitor in self.monitors:
+                if monitor.task_def.is_event_triggered:
+                    continue
                 interval = (
                     0
                     if (monitor.task_def.is_time_based or monitor.task_def.is_interval_with_range)
@@ -152,8 +166,10 @@ class MonitoringScheduler:
                 )
                 self.monitor_handles.append(task_handle)
 
-            # Restart user tasks
+            # Restart timer-based user tasks
             for task_runner in self.user_tasks:
+                if task_runner.task_def.is_event_triggered:
+                    continue
                 interval = (
                     0
                     if (task_runner.task_def.is_time_based or task_runner.task_def.is_interval_with_range)
@@ -166,11 +182,14 @@ class MonitoringScheduler:
                 )
                 self.user_task_handles.append(task_handle)
 
+            # Restart event sources
+            await self._start_event_sources()
+
             print(f"✓ Reloaded {len(new_monitors)} monitor(s) and {len(new_tasks)} task(s)")
             print("=" * 60 + "\n")
 
-        except Exception as e:
-            logger.exception("Failed to reload schedules: %s; keeping existing schedules", e)
+        except Exception:
+            logger.exception("Failed to reload schedules; keeping existing schedules")
             print("=" * 60 + "\n")
 
     async def _wait_for_mcp_servers(self, timeout_seconds: float = 30.0) -> bool:
@@ -213,7 +232,10 @@ class MonitoringScheduler:
 
         tasks = []
 
+        timer_monitor_count = 0
         for monitor in self.monitors:
+            if monitor.task_def.is_event_triggered:
+                continue
             interval = (
                 0
                 if (monitor.task_def.is_time_based or monitor.task_def.is_interval_with_range)
@@ -224,11 +246,15 @@ class MonitoringScheduler:
             )
             tasks.append(task_handle)
             self.monitor_handles.append(task_handle)
+            timer_monitor_count += 1
 
-        if self.monitors:
-            print(f"Scheduled {len(self.monitors)} monitors")
+        if timer_monitor_count:
+            print(f"Scheduled {timer_monitor_count} timer-based monitors")
 
+        timer_task_count = 0
         for task_runner in self.user_tasks:
+            if task_runner.task_def.is_event_triggered:
+                continue
             interval = (
                 0
                 if (task_runner.task_def.is_time_based or task_runner.task_def.is_interval_with_range)
@@ -239,9 +265,13 @@ class MonitoringScheduler:
             )
             tasks.append(task_handle)
             self.user_task_handles.append(task_handle)
+            timer_task_count += 1
 
-        if self.user_tasks:
-            print(f"Scheduled {len(self.user_tasks)} user-defined tasks")
+        if timer_task_count:
+            print(f"Scheduled {timer_task_count} timer-based tasks")
+
+        # Start event source manager for event-triggered tasks
+        await self._start_event_sources()
 
         # Watch schedules.json for changes using OS-level file watching
         if self.schedule_file:
@@ -284,6 +314,37 @@ class MonitoringScheduler:
             print(f"Watching {action_file} for changes...")
 
         await asyncio.gather(*tasks)
+
+    async def _start_event_sources(self) -> None:
+        """Configure and start event sources for event-triggered tasks"""
+        event_configs = self.loader.load_event_source_configs()
+
+        triggered_tasks: list[tuple[str, dict, TaskRunner]] = []
+        for runner in self.monitors + self.user_tasks:
+            if runner.task_def.is_event_triggered and runner.task_def.trigger is not None:
+                triggered_tasks.append((runner.task_def.name, runner.task_def.trigger, runner))
+
+        if not triggered_tasks:
+            return
+
+        if not event_configs:
+            logger.warning(
+                "%d event-triggered task(s) configured but no event_sources defined in schedules.json",
+                len(triggered_tasks),
+            )
+            return
+
+        self.event_source_manager = EventSourceManager()
+        self.event_source_manager.register_available_sources(event_configs)
+        self.event_source_manager.configure(triggered_tasks)
+        await self.event_source_manager.start()
+        print(f"Started {len(self.event_source_manager._sources)} event source(s) for {len(triggered_tasks)} task(s)")
+
+    async def _stop_event_sources(self) -> None:
+        """Stop event source manager"""
+        if self.event_source_manager:
+            await self.event_source_manager.stop()
+            self.event_source_manager = None
 
     async def _schedule_task(self, name: str, task_func, interval: int, task_def=None):
         """Schedule a periodic task"""
@@ -376,8 +437,9 @@ class MonitoringScheduler:
         missed = []
 
         for runner in self.monitors + self.user_tasks:
-            if not runner.task_def.is_time_based:
+            if runner.task_def.is_event_triggered or not runner.task_def.is_time_based:
                 continue
+            assert runner.task_def.interval is not None
             try:
                 schedule = TaskLoader.parse_time_schedule(runner.task_def.interval)
             except ValueError:
@@ -450,6 +512,9 @@ class MonitoringScheduler:
         """Stop the monitoring loop"""
         self.running = False
         print("Stopping monitoring scheduler...")
+
+        # Stop event sources
+        await self._stop_event_sources()
 
         # Stop scheduled action executor
         if self.action_task_handle:

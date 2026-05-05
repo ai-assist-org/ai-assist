@@ -32,12 +32,13 @@ This document provides guidance for AI agents and developers working on the ai-a
 └────────────────┘ └────────────┘ └────────────────┘
 ```
 
-The system has four major subsystems:
+The system has five major subsystems:
 
 1. **MCP Integration** (`agent.py`): Connects to MCP servers (DCI, Jira, etc.) and routes tool calls using the format `server_name__tool_name`
 2. **AWL Runtime** (`awl_parser.py`, `awl_runtime.py`, `awl_ast.py`, `awl_expressions.py`): Agent Workflow Language interpreter for multi-step workflows
 3. **Knowledge Graph** (`knowledge_graph.py`): Temporal SQLite database with vector embeddings for entity tracking, change detection, and conversation memory
 4. **Agent Skills** (`skills_loader.py`, `skills_manager.py`): Loads agentskills.io-compliant skills with optional sandboxed script execution
+5. **Event Sources** (`event_sources.py`, `event_source_mqtt.py`, `event_source_dbus.py`): Pluggable event system for reactive task triggering via MQTT, D-Bus, etc.
 
 Key interaction modes:
 - **Interactive** (`tui_interactive.py`): Rich TUI with streaming responses, history, tab completion
@@ -108,6 +109,30 @@ Cross-platform background service installation for persistent monitoring:
 
 Files: `service.py`
 
+### Event Sources
+
+Pluggable event system for reactive task triggering. Tasks can use `trigger` instead of `interval` to fire on external events rather than timers.
+
+- **EventSource** ABC: `start()`, `stop()`, `subscribe()` — same pattern as `ServiceBackend`
+- **EventSourceManager**: registry of sources, routes events to TaskRunners
+- **MQTT** (`event_source_mqtt.py`): subscribes to MQTT topics, dispatches on message — optional dep `aiomqtt`
+- **D-Bus** (`event_source_dbus.py`): subscribes to D-Bus signals, dispatches on match — optional dep `dbus-next`
+- **Event bridge** (`event_bridge.py`): `/monitor` publishes `BridgeEvent` to `~/.ai-assist/events.jsonl`, `/interactive` watches and displays
+
+Event context (`${event.payload}`, `${event.topic}`, etc.) is substituted into task prompts before execution.
+
+Configuration in `schedules.json`:
+```json
+{
+  "event_sources": {"mqtt": {"broker": "localhost", "port": 1883}},
+  "monitors": [
+    {"name": "Alert", "prompt": "Handle: ${event.payload}", "trigger": {"type": "mqtt", "topic": "alerts/#"}}
+  ]
+}
+```
+
+Files: `event_sources.py`, `event_source_mqtt.py`, `event_source_dbus.py`, `event_bridge.py`
+
 ### Configuration & State
 
 **Configuration sources** (precedence order):
@@ -126,6 +151,7 @@ Files: `service.py`
 - `allowed_commands.json` - User-approved shell commands
 - `skill_env.json` - Per-skill env var allowlists
 - `scheduled-actions.json` - One-time future actions
+- `events.jsonl` - Event bridge (monitor→interactive IPC)
 - `interactive_history.txt` - Command history
 
 Files: `config.py`, `state.py`, `config_watcher.py`, `file_watchdog.py`
@@ -551,6 +577,10 @@ ai_assist/
 ├── skills_*.py                # Agent Skills loader and manager
 ├── tui*.py                    # Terminal UI components
 ├── monitors.py, tasks.py      # Monitoring and task execution
+├── event_sources.py           # Pluggable event source system (ABC, manager)
+├── event_source_mqtt.py       # MQTT event source (optional: aiomqtt)
+├── event_source_dbus.py       # D-Bus event source (optional: dbus-next)
+├── event_bridge.py            # Monitor→interactive IPC via events.jsonl
 ├── *_tools.py                 # Tool implementations (report, schedule, KG, filesystem, etc.)
 ├── scheduled_actions.py       # One-time future actions
 ├── notification_*.py          # Notification channels and dispatcher
