@@ -343,6 +343,41 @@ When `notify` is true, you'll receive notifications on task completion via:
 - **file**: Append to `~/.ai-assist/notifications.log`
 - **console**: Display in /monitor output
 - Interactive mode automatically shows notifications from any channel in the TUI
+- Recent notifications (last 15 min) are injected into the interactive agent's context, so you can ask follow-up questions
+
+### Event-Driven Actions
+
+React to external events via MQTT or D-Bus. Actions in `~/.ai-assist/event-schedules.json` use a unified **trigger + prompt** model:
+
+```json
+{
+  "event_sources": {
+    "dbus": { "bus": "system" }
+  },
+  "actions": [
+    {
+      "name": "USB Filesystem Mounted",
+      "trigger": {
+        "type": "dbus",
+        "interface": "org.freedesktop.DBus.Properties",
+        "signal": "PropertiesChanged",
+        "payload_contains": "MountPoints"
+      },
+      "prompt": "A USB filesystem was just mounted. Describe the device.",
+      "notify": true,
+      "notification_channels": ["desktop", "console", "file"]
+    }
+  ]
+}
+```
+
+**Trigger types**: `interval`, `schedule`, `interval_range`, `once`, `mqtt`, `dbus`
+
+**Event filtering**: `payload_contains` and `payload_regex` filter events before execution. Burst signals are debounced (3s window).
+
+**Optional dependencies**: `pip install ai-assist[mqtt]` for MQTT, `pip install ai-assist[dbus]` for D-Bus.
+
+The agent can also create/update/delete actions at runtime via built-in tools (`internal__create_action`, `internal__list_actions`, etc.).
 
 ### Scheduled Actions
 

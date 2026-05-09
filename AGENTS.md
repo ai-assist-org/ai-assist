@@ -134,6 +134,48 @@ Configuration in `event-schedules.json`:
 }
 ```
 
+**Example: USB device monitoring via D-Bus**
+
+React to USB filesystem mount/unmount events on Linux:
+```json
+{
+  "event_sources": {
+    "dbus": { "bus": "system" }
+  },
+  "actions": [
+    {
+      "name": "USB Filesystem Mounted",
+      "trigger": {
+        "type": "dbus",
+        "interface": "org.freedesktop.DBus.Properties",
+        "signal": "PropertiesChanged",
+        "payload_contains": "MountPoints"
+      },
+      "prompt": "A USB filesystem was just mounted. Describe the mount point and device.",
+      "notify": true,
+      "notification_channels": ["desktop", "console", "file"]
+    },
+    {
+      "name": "USB Device Removed",
+      "trigger": {
+        "type": "dbus",
+        "interface": "org.freedesktop.DBus.ObjectManager",
+        "signal": "InterfacesRemoved",
+        "path": "/org/freedesktop/UDisks2",
+        "payload_contains": "Filesystem"
+      },
+      "prompt": "A USB filesystem was just removed. Describe what happened.",
+      "notify": true,
+      "notification_channels": ["desktop", "console", "file"]
+    }
+  ]
+}
+```
+
+Event-based actions support debouncing (3s window) to collapse burst signals. The `payload_contains` and `payload_regex` fields filter events by their content before execution.
+
+**Context injection**: recent notifications from `/monitor` are automatically injected into the interactive agent's system prompt (last 15 minutes), so the user can ask follow-up questions about events.
+
 Files: `action_model.py`, `action_engine.py`, `action_scheduler.py`, `action_loader.py`, `action_tools.py`, `event_sources.py`, `event_source_mqtt.py`, `event_source_dbus.py`
 
 ### Configuration & State

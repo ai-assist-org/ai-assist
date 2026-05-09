@@ -1059,6 +1059,56 @@ class AiAssistAgent:
         context_window = self.get_context_window_size()
         return last_input > context_window * self.OBSERVATION_MASKING_THRESHOLD
 
+    def _get_recent_notifications_context(self, max_age_minutes: int = 15, max_entries: int = 5) -> str:
+        """Read recent notifications from log and format as context section."""
+        import json as json_module
+        from datetime import datetime, timedelta
+
+        from .config import get_config_dir as _get_config_dir
+
+        log_file = _get_config_dir() / "notifications.log"
+        if not log_file.exists():
+            return ""
+
+        cutoff = datetime.now() - timedelta(minutes=max_age_minutes)
+        recent = []
+
+        try:
+            with open(log_file) as f:
+                for raw_line in f:
+                    line = raw_line.strip()
+                    if not line:
+                        continue
+                    try:
+                        entry = json_module.loads(line)
+                        ts = datetime.fromisoformat(entry["timestamp"])
+                        if ts >= cutoff:
+                            recent.append(entry)
+                    except (json_module.JSONDecodeError, KeyError, ValueError):
+                        continue
+        except OSError:
+            return ""
+
+        if not recent:
+            return ""
+
+        recent = recent[-max_entries:]
+
+        lines = [f"# Recent Notifications ({len(recent)} in the last {max_age_minutes} min)\n"]
+        lines.append(
+            "The /monitor process reported the following. You can reference this information if the user asks about it.\n"
+        )
+        for entry in recent:
+            level = entry.get("level", "info").upper()
+            title = entry.get("title", "")
+            message = entry.get("message", "")
+            ts = entry.get("timestamp", "")
+            preview = message[:300] + "..." if len(message) > 300 else message
+            lines.append(f"- [{level}] **{title}** ({ts})")
+            lines.append(f"  {preview}")
+
+        return "\n".join(lines)
+
     def _build_system_prompt(self) -> list[TextBlockParam]:
         """Build complete system prompt including identity and skills
 
@@ -1077,6 +1127,12 @@ class AiAssistAgent:
         prompt = identity_prompt
         if skills_section:
             prompt += f"\n\n{skills_section}"
+
+        # Add recent notifications context
+        if self.interactive_mode:
+            notifications_section = self._get_recent_notifications_context()
+            if notifications_section:
+                prompt += f"\n\n{notifications_section}"
 
         # Add planning guidance
         prompt += "\n\n# Planning\n\n"
