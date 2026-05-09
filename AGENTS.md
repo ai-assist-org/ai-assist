@@ -172,7 +172,26 @@ React to USB filesystem mount/unmount events on Linux:
 }
 ```
 
-Event-based actions support debouncing (3s window) to collapse burst signals. The `payload_contains` and `payload_regex` fields filter events by their content before execution.
+**Example: "Welcome back" briefing on screen unlock (GNOME)**
+```json
+{
+  "actions": [
+    {
+      "name": "Screen Locked",
+      "trigger": {"type": "dbus", "interface": "org.gnome.ScreenSaver", "signal": "ActiveChanged", "bus": "session", "payload_contains": "True"},
+      "prompt": "Save the current timestamp to the report screen-lock-time."
+    },
+    {
+      "name": "Welcome Back Briefing",
+      "trigger": {"type": "dbus", "interface": "org.gnome.ScreenSaver", "signal": "ActiveChanged", "bus": "session", "payload_contains": "False"},
+      "prompt": "The user unlocked their screen. Read screen-lock-time, check recent notifications, summarize what happened.",
+      "notify": true, "notification_channels": ["desktop", "console", "file"]
+    }
+  ]
+}
+```
+
+D-Bus triggers support per-trigger `bus` field (`system` or `session`) — one D-Bus source connects to both buses as needed. Event-based actions support debouncing (3s window) to collapse burst signals. The `payload_contains` and `payload_regex` fields filter events by their content before execution.
 
 **Context injection**: recent notifications from `/monitor` are automatically injected into the interactive agent's system prompt (last 15 minutes), so the user can ask follow-up questions about events.
 

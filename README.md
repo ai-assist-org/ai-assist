@@ -347,13 +347,13 @@ When `notify` is true, you'll receive notifications on task completion via:
 
 ### Event-Driven Actions
 
-React to external events via MQTT or D-Bus. Actions in `~/.ai-assist/event-schedules.json` use a unified **trigger + prompt** model:
+React to external events via MQTT or D-Bus. Actions in `~/.ai-assist/event-schedules.json` use a unified **trigger + prompt** model. D-Bus triggers support per-trigger bus selection (`system` or `session`).
+
+**Example: USB device monitoring**
 
 ```json
 {
-  "event_sources": {
-    "dbus": { "bus": "system" }
-  },
+  "event_sources": { "dbus": {} },
   "actions": [
     {
       "name": "USB Filesystem Mounted",
@@ -361,9 +361,43 @@ React to external events via MQTT or D-Bus. Actions in `~/.ai-assist/event-sched
         "type": "dbus",
         "interface": "org.freedesktop.DBus.Properties",
         "signal": "PropertiesChanged",
+        "bus": "system",
         "payload_contains": "MountPoints"
       },
       "prompt": "A USB filesystem was just mounted. Describe the device.",
+      "notify": true,
+      "notification_channels": ["desktop", "console", "file"]
+    }
+  ]
+}
+```
+
+**Example: "Welcome back" briefing on screen unlock**
+
+```json
+{
+  "actions": [
+    {
+      "name": "Screen Locked",
+      "trigger": {
+        "type": "dbus",
+        "interface": "org.gnome.ScreenSaver",
+        "signal": "ActiveChanged",
+        "bus": "session",
+        "payload_contains": "True"
+      },
+      "prompt": "Save the current timestamp to the report screen-lock-time."
+    },
+    {
+      "name": "Welcome Back Briefing",
+      "trigger": {
+        "type": "dbus",
+        "interface": "org.gnome.ScreenSaver",
+        "signal": "ActiveChanged",
+        "bus": "session",
+        "payload_contains": "False"
+      },
+      "prompt": "The user just unlocked their screen. Read the screen-lock-time report, check recent notifications, and give a brief summary of how long they were away and what happened.",
       "notify": true,
       "notification_channels": ["desktop", "console", "file"]
     }

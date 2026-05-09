@@ -12,14 +12,14 @@ logger = logging.getLogger(__name__)
 
 
 class DbusEventSource(EventSource):
-    """Event source that subscribes to D-Bus signals and dispatches them as events"""
+    """Event source that subscribes to D-Bus signals on session and/or system bus"""
 
     def __init__(self, config: dict[str, Any]) -> None:
         self.default_bus_type = config.get("bus", "session")
         self._subscriptions: list[tuple[str, dict[str, Any]]] = []
         self._dispatch: Callable[[str, EventContext], Awaitable[None]] | None = None
-        self._task: asyncio.Task | None = None
-        self._bus: Any = None
+        self._tasks: list[asyncio.Task[None]] = []
+        self._buses: list[Any] = []
 
     @property
     def name(self) -> str:
@@ -33,25 +33,40 @@ class DbusEventSource(EventSource):
 
     async def start(self, dispatch: Callable[[str, EventContext], Awaitable[None]]) -> None:
         self._dispatch = dispatch
-        self._task = asyncio.create_task(self._listen())
+
+        needed_buses = set()
+        for _task_name, trigger in self._subscriptions:
+            bus = trigger.get("bus", self.default_bus_type)
+            needed_buses.add(bus)
+
+        for bus_type_str in needed_buses:
+            subs = [
+                (name, trigger)
+                for name, trigger in self._subscriptions
+                if trigger.get("bus", self.default_bus_type) == bus_type_str
+            ]
+            task = asyncio.create_task(self._listen(bus_type_str, subs))
+            self._tasks.append(task)
 
     async def stop(self) -> None:
-        await self._cancel_task(self._task)
-        if self._bus:
-            self._bus.disconnect()
-            self._bus = None
+        for task in self._tasks:
+            await self._cancel_task(task)
+        self._tasks.clear()
+        for bus in self._buses:
+            bus.disconnect()
+        self._buses.clear()
 
-    async def _listen(self) -> None:
+    async def _listen(self, bus_type_str: str, subscriptions: list[tuple[str, dict[str, Any]]]) -> None:
         from dbus_next import BusType, Message, MessageType
         from dbus_next.aio import MessageBus
 
-        bus_type_str = self.default_bus_type
         bus_type = BusType.SYSTEM if bus_type_str == "system" else BusType.SESSION
-        self._bus = await MessageBus(bus_type=bus_type).connect()
+        bus = await MessageBus(bus_type=bus_type).connect()
+        self._buses.append(bus)
 
-        for _task_name, trigger in self._subscriptions:
+        for _task_name, trigger in subscriptions:
             rule = self._build_match_rule(trigger)
-            await self._bus.call(
+            await bus.call(
                 Message(
                     destination="org.freedesktop.DBus",
                     path="/org/freedesktop/DBus",
@@ -65,7 +80,7 @@ class DbusEventSource(EventSource):
         def on_message(msg: Message) -> bool:
             if msg.message_type != MessageType.SIGNAL:
                 return False
-            for task_name, trigger in self._subscriptions:
+            for task_name, trigger in subscriptions:
                 if self._signal_matches(msg, trigger):
                     event = EventContext(
                         source_type="dbus",
@@ -76,6 +91,7 @@ class DbusEventSource(EventSource):
                             "signal": msg.member,
                             "sender": msg.sender,
                             "path": msg.path,
+                            "bus": bus_type_str,
                         },
                         timestamp=datetime.now(),
                     )
@@ -83,11 +99,11 @@ class DbusEventSource(EventSource):
                         asyncio.ensure_future(self._dispatch(task_name, event))
             return False
 
-        self._bus.add_message_handler(on_message)
-        logger.info("D-Bus connected (%s bus), watching %d signal(s)", bus_type_str, len(self._subscriptions))
+        bus.add_message_handler(on_message)
+        logger.info("D-Bus connected (%s bus), watching %d signal(s)", bus_type_str, len(subscriptions))
 
         try:
-            await self._bus.wait_for_disconnect()
+            await bus.wait_for_disconnect()
         except asyncio.CancelledError:
             pass
 
