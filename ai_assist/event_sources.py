@@ -60,6 +60,7 @@ class EventSourceManager:
     def __init__(self) -> None:
         self._sources: dict[str, EventSource] = {}
         self._runners: dict[str, Any] = {}
+        self._event_handler: Callable[[EventContext], Awaitable[None]] | None = None
 
     def register_source(self, name: str, source: EventSource) -> None:
         self._sources[name] = source
@@ -110,6 +111,13 @@ class EventSourceManager:
             await source.stop()
 
     async def _dispatch_event(self, task_name: str, event: EventContext) -> None:
+        if self._event_handler is not None:
+            try:
+                await self._event_handler(event)
+            except Exception:
+                logger.exception("Error in event handler for '%s'", event.source_type)
+            return
+
         runner = self._runners.get(task_name)
         if runner is None:
             logger.warning("Unknown task '%s' for event from '%s'", task_name, event.source_type)

@@ -2,26 +2,16 @@
 
 import asyncio
 import json
-import tempfile
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from ai_assist.monitors import MonitoringScheduler
+from ai_assist.action_scheduler import ActionScheduler
 from ai_assist.state import StateManager
 
 
 @pytest.fixture
-def temp_schedules_file():
-    """Create temporary schedules file"""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        yield Path(tmpdir) / "schedules.json"
-
-
-@pytest.fixture
 def mock_agent():
-    """Create mock agent"""
     agent = MagicMock()
     agent.query = AsyncMock(return_value="Test result")
     agent.config.mcp_servers = {}
@@ -31,126 +21,77 @@ def mock_agent():
 
 @pytest.fixture
 def state_manager(tmp_path):
-    """Create state manager"""
     return StateManager(state_dir=tmp_path / "state")
 
 
 class TestHotReload:
-    """Tests for hot reload functionality"""
-
     @pytest.mark.asyncio
-    async def test_task_cancellation_handled_gracefully(self, mock_agent, state_manager, temp_schedules_file):
-        """Test that task cancellation during reload doesn't crash"""
-        # Create initial schedule
-        temp_schedules_file.write_text(
+    async def test_timer_action_cancellation_handled_gracefully(self, mock_agent, state_manager, tmp_path):
+        """Test that timer action cancellation during reload doesn't crash"""
+        event_schedules = tmp_path / "event-schedules.json"
+        event_schedules.write_text(
             json.dumps(
                 {
-                    "version": "1.0",
-                    "monitors": [],
-                    "tasks": [{"name": "Test Task", "prompt": "Test prompt", "interval": "1h", "enabled": True}],
-                }
-            )
-        )
-
-        config = MagicMock()
-        scheduler = MonitoringScheduler(mock_agent, config, state_manager, None, schedule_file=temp_schedules_file)
-
-        # Start a task
-        task = asyncio.create_task(scheduler._schedule_task("Test", mock_agent.query, 3600))
-
-        # Let it start
-        await asyncio.sleep(0.1)
-
-        # Cancel the task (simulates what reload does)
-        task.cancel()
-
-        # Should not raise CancelledError
-        try:
-            await task
-        except asyncio.CancelledError:
-            pytest.fail("CancelledError not caught - task should handle gracefully")
-
-        # If we get here, cancellation was handled properly
-        assert True
-
-    @pytest.mark.asyncio
-    async def test_time_based_task_cancellation(self, mock_agent, state_manager, temp_schedules_file):
-        """Test that time-based task cancellation is handled"""
-        from ai_assist.tasks import TaskDefinition
-
-        temp_schedules_file.write_text(
-            json.dumps(
-                {
-                    "version": "1.0",
-                    "monitors": [],
-                    "tasks": [
-                        {"name": "Morning Task", "prompt": "Test", "interval": "morning on weekdays", "enabled": True}
+                    "version": "2.0",
+                    "actions": [
+                        {"name": "Test", "trigger": {"type": "interval", "every": "1h"}, "prompt": "Test"},
                     ],
                 }
             )
         )
 
-        config = MagicMock()
-        scheduler = MonitoringScheduler(mock_agent, config, state_manager, None, schedule_file=temp_schedules_file)
+        scheduler = ActionScheduler(mock_agent, state_manager, event_schedules)
+        await scheduler.start()
 
-        # Create a time-based task definition
-        task_def = TaskDefinition(name="Morning Task", prompt="Test", interval="morning on weekdays")
+        assert len(scheduler.timer_handles) >= 1
+        handle = scheduler.timer_handles[0]
 
-        # Start the task
-        task = asyncio.create_task(scheduler._schedule_task("Morning Task", mock_agent.query, 0, task_def=task_def))
-
-        # Let it start
-        await asyncio.sleep(0.1)
-
-        # Cancel during the sleep
-        task.cancel()
-
-        # Should not raise CancelledError
+        # Cancel should complete without hanging
+        handle.cancel()
         try:
-            await task
+            await handle
         except asyncio.CancelledError:
-            pytest.fail("CancelledError not caught in time-based task")
+            pass
 
-        assert True
+        await scheduler.stop()
 
     @pytest.mark.asyncio
-    async def test_reload_schedules_cancels_tasks(self, mock_agent, state_manager, temp_schedules_file):
-        """Test that reload properly cancels and restarts tasks"""
-        # Create initial schedule
-        temp_schedules_file.write_text(
+    async def test_reload_replaces_actions(self, mock_agent, state_manager, tmp_path):
+        """Test that reload properly replaces actions"""
+        event_schedules = tmp_path / "event-schedules.json"
+        event_schedules.write_text(
             json.dumps(
                 {
-                    "version": "1.0",
-                    "monitors": [],
-                    "tasks": [{"name": "Task 1", "prompt": "Test 1", "interval": "1h", "enabled": True}],
+                    "version": "2.0",
+                    "actions": [
+                        {"name": "Action 1", "trigger": {"type": "interval", "every": "1h"}, "prompt": "Test 1"},
+                    ],
                 }
             )
         )
 
-        config = MagicMock()
-        scheduler = MonitoringScheduler(mock_agent, config, state_manager, None, schedule_file=temp_schedules_file)
+        scheduler = ActionScheduler(mock_agent, state_manager, event_schedules)
+        await scheduler.start()
 
-        # Verify initial task loaded (+ built-in kg-synthesis)
-        task_names = {t.task_def.name for t in scheduler.user_tasks}
-        assert "Task 1" in task_names
-        assert "kg-synthesis" in task_names
+        action_names = {a.name for a in scheduler.actions}
+        assert "Action 1" in action_names
 
-        # Simulate reload with new schedule
-        temp_schedules_file.write_text(
+        # Update file and reload
+        event_schedules.write_text(
             json.dumps(
                 {
-                    "version": "1.0",
-                    "monitors": [],
-                    "tasks": [{"name": "Task 2", "prompt": "Test 2", "interval": "2h", "enabled": True}],
+                    "version": "2.0",
+                    "actions": [
+                        {"name": "Action 2", "trigger": {"type": "interval", "every": "2h"}, "prompt": "Test 2"},
+                    ],
                 }
             )
         )
 
-        # Reload should not crash
-        await scheduler.reload_schedules()
+        await scheduler.reload()
 
-        # Verify new task loaded (+ built-in kg-synthesis)
-        task_names = {t.task_def.name for t in scheduler.user_tasks}
-        assert "Task 2" in task_names
-        assert "Task 1" not in task_names
-        assert "kg-synthesis" in task_names
+        action_names = {a.name for a in scheduler.actions}
+        assert "Action 2" in action_names
+        assert "Action 1" not in action_names
+
+        await scheduler.stop()

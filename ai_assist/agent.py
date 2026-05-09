@@ -12,6 +12,7 @@ from anthropic import Anthropic, AnthropicVertex, APIConnectionError, APIError, 
 from anthropic.types import TextBlockParam
 from mcp import ClientSession, StdioServerParameters
 
+from .action_tools import ActionTools
 from .audit import AuditLogger
 from .config import AiAssistConfig, MCPServerConfig
 from .filesystem_tools import FilesystemTools
@@ -260,6 +261,11 @@ class AiAssistAgent:
             known_mcp_servers=set(config.mcp_servers.keys()) if config.mcp_servers else None
         )
 
+        # Initialize unified action tools (event-schedules.json)
+        self.action_tools = ActionTools(
+            known_mcp_servers=set(config.mcp_servers.keys()) if config.mcp_servers else None
+        )
+
         # Initialize internal filesystem tools
         self.filesystem_tools = FilesystemTools(config)
 
@@ -484,6 +490,12 @@ class AiAssistAgent:
         if schedule_action_tool_defs:
             self.available_tools.extend(schedule_action_tool_defs)
             print(f"✓ Added {len(schedule_action_tool_defs)} schedule action tools")
+
+        # Add unified action tools (event-driven scheduling)
+        action_tool_defs = self.action_tools.get_tool_definitions()
+        if action_tool_defs:
+            self.available_tools.extend(action_tool_defs)
+            print(f"✓ Added {len(action_tool_defs)} action tools")
 
         # Add goal tools (autonomous agent goals)
         goal_tool_defs = self.goal_tools.get_tool_definitions()
@@ -2581,6 +2593,14 @@ class AiAssistAgent:
                 think_tools = ["think"]
                 json_tool_names = ["json_query"]
                 schedule_action_tools = ["schedule_action"]
+                action_tools = [
+                    "create_action",
+                    "list_actions",
+                    "update_action",
+                    "delete_action",
+                    "enable_action",
+                    "get_action_status",
+                ]
                 knowledge_tools = ["save_knowledge", "search_knowledge", "trigger_synthesis", "run_kg_synthesis"]
                 kg_query_tool_names = [
                     "kg_recent_changes",
@@ -2622,6 +2642,8 @@ class AiAssistAgent:
                         result_text = await self.kg_query_tools.execute_tool(original_tool_name, arguments)
                     else:
                         result_text = "Error: KG query tools not available (knowledge graph disabled)"
+                elif original_tool_name in action_tools:
+                    result_text = await self.action_tools.execute_tool(f"internal__{original_tool_name}", arguments)
                 else:
                     # Default to report tools
                     result_text = await self.report_tools.execute_tool(original_tool_name, arguments)

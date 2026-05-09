@@ -1,15 +1,12 @@
 """Execute user-defined tasks and track state"""
 
 import logging
-import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
 from .agent import AiAssistAgent
 from .conditions import ActionExecutor, ConditionEvaluator
-from .config import get_config_dir
-from .event_bridge import BridgeEvent, BridgePublisher
 from .event_sources import EventContext
 from .notification_dispatcher import Notification, NotificationDispatcher
 from .state import StateManager
@@ -100,16 +97,9 @@ class TaskRunner:
                 },
             )
 
-            history_entry = {
-                "task_name": self.task_def.name,
-                "success": True,
-                "timestamp": timestamp.isoformat(),
-                "metadata": metadata,
-            }
-            if event_context is not None:
-                history_entry["event_source"] = event_context.source_type
-                history_entry["event_metadata"] = event_context.metadata
+            from .execution_helpers import build_history_entry
 
+            history_entry = build_history_entry(self.task_def.name, True, timestamp, metadata, event_context)
             self.state_manager.append_history(self.state_key, history_entry)
 
             result = TaskResult(
@@ -119,10 +109,6 @@ class TaskRunner:
             # Dispatch notification if configured
             if self.task_def.notify:
                 await self._send_notification(result)
-
-            # Publish bridge event for interactive process
-            if self.task_def.notify and event_context is not None:
-                await self._publish_bridge_event(result, event_context)
 
             return result
 
@@ -162,56 +148,9 @@ class TaskRunner:
             return result
 
     async def _run_awl_script(self) -> str:
-        """Execute an AWL script with state persistence.
+        from .awl_executor import run_awl_script
 
-        Supports both @goal scripts (via GoalRunner) and @start workflows (via AWLRuntime).
-        """
-        from pathlib import Path
-
-        from .awl_ast import GoalNode
-        from .awl_parser import AWLParser
-        from .config import get_config_dir
-
-        # Resolve AWL path (relative to goals dir or absolute)
-        awl_path = Path(self.task_def.prompt)
-        if not awl_path.is_absolute():
-            awl_path = get_config_dir() / self.task_def.prompt
-
-        if not awl_path.exists():
-            raise FileNotFoundError(f"AWL script not found: {awl_path}")
-
-        # Parse to determine script type
-        source = awl_path.read_text()
-        workflow = AWLParser(source).parse()
-        has_goal = any(isinstance(n, GoalNode) for n in workflow.body)
-
-        if has_goal:
-            # @goal script — use GoalRunner with state persistence
-            from .goal_runner import GoalRunner
-            from .goal_state import GoalStateManager
-
-            state_manager = GoalStateManager(get_config_dir() / "state")
-            runner = GoalRunner(awl_path, self.agent, state_manager)
-            runner.load()
-            await runner.run_cycle()
-
-            lines = [f"Goal '{runner.goal_id}' cycle completed."]
-            state = state_manager.load(runner.goal_id)
-            lines.append(f"Status: {state.status} | Cycles: {state.cycle_count}")
-            if state.success_reason:
-                lines.append(f"Success: {state.success_reason}")
-            return "\n".join(lines)
-        else:
-            # @start workflow — use AWLRuntime directly
-            from .awl_runtime import AWLRuntime
-
-            runtime = AWLRuntime(self.agent)
-            result = await runtime.execute(workflow)
-            if not result.success:
-                raise RuntimeError(
-                    f"AWL workflow failed: {result.task_outcomes[-1].summary if result.task_outcomes else 'unknown error'}"
-                )
-            return result.return_value or "Workflow completed successfully."
+        return await run_awl_script(self.task_def.prompt, self.agent)
 
     def get_last_run(self) -> datetime | None:
         """Get timestamp of last successful run"""
@@ -222,45 +161,14 @@ class TaskRunner:
         """Get historical execution results"""
         return self.state_manager.get_history(self.state_key, limit=limit)
 
-    async def _publish_bridge_event(self, result: TaskResult, event_context: EventContext) -> None:
-        """Publish a bridge event for the interactive process"""
-        try:
-            events_file = get_config_dir() / "events.jsonl"
-            publisher = BridgePublisher(events_file)
-            bridge_event = BridgeEvent(
-                id=f"evt-{uuid.uuid4().hex[:12]}",
-                timestamp=result.timestamp,
-                type="notify",
-                source_task=self.task_def.name,
-                source_type=event_context.source_type,
-                title=f"Event: {self.task_def.name}",
-                body=result.output[:500] if result.output else "",
-                event_data=event_context.metadata,
-                level="success" if result.success else "error",
-            )
-            await publisher.publish(bridge_event)
-        except Exception:
-            logger.exception("Failed to publish bridge event")
-
     async def _send_failure_notification(self, result: TaskResult):
         """Always send a notification on task failure, regardless of notify setting.
 
         Uses desktop and console channels so failures are never silently swallowed.
         """
-        error_summary = result.output[:500] if result.output else "Unknown error"
-        notification = Notification(
-            id=f"task-error-{self.task_def.name}-{int(result.timestamp.timestamp() * 1000)}",
-            action_id=self.task_def.name,
-            title=f"Task failed: {self.task_def.name}",
-            message=error_summary,
-            level="error",
-            timestamp=result.timestamp,
-            channels=["desktop", "console"],
-            delivered={},
-        )
+        from .execution_helpers import send_failure_notification
 
-        dispatcher = NotificationDispatcher()
-        await dispatcher.dispatch(notification)
+        await send_failure_notification(self.task_def.name, result.output, result.timestamp)
 
     async def _send_notification(self, result: TaskResult):
         """Send notification for task completion"""

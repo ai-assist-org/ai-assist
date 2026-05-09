@@ -109,29 +109,32 @@ Cross-platform background service installation for persistent monitoring:
 
 Files: `service.py`
 
-### Event Sources
+### Event-Driven Actions
 
-Pluggable event system for reactive task triggering. Tasks can use `trigger` instead of `interval` to fire on external events rather than timers.
+Unified action system where everything is a **trigger + prompt**. Actions are stored in `~/.ai-assist/event-schedules.json` and managed via agent tools. Trigger types include time-based (interval, schedule, once) and event-based (MQTT, D-Bus).
 
-- **EventSource** ABC: `start()`, `stop()`, `subscribe()` — same pattern as `ServiceBackend`
-- **EventSourceManager**: registry of sources, routes events to TaskRunners
-- **MQTT** (`event_source_mqtt.py`): subscribes to MQTT topics, dispatches on message — optional dep `aiomqtt`
-- **D-Bus** (`event_source_dbus.py`): subscribes to D-Bus signals, dispatches on match — optional dep `dbus-next`
-- **Event bridge** (`event_bridge.py`): `/monitor` publishes `BridgeEvent` to `~/.ai-assist/events.jsonl`, `/interactive` watches and displays
+- **ActionDefinition** (`action_model.py`): unified model replacing `TaskDefinition` + `ScheduledAction`
+- **TriggerMatcher** (`action_model.py`): matches incoming events against event-based trigger configs
+- **ActionEngine** (`action_engine.py`): executes actions (natural language, MCP prompts, AWL, builtins) with event context
+- **ActionScheduler** (`action_scheduler.py`): unified scheduler for timer and event actions
+- **ActionLoader** (`action_loader.py`): load/save `event-schedules.json`, auto-migration from old format
+- **ActionTools** (`action_tools.py`): agent CRUD tools for actions
+- **EventSource** ABC (`event_sources.py`): pluggable event sources (MQTT, D-Bus)
+- **MQTT** (`event_source_mqtt.py`): optional dep `aiomqtt` — `pip install ai-assist[mqtt]`
+- **D-Bus** (`event_source_dbus.py`): optional dep `dbus-next` — `pip install ai-assist[dbus]`
 
-Event context (`${event.payload}`, `${event.topic}`, etc.) is substituted into task prompts before execution.
-
-Configuration in `schedules.json`:
+Configuration in `event-schedules.json`:
 ```json
 {
   "event_sources": {"mqtt": {"broker": "localhost", "port": 1883}},
-  "monitors": [
-    {"name": "Alert", "prompt": "Handle: ${event.payload}", "trigger": {"type": "mqtt", "topic": "alerts/#"}}
+  "actions": [
+    {"name": "DCI Check", "trigger": {"type": "interval", "every": "5m"}, "prompt": "Check DCI failures"},
+    {"name": "Alert Handler", "trigger": {"type": "mqtt", "topic": "alerts/#"}, "prompt": "Analyze this alert."}
   ]
 }
 ```
 
-Files: `event_sources.py`, `event_source_mqtt.py`, `event_source_dbus.py`, `event_bridge.py`
+Files: `action_model.py`, `action_engine.py`, `action_scheduler.py`, `action_loader.py`, `action_tools.py`, `event_sources.py`, `event_source_mqtt.py`, `event_source_dbus.py`
 
 ### Configuration & State
 
@@ -577,12 +580,17 @@ ai_assist/
 ├── skills_*.py                # Agent Skills loader and manager
 ├── tui*.py                    # Terminal UI components
 ├── monitors.py, tasks.py      # Monitoring and task execution
+├── action_model.py            # Unified action model (trigger + prompt)
+├── action_engine.py           # Action execution engine
+├── action_scheduler.py        # Unified scheduler (timer + event + one-shot)
+├── action_loader.py           # Load/save event-schedules.json
+├── action_tools.py            # Agent tools for action CRUD
+├── awl_executor.py            # Shared AWL script execution
 ├── event_sources.py           # Pluggable event source system (ABC, manager)
 ├── event_source_mqtt.py       # MQTT event source (optional: aiomqtt)
 ├── event_source_dbus.py       # D-Bus event source (optional: dbus-next)
-├── event_bridge.py            # Monitor→interactive IPC via events.jsonl
 ├── *_tools.py                 # Tool implementations (report, schedule, KG, filesystem, etc.)
-├── scheduled_actions.py       # One-time future actions
+├── scheduled_actions.py       # One-time future actions (legacy)
 ├── notification_*.py          # Notification channels and dispatcher
 ├── state.py                   # State management and caching
 ├── *_watcher.py               # File watching and hot-reload
@@ -599,7 +607,8 @@ emacs/                         # AWL major mode for Emacs
 - `.env` - Environment variables (API keys, model, feature flags)
 - `~/.ai-assist/mcp_servers.yaml` - MCP server definitions
 - `~/.ai-assist/identity.yaml` - User/assistant personalization
-- `~/.ai-assist/schedules.json` - Monitors and periodic tasks
+- `~/.ai-assist/event-schedules.json` - Unified actions (trigger + prompt)
+- `~/.ai-assist/schedules.json` - Monitors and periodic tasks (legacy, auto-migrated)
 - `.pre-commit-config.yaml` - Git hooks configuration
 - `pyproject.toml` - Python package config, tool settings, linting rules
 

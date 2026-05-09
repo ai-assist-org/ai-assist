@@ -284,7 +284,7 @@ async def test_failure_always_notifies(mock_agent, state_manager):
 
     mock_agent.query.side_effect = Exception("Connection timeout")
 
-    with patch("ai_assist.task_runner.NotificationDispatcher") as mock_dispatcher_class:
+    with patch("ai_assist.execution_helpers.NotificationDispatcher") as mock_dispatcher_class:
         mock_dispatcher = MagicMock()
         mock_dispatcher.dispatch = AsyncMock(return_value={"desktop": True, "console": True})
         mock_dispatcher_class.return_value = mock_dispatcher
@@ -293,7 +293,6 @@ async def test_failure_always_notifies(mock_agent, state_manager):
         result = await runner.run()
 
         assert result.success is False
-        # Should have dispatched a failure notification even though notify=False
         mock_dispatcher.dispatch.assert_called_once()
         notification = mock_dispatcher.dispatch.call_args[0][0]
         assert notification.level == "error"
@@ -310,7 +309,7 @@ async def test_failure_notification_truncates_long_errors(mock_agent, state_mana
 
     mock_agent.query.side_effect = Exception("E" * 1000)
 
-    with patch("ai_assist.task_runner.NotificationDispatcher") as mock_dispatcher_class:
+    with patch("ai_assist.execution_helpers.NotificationDispatcher") as mock_dispatcher_class:
         mock_dispatcher = MagicMock()
         mock_dispatcher.dispatch = AsyncMock(return_value={"desktop": True, "console": True})
         mock_dispatcher_class.return_value = mock_dispatcher
@@ -461,37 +460,6 @@ async def test_run_with_event_context_records_source_in_history(mock_agent, stat
     assert len(history) == 1
     result_data = history[0].get("result", history[0])
     assert result_data.get("event_source") == "mqtt"
-
-
-@pytest.mark.asyncio
-async def test_run_with_event_context_publishes_bridge_event(mock_agent, state_manager, tmp_path):
-    """When notify=True and event_context present, should publish BridgeEvent"""
-    task_def = TaskDefinition(
-        name="MQTT Handler",
-        prompt="Analyze: ${event.payload}",
-        trigger={"type": "mqtt", "topic": "alerts/#"},
-        notify=True,
-    )
-
-    mock_agent.query.return_value = "Alert resolved"
-    event = _make_event_context()
-
-    with patch("ai_assist.task_runner.NotificationDispatcher") as mock_nd_cls:
-        mock_nd_cls.return_value.dispatch = AsyncMock(return_value={})
-
-        with patch("ai_assist.task_runner.BridgePublisher") as mock_pub_cls:
-            mock_pub = MagicMock()
-            mock_pub.publish = AsyncMock()
-            mock_pub_cls.return_value = mock_pub
-
-            runner = TaskRunner(task_def, mock_agent, state_manager)
-            result = await runner.run(event_context=event)
-
-            assert result.success is True
-            mock_pub.publish.assert_called_once()
-            bridge_event = mock_pub.publish.call_args[0][0]
-            assert bridge_event.source_task == "MQTT Handler"
-            assert bridge_event.source_type == "mqtt"
 
 
 @pytest.mark.asyncio

@@ -56,30 +56,14 @@ class TaskDefinition:
 
     @property
     def is_mcp_prompt(self) -> bool:
-        """Check if prompt is an MCP prompt reference"""
-        return self.prompt.startswith("mcp://")
+        from .mcp_prompt import is_mcp_prompt
+
+        return is_mcp_prompt(self.prompt)
 
     def parse_mcp_prompt(self) -> tuple[str, str]:
-        """Parse 'mcp://server/prompt' into (server, prompt)
+        from .mcp_prompt import parse_mcp_prompt
 
-        Raises:
-            ValueError: If format is invalid
-        """
-        if not self.is_mcp_prompt:
-            raise ValueError("Not an MCP prompt reference")
-
-        # Remove mcp:// prefix
-        ref = self.prompt[6:]
-
-        # Split server/prompt
-        if "/" not in ref:
-            raise ValueError("MCP prompt must be 'mcp://server/prompt'")
-
-        parts = ref.split("/", 1)
-        if len(parts) != 2 or not parts[0] or not parts[1]:
-            raise ValueError("MCP prompt must be 'mcp://server/prompt'")
-
-        return parts[0], parts[1]
+        return parse_mcp_prompt(self.prompt)
 
     @classmethod
     def from_dict(cls, task_data: dict[str, Any]) -> TaskDefinition:
