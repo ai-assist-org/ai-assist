@@ -110,7 +110,7 @@ class DesktopNotificationChannel:
             max_length = 500
             message = notification.message
             if len(message) > max_length:
-                message = message[:max_length] + "...\n\n(See full result in TUI or notifications.log)"
+                message = message[:max_length] + "...\n\n(See full result in TUI or notifications report)"
 
             subprocess.run(
                 [

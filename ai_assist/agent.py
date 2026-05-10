@@ -1064,9 +1064,9 @@ class AiAssistAgent:
         import json as json_module
         from datetime import datetime, timedelta
 
-        from .config import get_config_dir as _get_config_dir
+        from .config import get_reports_dir
 
-        log_file = _get_config_dir() / "notifications.log"
+        log_file = get_reports_dir() / "notifications.jsonl"
         if not log_file.exists():
             return ""
 

@@ -45,6 +45,20 @@ def get_config_dir(override: str | None = None) -> Path:
     return config_dir
 
 
+def get_reports_dir() -> Path:
+    """Get the ai-assist reports directory.
+
+    Priority: AI_ASSIST_REPORTS_DIR env var, then ~/ai-assist/reports
+    """
+    env_dir = os.getenv("AI_ASSIST_REPORTS_DIR")
+    if env_dir:
+        reports_dir = Path(os.path.expanduser(env_dir))
+    else:
+        reports_dir = Path.home() / "ai-assist" / "reports"
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    return reports_dir
+
+
 def setup_logging(config_dir: Path | None = None) -> None:
     """Configure logging to write to both console and file.
 
