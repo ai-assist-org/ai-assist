@@ -38,6 +38,8 @@ class ActionScheduler:
         self.running = False
         self._debounce_tasks: dict[str, asyncio.Task[None]] = {}
         self._debounce_events: dict[str, list[EventContext]] = {}
+        self._executing: set[str] = set()
+        self._suppress_reload = False
 
     def load_actions(self) -> list[ActionDefinition]:
         self.loader.ensure_defaults()
@@ -63,7 +65,9 @@ class ActionScheduler:
                 continue
 
             if action.is_time_based:
-                handle = asyncio.create_task(self._schedule_timer_action(action))
+                handle = asyncio.create_task(
+                    self._schedule_timer_action(action), name=action.name
+                )
                 self.timer_handles.append(handle)
                 tasks.append(handle)
                 print(f"Scheduled action: {action.name} (trigger: {action.trigger_type})")
@@ -75,23 +79,36 @@ class ActionScheduler:
         return tasks
 
     async def reload(self) -> None:
+        if self._suppress_reload:
+            return
+
         print("\nReloading actions...")
 
         await self._stop_event_sources()
 
+        surviving: list[asyncio.Task[None]] = []
+        to_cancel: list[asyncio.Task[None]] = []
         for handle in self.timer_handles:
-            handle.cancel()
-        if self.timer_handles:
-            await asyncio.gather(*self.timer_handles, return_exceptions=True)
-        self.timer_handles.clear()
+            if handle.get_name() in self._executing:
+                surviving.append(handle)
+            else:
+                to_cancel.append(handle)
+                handle.cancel()
+        if to_cancel:
+            await asyncio.gather(*to_cancel, return_exceptions=True)
+
+        self.timer_handles = list(surviving)
 
         self.load_actions()
 
+        scheduled_names = {h.get_name() for h in self.timer_handles}
         for action in self.actions:
             if not action.enabled:
                 continue
-            if action.is_time_based:
-                handle = asyncio.create_task(self._schedule_timer_action(action))
+            if action.is_time_based and action.name not in scheduled_names:
+                handle = asyncio.create_task(
+                    self._schedule_timer_action(action), name=action.name
+                )
                 self.timer_handles.append(handle)
 
         await self._start_event_sources()
@@ -195,9 +212,11 @@ class ActionScheduler:
                         break
                     target_time = datetime.fromisoformat(trigger["at"])
                     wait = (target_time - datetime.now()).total_seconds()
-                    if wait > 0:
-                        print(f"{action.name}: scheduled for {target_time.strftime('%Y-%m-%d %H:%M')}")
-                        await asyncio.sleep(wait)
+                    if wait <= 0:
+                        # Overdue — skip here; run_missed_at_startup handles catchup
+                        break
+                    print(f"{action.name}: scheduled for {target_time.strftime('%Y-%m-%d %H:%M')}")
+                    await asyncio.sleep(wait)
                     await self._execute_timer_action(action)
                     self._mark_once_completed(action)
                     break
@@ -243,16 +262,21 @@ class ActionScheduler:
                         break
 
     async def _execute_timer_action(self, action: ActionDefinition) -> None:
-        print(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Running {action.name}...")
-        result = await self.engine.execute_action(action)
-        if result.success:
-            print(f"{action.name}: completed")
-            if result.output:
-                print(f"\n{result.output}")
-        else:
-            print(f"{action.name}: failed - {result.output[:200]}")
+        self._executing.add(action.name)
+        try:
+            print(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Running {action.name}...")
+            result = await self.engine.execute_action(action)
+            if result.success:
+                print(f"{action.name}: completed")
+                if result.output:
+                    print(f"\n{result.output}")
+            else:
+                print(f"{action.name}: failed - {result.output[:200]}")
+        finally:
+            self._executing.discard(action.name)
 
     def _mark_once_completed(self, action: ActionDefinition) -> None:
+        self._suppress_reload = True
         try:
             actions = self.loader.load_actions()
             for a in actions:
@@ -263,6 +287,8 @@ class ActionScheduler:
             self.loader.save_actions(actions)
         except Exception:
             logger.exception("Failed to mark once-action '%s' as completed", action.name)
+        finally:
+            self._suppress_reload = False
 
     async def run_missed_at_startup(self, now: datetime | None = None) -> None:
         if now is None:
@@ -273,6 +299,26 @@ class ActionScheduler:
         for action in self.actions:
             if not action.enabled:
                 continue
+
+            if action.trigger_type == "once":
+                if action.status in ("completed", "failed"):
+                    continue
+                try:
+                    target_time = datetime.fromisoformat(action.trigger["at"])
+                except (ValueError, KeyError):
+                    continue
+                if target_time > now or target_time < lookback:
+                    continue
+                print(
+                    f"Running missed once-action: {action.name} (was due at {target_time.strftime('%Y-%m-%d %H:%M')})"
+                )
+                try:
+                    await self.engine.execute_action(action)
+                    self._mark_once_completed(action)
+                except Exception:
+                    logger.exception("Error running missed once-action '%s'", action.name)
+                continue
+
             if action.trigger_type != "schedule":
                 continue
 

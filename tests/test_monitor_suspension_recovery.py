@@ -134,6 +134,249 @@ async def test_startup_catchup_retries_failed_run(mock_agent, schedule_file_with
         mock_agent.query.assert_called_once()
 
 
+@pytest.fixture
+def schedule_file_with_once_action(tmp_path):
+    """Event-schedules file with a pending once-action whose time has passed."""
+    f = tmp_path / "event-schedules.json"
+    data = {
+        "version": "2.0",
+        "actions": [
+            {
+                "name": "weekly_report_semih",
+                "trigger": {"type": "once", "at": "2026-05-11T10:45:00"},
+                "prompt": "Generate weekly report",
+                "enabled": True,
+                "status": "pending",
+            }
+        ],
+    }
+    f.write_text(json.dumps(data))
+    return f
+
+
+@pytest.mark.asyncio
+async def test_startup_catchup_runs_missed_once_action(mock_agent, schedule_file_with_once_action):
+    """Test that startup catchup runs a pending once-action whose time has passed."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_manager = StateManager(Path(tmpdir))
+
+        scheduler = ActionScheduler(mock_agent, state_manager, schedule_file_with_once_action)
+        scheduler.load_actions()
+
+        now = datetime(2026, 5, 11, 11, 0, 0)
+        await scheduler.run_missed_at_startup(now=now)
+
+        mock_agent.query.assert_called_once()
+        # Verify it was marked completed in the file
+        reloaded = json.loads(schedule_file_with_once_action.read_text())
+        assert reloaded["actions"][0]["status"] == "completed"
+        assert reloaded["actions"][0]["executed_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_startup_catchup_skips_completed_once_action(mock_agent, tmp_path):
+    """Test that startup catchup skips already-completed once-actions."""
+    f = tmp_path / "event-schedules.json"
+    data = {
+        "version": "2.0",
+        "actions": [
+            {
+                "name": "weekly_report_semih",
+                "trigger": {"type": "once", "at": "2026-05-11T10:45:00"},
+                "prompt": "Generate weekly report",
+                "enabled": True,
+                "status": "completed",
+                "executed_at": "2026-05-11T10:46:00",
+            }
+        ],
+    }
+    f.write_text(json.dumps(data))
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_manager = StateManager(Path(tmpdir))
+
+        scheduler = ActionScheduler(mock_agent, state_manager, f)
+        scheduler.load_actions()
+
+        now = datetime(2026, 5, 11, 11, 0, 0)
+        await scheduler.run_missed_at_startup(now=now)
+
+        mock_agent.query.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_startup_catchup_skips_future_once_action(mock_agent, tmp_path):
+    """Test that startup catchup skips once-actions whose time hasn't come yet."""
+    f = tmp_path / "event-schedules.json"
+    data = {
+        "version": "2.0",
+        "actions": [
+            {
+                "name": "weekly_report_olivier",
+                "trigger": {"type": "once", "at": "2026-05-11T15:45:00"},
+                "prompt": "Generate weekly report",
+                "enabled": True,
+                "status": "pending",
+            }
+        ],
+    }
+    f.write_text(json.dumps(data))
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_manager = StateManager(Path(tmpdir))
+
+        scheduler = ActionScheduler(mock_agent, state_manager, f)
+        scheduler.load_actions()
+
+        now = datetime(2026, 5, 11, 11, 0, 0)
+        await scheduler.run_missed_at_startup(now=now)
+
+        mock_agent.query.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_startup_catchup_skips_stale_once_action(mock_agent, tmp_path):
+    """Test that startup catchup skips once-actions older than 24h."""
+    f = tmp_path / "event-schedules.json"
+    data = {
+        "version": "2.0",
+        "actions": [
+            {
+                "name": "old_report",
+                "trigger": {"type": "once", "at": "2026-05-09T10:00:00"},
+                "prompt": "Old report",
+                "enabled": True,
+                "status": "pending",
+            }
+        ],
+    }
+    f.write_text(json.dumps(data))
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_manager = StateManager(Path(tmpdir))
+
+        scheduler = ActionScheduler(mock_agent, state_manager, f)
+        scheduler.load_actions()
+
+        now = datetime(2026, 5, 11, 11, 0, 0)
+        await scheduler.run_missed_at_startup(now=now)
+
+        mock_agent.query.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_schedule_timer_skips_overdue_once_action(mock_agent, tmp_path):
+    """Test that _schedule_timer_action does NOT execute overdue once-actions."""
+    f = tmp_path / "event-schedules.json"
+    data = {
+        "version": "2.0",
+        "actions": [
+            {
+                "name": "overdue_report",
+                "trigger": {"type": "once", "at": "2026-05-11T10:45:00"},
+                "prompt": "Generate weekly report",
+                "enabled": True,
+                "status": "pending",
+            }
+        ],
+    }
+    f.write_text(json.dumps(data))
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_manager = StateManager(Path(tmpdir))
+        scheduler = ActionScheduler(mock_agent, state_manager, f)
+        scheduler.load_actions()
+        scheduler.running = True
+
+        action = scheduler.actions[0]
+        await scheduler._schedule_timer_action(action)
+
+        mock_agent.query.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_reload_does_not_cancel_executing_action(mock_agent, tmp_path):
+    """Test that reload() preserves tasks that are mid-execution."""
+    f = tmp_path / "event-schedules.json"
+    data = {
+        "version": "2.0",
+        "actions": [
+            {
+                "name": "slow_action",
+                "trigger": {"type": "schedule", "at": "10:00", "days": "weekdays"},
+                "prompt": "Do something slow",
+                "enabled": True,
+            },
+            {
+                "name": "idle_action",
+                "trigger": {"type": "schedule", "at": "22:00", "days": "weekdays"},
+                "prompt": "Do something later",
+                "enabled": True,
+            },
+        ],
+    }
+    f.write_text(json.dumps(data))
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_manager = StateManager(Path(tmpdir))
+        scheduler = ActionScheduler(mock_agent, state_manager, f)
+        scheduler.load_actions()
+        scheduler.running = True
+
+        # Simulate slow_action being mid-execution
+        slow_task = asyncio.create_task(asyncio.sleep(10), name="slow_action")
+        idle_task = asyncio.create_task(asyncio.sleep(10), name="idle_action")
+        scheduler.timer_handles = [slow_task, idle_task]
+        scheduler._executing.add("slow_action")
+
+        await scheduler.reload()
+
+        # slow_action's task should NOT have been cancelled
+        assert not slow_task.cancelled()
+        # idle_action's task SHOULD have been cancelled
+        assert idle_task.cancelled()
+        # slow_action should still be in timer_handles
+        handle_names = [h.get_name() for h in scheduler.timer_handles]
+        assert "slow_action" in handle_names
+
+        # Cleanup
+        slow_task.cancel()
+        await asyncio.gather(slow_task, return_exceptions=True)
+        await scheduler.stop()
+
+
+@pytest.mark.asyncio
+async def test_suppress_reload_on_mark_once_completed(mock_agent, tmp_path):
+    """Test that _mark_once_completed suppresses file watchdog reload."""
+    f = tmp_path / "event-schedules.json"
+    data = {
+        "version": "2.0",
+        "actions": [
+            {
+                "name": "report_task",
+                "trigger": {"type": "once", "at": "2026-05-11T10:45:00"},
+                "prompt": "Generate report",
+                "enabled": True,
+                "status": "pending",
+            }
+        ],
+    }
+    f.write_text(json.dumps(data))
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_manager = StateManager(Path(tmpdir))
+        scheduler = ActionScheduler(mock_agent, state_manager, f)
+        scheduler.load_actions()
+
+        action = scheduler.actions[0]
+        assert not scheduler._suppress_reload
+        scheduler._mark_once_completed(action)
+        assert not scheduler._suppress_reload
+
+        reloaded = json.loads(f.read_text())
+        assert reloaded["actions"][0]["status"] == "completed"
+
+
 @pytest.mark.asyncio
 async def test_suspend_detector_integration(mock_agent):
     """Test that suspend detector is initialized and running."""
