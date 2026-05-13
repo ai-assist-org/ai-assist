@@ -39,7 +39,7 @@ class ActionScheduler:
         self._debounce_tasks: dict[str, asyncio.Task[None]] = {}
         self._debounce_events: dict[str, list[EventContext]] = {}
         self._executing: set[str] = set()
-        self._suppress_reload = False
+        self._self_write_time: float = 0.0
 
     def load_actions(self) -> list[ActionDefinition]:
         self.loader.ensure_defaults()
@@ -65,9 +65,7 @@ class ActionScheduler:
                 continue
 
             if action.is_time_based:
-                handle = asyncio.create_task(
-                    self._schedule_timer_action(action), name=action.name
-                )
+                handle = asyncio.create_task(self._schedule_timer_action(action), name=action.name)
                 self.timer_handles.append(handle)
                 tasks.append(handle)
                 print(f"Scheduled action: {action.name} (trigger: {action.trigger_type})")
@@ -79,7 +77,9 @@ class ActionScheduler:
         return tasks
 
     async def reload(self) -> None:
-        if self._suppress_reload:
+        import time
+
+        if time.monotonic() - self._self_write_time < 2.0:
             return
 
         print("\nReloading actions...")
@@ -106,9 +106,7 @@ class ActionScheduler:
             if not action.enabled:
                 continue
             if action.is_time_based and action.name not in scheduled_names:
-                handle = asyncio.create_task(
-                    self._schedule_timer_action(action), name=action.name
-                )
+                handle = asyncio.create_task(self._schedule_timer_action(action), name=action.name)
                 self.timer_handles.append(handle)
 
         await self._start_event_sources()
@@ -276,7 +274,8 @@ class ActionScheduler:
             self._executing.discard(action.name)
 
     def _mark_once_completed(self, action: ActionDefinition) -> None:
-        self._suppress_reload = True
+        import time
+
         try:
             actions = self.loader.load_actions()
             for a in actions:
@@ -284,11 +283,10 @@ class ActionScheduler:
                     a.status = "completed"
                     a.executed_at = datetime.now()
                     break
+            self._self_write_time = time.monotonic()
             self.loader.save_actions(actions)
         except Exception:
             logger.exception("Failed to mark once-action '%s' as completed", action.name)
-        finally:
-            self._suppress_reload = False
 
     async def run_missed_at_startup(self, now: datetime | None = None) -> None:
         if now is None:

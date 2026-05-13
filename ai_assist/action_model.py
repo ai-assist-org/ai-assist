@@ -114,7 +114,7 @@ class ActionDefinition(BaseModel):
                 raise ValueError(f"Invalid MCP prompt reference: {e}") from e
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "ActionDefinition":
+    def from_dict(cls, data: dict[str, Any]) -> ActionDefinition:
         return cls(
             name=data["name"],
             trigger=data["trigger"],

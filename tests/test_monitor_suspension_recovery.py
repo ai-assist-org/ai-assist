@@ -346,8 +346,8 @@ async def test_reload_does_not_cancel_executing_action(mock_agent, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_suppress_reload_on_mark_once_completed(mock_agent, tmp_path):
-    """Test that _mark_once_completed suppresses file watchdog reload."""
+async def test_mark_once_completed_suppresses_reload(mock_agent, tmp_path):
+    """Test that _mark_once_completed sets self-write timestamp to suppress watchdog reload."""
     f = tmp_path / "event-schedules.json"
     data = {
         "version": "2.0",
@@ -369,9 +369,14 @@ async def test_suppress_reload_on_mark_once_completed(mock_agent, tmp_path):
         scheduler.load_actions()
 
         action = scheduler.actions[0]
-        assert not scheduler._suppress_reload
         scheduler._mark_once_completed(action)
-        assert not scheduler._suppress_reload
+
+        # Self-write timestamp should be recent, causing reload to skip
+        assert scheduler._self_write_time > 0
+        # reload() should be a no-op right after a self-write
+        scheduler.load_actions = MagicMock()
+        await scheduler.reload()
+        scheduler.load_actions.assert_not_called()
 
         reloaded = json.loads(f.read_text())
         assert reloaded["actions"][0]["status"] == "completed"
