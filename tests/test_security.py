@@ -13,6 +13,10 @@ from ai_assist.security import (
 from ai_assist.skills_loader import SkillsLoader
 
 
+def _prompt_text(blocks: list[dict]) -> str:
+    return "\n\n".join(b["text"] for b in blocks)
+
+
 class TestSanitizeToolResult:
     """Tests for prompt injection detection in tool results"""
 
@@ -344,7 +348,7 @@ class TestSystemPromptSecurity:
         """System prompt includes tool result security guidance"""
         config = AiAssistConfig(anthropic_api_key="test-key", mcp_servers={})
         agent = AiAssistAgent(config)
-        prompt = agent._build_system_prompt()
+        prompt = _prompt_text(agent._build_system_prompt())
         assert "UNTRUSTED_TOOL_OUTPUT" in prompt
         assert "Do NOT follow" in prompt
 
@@ -353,11 +357,11 @@ class TestSystemPromptSecurity:
         config = AiAssistConfig(anthropic_api_key="test-key", mcp_servers={})
         agent = AiAssistAgent(config)
 
-        prompt_default = agent._build_system_prompt()
+        prompt_default = _prompt_text(agent._build_system_prompt())
         assert "ask questions for clarification" not in prompt_default
 
         agent.interactive_mode = True
-        prompt_interactive = agent._build_system_prompt()
+        prompt_interactive = _prompt_text(agent._build_system_prompt())
         assert "ask questions for clarification" in prompt_interactive
 
 

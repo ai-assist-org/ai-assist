@@ -259,7 +259,7 @@ class AiAssistConfig(BaseModel):
             anthropic_api_key=os.getenv("ANTHROPIC_API_KEY", ""),
             vertex_project_id=os.getenv("ANTHROPIC_VERTEX_PROJECT_ID"),
             vertex_region=os.getenv("ANTHROPIC_VERTEX_REGION"),
-            model=os.getenv("AI_ASSIST_MODEL", "claude-sonnet-4-5@20250929"),
+            model=os.getenv("AI_ASSIST_MODEL", "claude-sonnet-4-6@20260219"),
             mcp_servers=mcp_servers,
         )
 

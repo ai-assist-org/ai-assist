@@ -6,6 +6,10 @@ from ai_assist.agent import AiAssistAgent
 from ai_assist.config import AiAssistConfig
 
 
+def _prompt_text(blocks: list[dict]) -> str:
+    return "\n\n".join(b["text"] for b in blocks)
+
+
 def test_skills_integration_with_agent():
     """Test that skills are loaded and integrated into agent"""
     import tempfile
@@ -38,7 +42,7 @@ def test_skills_integration_with_agent():
     assert "hello" in agent.skills_manager.loaded_skills
 
     # Verify system prompt includes skill summary (progressive disclosure)
-    system_prompt = agent._build_system_prompt()
+    system_prompt = _prompt_text(agent._build_system_prompt())
     assert "Agent Skills" in system_prompt
     assert "hello" in system_prompt
     assert "introspection__get_skill_help" in system_prompt

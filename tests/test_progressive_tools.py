@@ -7,6 +7,10 @@ from ai_assist.config import AiAssistConfig
 from ai_assist.introspection_tools import IntrospectionTools
 
 
+def _prompt_text(blocks: list[dict]) -> str:
+    return "\n\n".join(b["text"] for b in blocks)
+
+
 class TestTruncateDescription:
     """Tests for _truncate_description static method"""
 
@@ -206,7 +210,7 @@ class TestSystemPromptToolGuidance:
         agent.sessions["dci"] = "mock"
         agent.sessions["linux"] = "mock"
 
-        prompt = agent._build_system_prompt()
+        prompt = _prompt_text(agent._build_system_prompt())
         assert "dci" in prompt
         assert "linux" in prompt
         assert "tool" in prompt.lower()
@@ -216,7 +220,7 @@ class TestSystemPromptToolGuidance:
         config = AiAssistConfig(anthropic_api_key="test-key", mcp_servers={})
         agent = AiAssistAgent(config)
 
-        prompt = agent._build_system_prompt()
+        prompt = _prompt_text(agent._build_system_prompt())
         assert "Available Data Sources" not in prompt
 
     def test_system_prompt_always_includes_honesty_directive(self):
@@ -224,7 +228,7 @@ class TestSystemPromptToolGuidance:
         config = AiAssistConfig(anthropic_api_key="test-key", mcp_servers={})
         agent = AiAssistAgent(config)
 
-        prompt = agent._build_system_prompt()
+        prompt = _prompt_text(agent._build_system_prompt())
         assert "Never guess" in prompt
         assert "ask the user for clarification" in prompt
 
@@ -233,7 +237,7 @@ class TestSystemPromptToolGuidance:
         config = AiAssistConfig(anthropic_api_key="test-key", mcp_servers={})
         agent = AiAssistAgent(config)
 
-        prompt = agent._build_system_prompt()
+        prompt = _prompt_text(agent._build_system_prompt())
         assert "Source Citation" in prompt
         assert "reference" in prompt.lower()
         assert "general knowledge" in prompt.lower()

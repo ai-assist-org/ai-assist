@@ -12,6 +12,10 @@ def _make_agent(kg=None):
     return AiAssistAgent(config, knowledge_graph=kg)
 
 
+def _prompt_text(blocks: list[dict]) -> str:
+    return "\n\n".join(b["text"] for b in blocks)
+
+
 class TestGetKgLearningsSection:
     def test_no_kg_returns_empty(self):
         agent = _make_agent(kg=None)
@@ -163,7 +167,7 @@ class TestGetKgLearningsSection:
             confidence=1.0,
         )
         agent = _make_agent(kg=kg)
-        prompt = agent._build_system_prompt()
+        prompt = _prompt_text(agent._build_system_prompt())
         assert "What You Know" in prompt
         assert "detailed explanations" in prompt
 
@@ -302,7 +306,7 @@ class TestGetKgAutoContextSection:
 
         agent = _make_agent(kg=kg)
         agent._current_query_text = "What is the critical production issue?"
-        prompt = agent._build_system_prompt()
+        prompt = _prompt_text(agent._build_system_prompt())
         assert "Relevant Context" in prompt
 
 
@@ -370,7 +374,7 @@ class TestNoKgPrefix:
         )
         agent = _make_agent(kg=kg)
         agent._no_kg = True
-        prompt = agent._build_system_prompt()
+        prompt = _prompt_text(agent._build_system_prompt())
         assert "Knowledge Graph" not in prompt
         assert "What You Know" not in prompt
 
@@ -385,5 +389,5 @@ class TestNoKgPrefix:
         )
         agent = _make_agent(kg=kg)
         agent._no_kg = False
-        prompt = agent._build_system_prompt()
+        prompt = _prompt_text(agent._build_system_prompt())
         assert "Knowledge Graph" in prompt
