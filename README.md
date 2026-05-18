@@ -264,23 +264,13 @@ Run `scripts/check_fillable_fields.py` to detect form fields.
 
 📋 **Security details:** See [SECURITY.md](SECURITY.md) for the complete security model
 
-#### Extended Context Window
+#### Context Window
 
-For complex tasks that exceed the standard 200K token context, the agent can activate a 1M token context window on demand. **Disabled by default** to avoid premium pricing (2x input above 200K).
-
-```bash
-export AI_ASSIST_ALLOW_EXTENDED_CONTEXT=true
-uv run ai-assist
-```
-
-When enabled, the agent monitors token usage and automatically activates the extended context only when approaching the 200K limit. Supported on Opus 4.6, Sonnet 4.6, Sonnet 4.5, and Sonnet 4.
+Claude 4.6+ models (Opus 4.6, Opus 4.7, Sonnet 4.6) have native 1M token context windows — no opt-in or extra configuration needed.
 
 #### Adaptive Context Limits
 
-Truncation limits scale automatically with the context window. By default, each message is limited to 5% of the context window and total messages to 60%. This means:
-
-- **Standard (200K tokens)**: 40K chars/message, 480K chars total
-- **Extended (1M tokens)**: 200K chars/message, 2.4M chars total
+Truncation limits scale automatically with the context window. By default, each message is limited to 5% of the context window and total messages to 60%.
 
 You can tune these percentages via environment variables:
 
@@ -343,6 +333,75 @@ When `notify` is true, you'll receive notifications on task completion via:
 - **file**: Append to `~/.ai-assist/notifications.log`
 - **console**: Display in /monitor output
 - Interactive mode automatically shows notifications from any channel in the TUI
+- Recent notifications (last 15 min) are injected into the interactive agent's context, so you can ask follow-up questions
+
+### Event-Driven Actions
+
+React to external events via MQTT or D-Bus. Actions in `~/.ai-assist/event-schedules.json` use a unified **trigger + prompt** model. D-Bus triggers support per-trigger bus selection (`system` or `session`).
+
+**Example: USB device monitoring**
+
+```json
+{
+  "event_sources": { "dbus": {} },
+  "actions": [
+    {
+      "name": "USB Filesystem Mounted",
+      "trigger": {
+        "type": "dbus",
+        "interface": "org.freedesktop.DBus.Properties",
+        "signal": "PropertiesChanged",
+        "bus": "system",
+        "payload_contains": "MountPoints"
+      },
+      "prompt": "A USB filesystem was just mounted. Describe the device.",
+      "notify": true,
+      "notification_channels": ["desktop", "console", "file"]
+    }
+  ]
+}
+```
+
+**Example: "Welcome back" briefing on screen unlock**
+
+```json
+{
+  "actions": [
+    {
+      "name": "Screen Locked",
+      "trigger": {
+        "type": "dbus",
+        "interface": "org.gnome.ScreenSaver",
+        "signal": "ActiveChanged",
+        "bus": "session",
+        "payload_contains": "True"
+      },
+      "prompt": "Save the current timestamp to the report screen-lock-time."
+    },
+    {
+      "name": "Welcome Back Briefing",
+      "trigger": {
+        "type": "dbus",
+        "interface": "org.gnome.ScreenSaver",
+        "signal": "ActiveChanged",
+        "bus": "session",
+        "payload_contains": "False"
+      },
+      "prompt": "The user just unlocked their screen. Read the screen-lock-time report, check recent notifications, and give a brief summary of how long they were away and what happened.",
+      "notify": true,
+      "notification_channels": ["desktop", "console", "file"]
+    }
+  ]
+}
+```
+
+**Trigger types**: `interval`, `schedule`, `interval_range`, `once`, `mqtt`, `dbus`
+
+**Event filtering**: `payload_contains` and `payload_regex` filter events before execution. Burst signals are debounced (3s window).
+
+**Optional dependencies**: `pip install ai-assist[mqtt]` for MQTT, `pip install ai-assist[dbus]` for D-Bus.
+
+The agent can also create/update/delete actions at runtime via built-in tools (`internal__create_action`, `internal__list_actions`, etc.).
 
 ### Scheduled Actions
 

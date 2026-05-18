@@ -677,6 +677,15 @@ async def main_async():
 
     ScheduleLoader(get_config_dir() / "schedules.json").ensure_default_tasks()
 
+    # Auto-migrate to event-schedules.json if needed
+    from .action_loader import ActionLoader
+
+    event_schedules_file = get_config_dir() / "event-schedules.json"
+    action_loader = ActionLoader(event_schedules_file)
+    action_loader.migrate_from_old_format(get_config_dir() / "schedules.json")
+    action_loader.migrate_scheduled_actions(get_config_dir() / "scheduled-actions.json")
+    action_loader.ensure_defaults()
+
     # Parse command - must start with /
     command = sys.argv[1] if len(sys.argv) > 1 else None
 

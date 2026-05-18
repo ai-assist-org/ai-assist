@@ -7,7 +7,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
-from ai_assist.config import get_config_dir
+from ai_assist.config import get_reports_dir
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +39,7 @@ class NotificationDispatcher:
             FileNotificationChannel,
         )
 
-        self.notification_log = notification_log or (get_config_dir() / "notifications.log")
+        self.notification_log = notification_log or (get_reports_dir() / "notifications.jsonl")
 
         self.channels: dict[str, Any] = {
             "console": ConsoleNotificationChannel(),

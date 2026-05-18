@@ -34,7 +34,8 @@ class ScheduleLoader:
                 task = TaskDefinition(
                     name=monitor_data["name"],
                     prompt=monitor_data["prompt"],
-                    interval=monitor_data["interval"],
+                    interval=monitor_data.get("interval"),
+                    trigger=monitor_data.get("trigger"),
                     description=monitor_data.get("description"),
                     enabled=monitor_data.get("enabled", True),
                     conditions=monitor_data.get("conditions", []),
@@ -48,6 +49,15 @@ class ScheduleLoader:
                 logger.warning("Skipping invalid monitor '%s': %s", monitor_data.get("name", "unknown"), e)
 
         return tasks
+
+    def load_event_source_configs(self) -> dict:
+        """Load event source configurations from JSON file
+
+        Returns:
+            Dict of source_type -> config, e.g. {"mqtt": {"broker": "localhost"}}
+        """
+        data = self._load_json()
+        return data.get("event_sources", {})
 
     def load_tasks(self) -> list[TaskDefinition]:
         """Load task definitions from JSON file

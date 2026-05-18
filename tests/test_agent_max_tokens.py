@@ -105,10 +105,10 @@ def test_unknown_sonnet_4_pattern():
 
 
 def test_vertex_model_format_opus_46():
-    """Vertex AI model format (with @) should work for Opus 4.6"""
+    """Dateless model ID should work for Opus 4.6"""
     config = AiAssistConfig(
         anthropic_api_key="test-key",
-        model="claude-opus-4-6@20260205",
+        model="claude-opus-4-6",
         mcp_servers={},
     )
     agent = AiAssistAgent(config)

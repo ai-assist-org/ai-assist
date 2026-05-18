@@ -95,7 +95,7 @@ def test_agent_uses_vertex_client():
             _agent = AiAssistAgent(config)
 
             # Verify AnthropicVertex was called with correct params
-            mock_vertex.assert_called_once_with(project_id="test-project-123", region="us-central1")
+            mock_vertex.assert_called_once_with(project_id="test-project-123", region="us-central1", max_retries=5)
 
 
 def test_agent_uses_vertex_client_without_region():
@@ -117,7 +117,7 @@ def test_agent_uses_vertex_client_without_region():
             _agent = AiAssistAgent(config)
 
             # Verify AnthropicVertex was called without region param
-            mock_vertex.assert_called_once_with(project_id="test-project-123")
+            mock_vertex.assert_called_once_with(project_id="test-project-123", max_retries=5)
 
 
 def test_agent_uses_direct_api_client():
@@ -139,7 +139,7 @@ def test_agent_uses_direct_api_client():
             _agent = AiAssistAgent(config)
 
             # Verify Anthropic was called with correct params
-            mock_anthropic.assert_called_once_with(api_key="sk-ant-test123")
+            mock_anthropic.assert_called_once_with(api_key="sk-ant-test123", max_retries=5)
 
 
 def test_no_credentials_configured():

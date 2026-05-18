@@ -1051,6 +1051,12 @@ class KnowledgeGraph:
         """Close the database connection"""
         self.conn.close()
 
+    def __del__(self):
+        try:
+            self.conn.close()
+        except Exception:
+            pass
+
     def __enter__(self):
         """Context manager entry"""
         return self

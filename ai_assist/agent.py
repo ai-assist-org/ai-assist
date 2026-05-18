@@ -12,6 +12,7 @@ from anthropic import Anthropic, AnthropicVertex, APIConnectionError, APIError, 
 from anthropic.types import TextBlockParam
 from mcp import ClientSession, StdioServerParameters
 
+from .action_tools import ActionTools
 from .audit import AuditLogger
 from .config import AiAssistConfig, MCPServerConfig
 from .filesystem_tools import FilesystemTools
@@ -211,9 +212,11 @@ class AiAssistAgent:
     }
 
     # Model-specific context window sizes (input tokens)
+    # Claude 4.6+ models have native 1M context windows
     MODEL_CONTEXT_WINDOWS = {
-        "claude-opus-4-7": 200000,
-        "claude-opus-4-6": 200000,
+        "claude-opus-4-7": 1000000,
+        "claude-opus-4-6": 1000000,
+        "claude-sonnet-4-6": 1000000,
         "claude-opus-4-5": 200000,
         "claude-sonnet-4-5": 200000,
         "claude-3-5-sonnet": 200000,
@@ -224,18 +227,6 @@ class AiAssistAgent:
     }
 
     CONTEXT_BUDGET_WARNING_THRESHOLD = 0.8
-
-    # Extended context window (1M tokens, beta)
-    EXTENDED_CONTEXT_MODELS = {
-        "claude-opus-4-7",
-        "claude-opus-4-6",
-        "claude-sonnet-4-6",
-        "claude-sonnet-4-5",
-        "claude-sonnet-4",
-    }
-    EXTENDED_CONTEXT_WINDOW = 1000000
-    EXTENDED_CONTEXT_BETA_HEADER = "context-1m-2025-08-07"
-    EXTENDED_CONTEXT_ACTIVATION_THRESHOLD = 0.75  # Activate at 75% of 200K (150K tokens)
 
     def __init__(self, config: AiAssistConfig, knowledge_graph: KnowledgeGraph | None = None):
         self.config = config
@@ -257,6 +248,11 @@ class AiAssistAgent:
 
         # Initialize internal schedule management tools
         self.schedule_tools = ScheduleTools(
+            known_mcp_servers=set(config.mcp_servers.keys()) if config.mcp_servers else None
+        )
+
+        # Initialize unified action tools (event-schedules.json)
+        self.action_tools = ActionTools(
             known_mcp_servers=set(config.mcp_servers.keys()) if config.mcp_servers else None
         )
 
@@ -302,19 +298,13 @@ class AiAssistAgent:
             else:
                 print(f"Using Vertex AI: project={config.vertex_project_id} (default region)")
 
-            self.anthropic = AnthropicVertex(**vertex_kwargs)
+            self.anthropic = AnthropicVertex(**vertex_kwargs, max_retries=5)
         else:
-            self.anthropic = Anthropic(api_key=config.anthropic_api_key)
+            self.anthropic = Anthropic(api_key=config.anthropic_api_key, max_retries=5)
 
         # Display model configuration
         max_tokens = self.get_max_tokens()
         print(f"🤖 Model: {config.model} (max output tokens: {max_tokens:,})")
-        if self._supports_extended_context():
-            print("   Extended context: available (1M, activates on demand)")
-
-        # Track whether extended context is currently active (per-query)
-        self._extended_context_active = False
-
         self.sessions: dict[str, ClientSession] = {}
         self.available_tools: list[dict] = []
         self.available_prompts: dict[str, dict] = {}  # {server_name: {prompt_name: Prompt}}
@@ -484,6 +474,12 @@ class AiAssistAgent:
         if schedule_action_tool_defs:
             self.available_tools.extend(schedule_action_tool_defs)
             print(f"✓ Added {len(schedule_action_tool_defs)} schedule action tools")
+
+        # Add unified action tools (event-driven scheduling)
+        action_tool_defs = self.action_tools.get_tool_definitions()
+        if action_tool_defs:
+            self.available_tools.extend(action_tool_defs)
+            print(f"✓ Added {len(action_tool_defs)} action tools")
 
         # Add goal tools (autonomous agent goals)
         goal_tool_defs = self.goal_tools.get_tool_definitions()
@@ -829,22 +825,12 @@ class AiAssistAgent:
         return api_tools
 
     def get_context_window_size(self) -> int:
-        """Get context window size for the current model.
-
-        Returns 1M if extended context is currently active, otherwise the
-        standard context window for the model.
-
-        Returns:
-            Context window size in tokens
-        """
-        if self._extended_context_active:
-            return self.EXTENDED_CONTEXT_WINDOW
+        """Get context window size for the current model."""
         model = self.config.model
-        # Try exact match first, then prefix match
         for key, size in self.MODEL_CONTEXT_WINDOWS.items():
             if key in model:
                 return size
-        return 200000  # Default for unknown models
+        return 200000
 
     def get_truncation_limits(self) -> dict[str, int]:
         """Calculate adaptive truncation limits based on current context window.
@@ -883,33 +869,6 @@ class AiAssistAgent:
             "context_window_tokens": context_window_tokens,
             "usable_tokens": usable_tokens,
         }
-
-    def _supports_extended_context(self) -> bool:
-        """Check if extended context is allowed and the model supports it."""
-        if not self.config.allow_extended_context:
-            return False
-        model = self.config.model.lower()
-        return any(m in model for m in self.EXTENDED_CONTEXT_MODELS)
-
-    def _needs_extended_context(self) -> bool:
-        """Check if token usage warrants activating extended context.
-
-        Returns True when input_tokens in the last turn exceed the activation
-        threshold (75% of the standard 200K window).
-        """
-        if not self._supports_extended_context():
-            return False
-        if not self._turn_token_usage:
-            return False
-        last_input = self._turn_token_usage[-1]["input_tokens"]
-        standard_window = 200000
-        return last_input > standard_window * self.EXTENDED_CONTEXT_ACTIVATION_THRESHOLD
-
-    def _get_extra_headers(self) -> dict[str, str] | None:
-        """Get extra headers for API calls, including the 1M beta header if needed."""
-        if self._extended_context_active:
-            return {"anthropic-beta": self.EXTENDED_CONTEXT_BETA_HEADER}
-        return None
 
     def _track_token_usage(self, response, turn: int):
         """Record token usage from an API response.
@@ -1047,6 +1006,56 @@ class AiAssistAgent:
         context_window = self.get_context_window_size()
         return last_input > context_window * self.OBSERVATION_MASKING_THRESHOLD
 
+    def _get_recent_notifications_context(self, max_age_minutes: int = 15, max_entries: int = 5) -> str:
+        """Read recent notifications from log and format as context section."""
+        import json as json_module
+        from datetime import datetime, timedelta
+
+        from .config import get_reports_dir
+
+        log_file = get_reports_dir() / "notifications.jsonl"
+        if not log_file.exists():
+            return ""
+
+        cutoff = datetime.now() - timedelta(minutes=max_age_minutes)
+        recent = []
+
+        try:
+            with open(log_file) as f:
+                for raw_line in f:
+                    line = raw_line.strip()
+                    if not line:
+                        continue
+                    try:
+                        entry = json_module.loads(line)
+                        ts = datetime.fromisoformat(entry["timestamp"])
+                        if ts >= cutoff:
+                            recent.append(entry)
+                    except json_module.JSONDecodeError, KeyError, ValueError:
+                        continue
+        except OSError:
+            return ""
+
+        if not recent:
+            return ""
+
+        recent = recent[-max_entries:]
+
+        lines = [f"# Recent Notifications ({len(recent)} in the last {max_age_minutes} min)\n"]
+        lines.append(
+            "The /monitor process reported the following. You can reference this information if the user asks about it.\n"
+        )
+        for entry in recent:
+            level = entry.get("level", "info").upper()
+            title = entry.get("title", "")
+            message = entry.get("message", "")
+            ts = entry.get("timestamp", "")
+            preview = message[:300] + "..." if len(message) > 300 else message
+            lines.append(f"- [{level}] **{title}** ({ts})")
+            lines.append(f"  {preview}")
+
+        return "\n".join(lines)
+
     def _build_system_prompt(self) -> list[TextBlockParam]:
         """Build complete system prompt including identity and skills
 
@@ -1065,6 +1074,12 @@ class AiAssistAgent:
         prompt = identity_prompt
         if skills_section:
             prompt += f"\n\n{skills_section}"
+
+        # Add recent notifications context
+        if self.interactive_mode:
+            notifications_section = self._get_recent_notifications_context()
+            if notifications_section:
+                prompt += f"\n\n{notifications_section}"
 
         # Add planning guidance
         prompt += "\n\n# Planning\n\n"
@@ -1433,9 +1448,8 @@ class AiAssistAgent:
         # withheld so the agent cannot pre-collect data before calling execute_mcp_prompt.
         api_tools = self._build_api_tools()
 
-        # Reset token tracking and extended context for this query
+        # Reset token tracking for this query
         self._turn_token_usage = []
-        self._extended_context_active = False
 
         # Store messages for introspection tools to access
         self._conversation_messages = messages
@@ -1466,14 +1480,6 @@ class AiAssistAgent:
             # Only mask old tool results when context is getting large
             if self._should_mask_observations():
                 self._mask_old_observations(messages)
-
-            # Check if we need to activate extended context
-            if not self._extended_context_active and self._needs_extended_context():
-                self._extended_context_active = True
-                import logging
-
-                last_input = self._turn_token_usage[-1]["input_tokens"]
-                logging.info("Activating 1M extended context (input tokens: %d/200000)", last_input)
 
             # Truncate individual large messages to prevent context overflow
             # Tool results can be huge (e.g., read_file on 12MB log, search with 200 results)
@@ -1518,8 +1524,6 @@ class AiAssistAgent:
                 # Recalculate total
                 total_chars = sum(len(str(m.get("content", ""))) for m in messages)
 
-            extra_headers = self._get_extra_headers()
-
             max_tokens = self.get_max_tokens()
 
             # Debug: estimate token counts for debugging context overflow
@@ -1544,7 +1548,7 @@ class AiAssistAgent:
                 len(api_tools),
                 f"{estimated_total:,}",
             )
-            if estimated_total > 1000000:  # Warn if over 1M tokens
+            if estimated_total > 1000000:
                 logger.warning(
                     "Estimated context (%s tokens) exceeds 1M token limit!",
                     f"{estimated_total:,}",
@@ -1560,7 +1564,6 @@ class AiAssistAgent:
                         system=system_prompt,
                         tools=api_tools,  # type: ignore[arg-type]
                         messages=messages,  # type: ignore[arg-type]
-                        extra_headers=extra_headers,
                     ) as stream:
                         response = stream.get_final_message()
                 else:
@@ -1570,7 +1573,6 @@ class AiAssistAgent:
                         system=system_prompt,
                         tools=api_tools,  # type: ignore[arg-type]
                         messages=messages,  # type: ignore[arg-type]
-                        extra_headers=extra_headers,
                     )
             except BadRequestError as e:
                 # Context limit or invalid request - return error to agent
@@ -1658,16 +1660,6 @@ class AiAssistAgent:
 
             messages.append({"role": "user", "content": tool_results})
 
-            # Re-check extended context after adding tool results: large tool payloads
-            # (e.g. Jira search results) are appended after the turn's API call, so the
-            # start-of-turn check misses the growth. Activate now so the next turn uses 1M.
-            if not self._extended_context_active and self._needs_extended_context():
-                self._extended_context_active = True
-                import logging
-
-                last_input = self._turn_token_usage[-1]["input_tokens"]
-                logging.info("Activating 1M extended context after tool results (input tokens: %d/200000)", last_input)
-
             # Wrap-up nudge: when approaching the turn limit, ask the agent to synthesize
             if not self._wrapup_nudge_fired and turn >= int(max_turns * 0.8):
                 self._wrapup_nudge_fired = True
@@ -1754,9 +1746,8 @@ class AiAssistAgent:
             # Build tools with progressive disclosure (truncated descriptions)
             api_tools = self._build_api_tools()
 
-            # Reset token tracking and extended context for this query
+            # Reset token tracking for this query
             self._turn_token_usage = []
-            self._extended_context_active = False
             self._wrapup_nudge_fired = False
 
             # Store messages for introspection tools to access
@@ -1792,14 +1783,6 @@ class AiAssistAgent:
                 # Only mask old tool results when context is getting large
                 if self._should_mask_observations():
                     self._mask_old_observations(messages)
-
-                # Check if we need to activate extended context
-                if not self._extended_context_active and self._needs_extended_context():
-                    self._extended_context_active = True
-                    import logging
-
-                    last_input = self._turn_token_usage[-1]["input_tokens"]
-                    logging.info("Activating 1M extended context (input tokens: %d/200000)", last_input)
 
                 # Truncate messages (same as in query())
                 # Get adaptive limits based on current context window
@@ -1840,7 +1823,6 @@ class AiAssistAgent:
                     messages.pop(0)
                     total_chars = sum(len(str(m.get("content", ""))) for m in messages)
 
-                extra_headers = self._get_extra_headers()
                 system_prompt = self._build_system_prompt()
 
                 # Use streaming API with error handling
@@ -1851,7 +1833,6 @@ class AiAssistAgent:
                         system=system_prompt,
                         tools=api_tools,  # type: ignore[arg-type]
                         messages=messages,  # type: ignore[arg-type]
-                        extra_headers=extra_headers,
                     ) as stream:
                         # Track content blocks
                         current_text = ""
@@ -2581,6 +2562,14 @@ class AiAssistAgent:
                 think_tools = ["think"]
                 json_tool_names = ["json_query"]
                 schedule_action_tools = ["schedule_action"]
+                action_tools = [
+                    "create_action",
+                    "list_actions",
+                    "update_action",
+                    "delete_action",
+                    "enable_action",
+                    "get_action_status",
+                ]
                 knowledge_tools = ["save_knowledge", "search_knowledge", "trigger_synthesis", "run_kg_synthesis"]
                 kg_query_tool_names = [
                     "kg_recent_changes",
@@ -2622,6 +2611,8 @@ class AiAssistAgent:
                         result_text = await self.kg_query_tools.execute_tool(original_tool_name, arguments)
                     else:
                         result_text = "Error: KG query tools not available (knowledge graph disabled)"
+                elif original_tool_name in action_tools:
+                    result_text = await self.action_tools.execute_tool(f"internal__{original_tool_name}", arguments)
                 else:
                     # Default to report tools
                     result_text = await self.report_tools.execute_tool(original_tool_name, arguments)

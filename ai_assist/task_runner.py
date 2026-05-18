@@ -7,6 +7,7 @@ from typing import Any
 
 from .agent import AiAssistAgent
 from .conditions import ActionExecutor, ConditionEvaluator
+from .event_sources import EventContext
 from .notification_dispatcher import Notification, NotificationDispatcher
 from .state import StateManager
 from .tasks import TaskDefinition
@@ -40,15 +41,27 @@ class TaskRunner:
         sanitized = "".join(c if c.isalnum() or c in "-_" else "_" for c in self.task_def.name)
         return f"task_{sanitized}"
 
-    async def run(self) -> TaskResult:
+    def _substitute_event_vars(self, prompt: str, event: EventContext) -> str:
+        prompt = prompt.replace("${event.payload}", event.payload)
+        prompt = prompt.replace("${event.source_type}", event.source_type)
+        prompt = prompt.replace("${event.timestamp}", event.timestamp.isoformat())
+        for key, value in event.metadata.items():
+            prompt = prompt.replace(f"${{event.{key}}}", str(value))
+        return prompt
+
+    async def run(self, event_context: EventContext | None = None) -> TaskResult:
         """Execute the task and return results"""
         timestamp = datetime.now()
 
         try:
+            prompt = self.task_def.prompt
+            if event_context is not None:
+                prompt = self._substitute_event_vars(prompt, event_context)
+
             # Detect and execute built-in, AWL goals, MCP prompts, or natural language
-            if self.task_def.prompt == "__builtin__:kg_synthesis":
+            if prompt == "__builtin__:kg_synthesis":
                 output = await self.agent._run_synthesis_from_kg()
-            elif self.task_def.prompt.endswith(".awl"):
+            elif prompt.endswith(".awl"):
                 output = await self._run_awl_script()
             elif self.task_def.is_mcp_prompt:
                 server_name, prompt_name = self.task_def.parse_mcp_prompt()
@@ -56,8 +69,7 @@ class TaskRunner:
                     server_name, prompt_name, self.task_def.prompt_arguments, max_turns=self.task_def.max_turns
                 )
             else:
-                # Existing natural language path
-                output = await self.agent.query(self.task_def.prompt, max_turns=self.task_def.max_turns)
+                output = await self.agent.query(prompt, max_turns=self.task_def.max_turns)
 
             evaluator = ConditionEvaluator()
             metadata = evaluator.extract_metadata(output)
@@ -85,15 +97,10 @@ class TaskRunner:
                 },
             )
 
-            self.state_manager.append_history(
-                self.state_key,
-                {
-                    "task_name": self.task_def.name,
-                    "success": True,
-                    "timestamp": timestamp.isoformat(),
-                    "metadata": metadata,
-                },
-            )
+            from .execution_helpers import build_history_entry
+
+            history_entry = build_history_entry(self.task_def.name, True, timestamp, metadata, event_context)
+            self.state_manager.append_history(self.state_key, history_entry)
 
             result = TaskResult(
                 task_name=self.task_def.name, success=True, output=output, timestamp=timestamp, metadata=metadata
@@ -141,56 +148,9 @@ class TaskRunner:
             return result
 
     async def _run_awl_script(self) -> str:
-        """Execute an AWL script with state persistence.
+        from .awl_executor import run_awl_script
 
-        Supports both @goal scripts (via GoalRunner) and @start workflows (via AWLRuntime).
-        """
-        from pathlib import Path
-
-        from .awl_ast import GoalNode
-        from .awl_parser import AWLParser
-        from .config import get_config_dir
-
-        # Resolve AWL path (relative to goals dir or absolute)
-        awl_path = Path(self.task_def.prompt)
-        if not awl_path.is_absolute():
-            awl_path = get_config_dir() / self.task_def.prompt
-
-        if not awl_path.exists():
-            raise FileNotFoundError(f"AWL script not found: {awl_path}")
-
-        # Parse to determine script type
-        source = awl_path.read_text()
-        workflow = AWLParser(source).parse()
-        has_goal = any(isinstance(n, GoalNode) for n in workflow.body)
-
-        if has_goal:
-            # @goal script — use GoalRunner with state persistence
-            from .goal_runner import GoalRunner
-            from .goal_state import GoalStateManager
-
-            state_manager = GoalStateManager(get_config_dir() / "state")
-            runner = GoalRunner(awl_path, self.agent, state_manager)
-            runner.load()
-            await runner.run_cycle()
-
-            lines = [f"Goal '{runner.goal_id}' cycle completed."]
-            state = state_manager.load(runner.goal_id)
-            lines.append(f"Status: {state.status} | Cycles: {state.cycle_count}")
-            if state.success_reason:
-                lines.append(f"Success: {state.success_reason}")
-            return "\n".join(lines)
-        else:
-            # @start workflow — use AWLRuntime directly
-            from .awl_runtime import AWLRuntime
-
-            runtime = AWLRuntime(self.agent)
-            result = await runtime.execute(workflow)
-            if not result.success:
-                raise RuntimeError(
-                    f"AWL workflow failed: {result.task_outcomes[-1].summary if result.task_outcomes else 'unknown error'}"
-                )
-            return result.return_value or "Workflow completed successfully."
+        return await run_awl_script(self.task_def.prompt, self.agent)
 
     def get_last_run(self) -> datetime | None:
         """Get timestamp of last successful run"""
@@ -206,20 +166,9 @@ class TaskRunner:
 
         Uses desktop and console channels so failures are never silently swallowed.
         """
-        error_summary = result.output[:500] if result.output else "Unknown error"
-        notification = Notification(
-            id=f"task-error-{self.task_def.name}-{int(result.timestamp.timestamp() * 1000)}",
-            action_id=self.task_def.name,
-            title=f"Task failed: {self.task_def.name}",
-            message=error_summary,
-            level="error",
-            timestamp=result.timestamp,
-            channels=["desktop", "console"],
-            delivered={},
-        )
+        from .execution_helpers import send_failure_notification
 
-        dispatcher = NotificationDispatcher()
-        await dispatcher.dispatch(notification)
+        await send_failure_notification(self.task_def.name, result.output, result.timestamp)
 
     async def _send_notification(self, result: TaskResult):
         """Send notification for task completion"""

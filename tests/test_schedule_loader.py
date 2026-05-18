@@ -313,3 +313,79 @@ class TestScheduleLoader:
         tasks = loader.load_tasks()
         names = [t.name for t in tasks]
         assert "kg-synthesis" in names
+
+    def test_load_event_source_configs(self, temp_json_file):
+        """Test loading event_sources section from JSON"""
+        data = {
+            "version": "1.0",
+            "event_sources": {
+                "mqtt": {"broker": "localhost", "port": 1883},
+                "dbus": {"bus": "session"},
+            },
+            "monitors": [],
+            "tasks": [],
+        }
+        temp_json_file.write_text(json.dumps(data))
+
+        loader = ScheduleLoader(temp_json_file)
+        configs = loader.load_event_source_configs()
+
+        assert "mqtt" in configs
+        assert configs["mqtt"]["broker"] == "localhost"
+        assert configs["dbus"]["bus"] == "session"
+
+    def test_load_event_source_configs_missing(self, temp_json_file):
+        """Test event_sources defaults to empty dict when missing"""
+        data = {"version": "1.0", "monitors": [], "tasks": []}
+        temp_json_file.write_text(json.dumps(data))
+
+        loader = ScheduleLoader(temp_json_file)
+        configs = loader.load_event_source_configs()
+
+        assert configs == {}
+
+    def test_load_monitors_with_trigger(self, temp_json_file):
+        """Test loading monitors with trigger instead of interval"""
+        data = {
+            "version": "1.0",
+            "monitors": [
+                {
+                    "name": "MQTT Monitor",
+                    "prompt": "Handle: ${event.payload}",
+                    "trigger": {"type": "mqtt", "topic": "alerts/#"},
+                }
+            ],
+            "tasks": [],
+        }
+        temp_json_file.write_text(json.dumps(data))
+
+        loader = ScheduleLoader(temp_json_file)
+        monitors = loader.load_monitors()
+
+        assert len(monitors) == 1
+        assert monitors[0].is_event_triggered is True
+        assert monitors[0].trigger == {"type": "mqtt", "topic": "alerts/#"}
+        assert monitors[0].interval is None
+
+    def test_load_mixed_timer_and_triggered(self, temp_json_file):
+        """Test loading mix of timer and event-triggered monitors"""
+        data = {
+            "version": "1.0",
+            "monitors": [
+                {"name": "Timer", "prompt": "Check stuff", "interval": "5m"},
+                {
+                    "name": "MQTT",
+                    "prompt": "Handle: ${event.payload}",
+                    "trigger": {"type": "mqtt", "topic": "t"},
+                },
+            ],
+            "tasks": [],
+        }
+        temp_json_file.write_text(json.dumps(data))
+
+        loader = ScheduleLoader(temp_json_file)
+        monitors = loader.load_monitors()
+
+        assert len(monitors) == 2
+        assert monitors[0].is_event_triggered is False
+        assert monitors[1].is_event_triggered is True

@@ -45,6 +45,20 @@ def get_config_dir(override: str | None = None) -> Path:
     return config_dir
 
 
+def get_reports_dir() -> Path:
+    """Get the ai-assist reports directory.
+
+    Priority: AI_ASSIST_REPORTS_DIR env var, then ~/ai-assist/reports
+    """
+    env_dir = os.getenv("AI_ASSIST_REPORTS_DIR")
+    if env_dir:
+        reports_dir = Path(os.path.expanduser(env_dir))
+    else:
+        reports_dir = Path.home() / "ai-assist" / "reports"
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    return reports_dir
+
+
 def setup_logging(config_dir: Path | None = None) -> None:
     """Configure logging to write to both console and file.
 
@@ -139,7 +153,7 @@ class AiAssistConfig(BaseModel):
     vertex_project_id: str | None = Field(default_factory=lambda: os.getenv("ANTHROPIC_VERTEX_PROJECT_ID"))
     vertex_region: str | None = Field(default_factory=lambda: os.getenv("ANTHROPIC_VERTEX_REGION"))
 
-    model: str = Field(default="claude-sonnet-4-5@20250929")
+    model: str = Field(default="claude-sonnet-4-6")
 
     @property
     def use_vertex(self) -> bool:
@@ -189,16 +203,7 @@ class AiAssistConfig(BaseModel):
         default_factory=list,
     )
 
-    # Extended context window (1M tokens, beta)
-    # When enabled, the agent can dynamically activate the 1M context window
-    # if token usage approaches the 200K default limit. Costs 2x input above 200K.
-    allow_extended_context: bool = Field(
-        default_factory=lambda: os.getenv("AI_ASSIST_ALLOW_EXTENDED_CONTEXT", "false").lower() == "true",
-        description="Allow dynamic activation of 1M context window when needed (beta, higher cost)",
-    )
-
     # Adaptive truncation limits (percentage of context window)
-    # These percentages scale automatically with extended context activation
     message_limit_pct: float = Field(
         default_factory=lambda: float(os.getenv("AI_ASSIST_MESSAGE_LIMIT_PCT", "5.0")),
         description="Maximum percentage of context window per message (default: 5%, range: 1-20%)",
@@ -259,7 +264,7 @@ class AiAssistConfig(BaseModel):
             anthropic_api_key=os.getenv("ANTHROPIC_API_KEY", ""),
             vertex_project_id=os.getenv("ANTHROPIC_VERTEX_PROJECT_ID"),
             vertex_region=os.getenv("ANTHROPIC_VERTEX_REGION"),
-            model=os.getenv("AI_ASSIST_MODEL", "claude-sonnet-4-6@20260219"),
+            model=os.getenv("AI_ASSIST_MODEL", "claude-sonnet-4-6"),
             mcp_servers=mcp_servers,
         )
 

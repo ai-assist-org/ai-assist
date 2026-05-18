@@ -219,8 +219,8 @@ def test_task_definition_validation():
         task = TaskDefinition(name="Test", prompt="", interval="5m")
         task.validate()
 
-    # Invalid: no interval
-    with pytest.raises(ValueError, match="Task interval is required"):
+    # Invalid: empty interval (not valid format)
+    with pytest.raises(ValueError, match="Invalid interval"):
         task = TaskDefinition(name="Test", prompt="Test", interval="")
         task.validate()
 
@@ -330,3 +330,113 @@ def test_mcp_prompt_with_nested_path():
     server, prompt = task.parse_mcp_prompt()
     assert server == "server"
     assert prompt == "category/subcategory/prompt"
+
+
+# Event trigger tests
+
+
+def test_event_triggered_task():
+    """Test TaskDefinition with trigger instead of interval"""
+    task = TaskDefinition(
+        name="MQTT Task",
+        prompt="Handle alert: ${event.payload}",
+        trigger={"type": "mqtt", "topic": "alerts/#"},
+    )
+    task.validate()
+    assert task.is_event_triggered is True
+    assert task.trigger == {"type": "mqtt", "topic": "alerts/#"}
+    assert task.interval is None
+
+
+def test_timer_task_not_event_triggered():
+    """Test that interval-based tasks are not event-triggered"""
+    task = TaskDefinition(name="Timer Task", prompt="Check stuff", interval="5m")
+    task.validate()
+    assert task.is_event_triggered is False
+
+
+def test_validate_requires_interval_or_trigger():
+    """Test that either interval or trigger is required"""
+    task = TaskDefinition(name="No Trigger", prompt="Test")
+    with pytest.raises(ValueError, match="must have either 'interval' or 'trigger'"):
+        task.validate()
+
+
+def test_validate_rejects_both_interval_and_trigger():
+    """Test that both interval and trigger is rejected"""
+    task = TaskDefinition(
+        name="Both",
+        prompt="Test",
+        interval="5m",
+        trigger={"type": "mqtt", "topic": "t"},
+    )
+    with pytest.raises(ValueError, match="cannot have both"):
+        task.validate()
+
+
+def test_validate_trigger_requires_type():
+    """Test that trigger must have a type field"""
+    task = TaskDefinition(
+        name="No Type",
+        prompt="Test",
+        trigger={"topic": "alerts/#"},
+    )
+    with pytest.raises(ValueError, match="'type' field"):
+        task.validate()
+
+
+def test_from_dict_with_trigger():
+    """Test from_dict parses trigger field"""
+    data = {
+        "name": "MQTT Monitor",
+        "prompt": "Handle: ${event.payload}",
+        "trigger": {"type": "mqtt", "topic": "alerts/#"},
+    }
+    task = TaskDefinition.from_dict(data)
+    assert task.trigger == {"type": "mqtt", "topic": "alerts/#"}
+    assert task.interval is None
+    assert task.is_event_triggered is True
+
+
+def test_from_dict_with_interval_backward_compat():
+    """Test from_dict still works with interval (backward compat)"""
+    data = {
+        "name": "Timer Monitor",
+        "prompt": "Check stuff",
+        "interval": "5m",
+    }
+    task = TaskDefinition.from_dict(data)
+    assert task.interval == "5m"
+    assert task.trigger is None
+    assert task.is_event_triggered is False
+
+
+def test_interval_seconds_on_event_triggered_raises():
+    """Test that interval_seconds raises on event-triggered task"""
+    task = TaskDefinition(
+        name="MQTT Task",
+        prompt="Test",
+        trigger={"type": "mqtt", "topic": "t"},
+    )
+    with pytest.raises(ValueError, match="Event-triggered"):
+        _ = task.interval_seconds
+
+
+def test_is_time_based_on_event_triggered():
+    """Test that is_time_based returns False for event-triggered tasks"""
+    task = TaskDefinition(
+        name="MQTT Task",
+        prompt="Test",
+        trigger={"type": "mqtt", "topic": "t"},
+    )
+    assert task.is_time_based is False
+
+
+def test_is_interval_with_range_on_event_triggered():
+    """Test that is_interval_with_range returns False for event-triggered tasks"""
+    task = TaskDefinition(
+        name="MQTT Task",
+        prompt="Test",
+        trigger={"type": "mqtt", "topic": "t"},
+    )
+    assert task.is_interval_with_range is False

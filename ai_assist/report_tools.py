@@ -1,7 +1,6 @@
 """Internal report management tools for ai-assist"""
 
 import json
-import os
 from datetime import datetime
 from pathlib import Path
 
@@ -19,14 +18,9 @@ class ReportTools:
     """Internal tools for managing reports in multiple formats (md, jsonl, csv, tsv)"""
 
     def __init__(self, reports_dir: Path | None = None):
-        if reports_dir is None:
-            env_dir = os.getenv("AI_ASSIST_REPORTS_DIR")
-            if env_dir:
-                reports_dir = Path(os.path.expanduser(env_dir))
-            else:
-                reports_dir = Path.home() / "ai-assist" / "reports"
+        from .config import get_reports_dir
 
-        self.reports_dir = Path(reports_dir)
+        self.reports_dir = Path(reports_dir) if reports_dir else get_reports_dir()
         self.reports_dir.mkdir(parents=True, exist_ok=True)
 
     def get_tool_definitions(self) -> list[dict]:

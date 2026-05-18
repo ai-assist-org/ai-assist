@@ -1057,6 +1057,64 @@ KG sections are capped at 1500 chars}
 \end{columns}
 \end{frame}
 
+% ── Slide: Event-Driven Actions ─────────────────────────────────
+\begin{frame}[fragile]{Event-Driven Actions: Beyond Timers}
+\begin{columns}[T]
+\begin{column}{0.45\textwidth}
+\textbf{Unified Trigger + Action Model}
+\begin{itemize}\small
+  \item Everything is a \alert{trigger + prompt}
+  \item Time is just one trigger type
+  \item \textbf{MQTT}: react to IoT / broker messages
+  \item \textbf{D-Bus}: react to Linux system signals
+  \item \textbf{Once}: one-shot future execution
+  \item Agent has CRUD tools for triggers
+  \item Pluggable: add new event sources via ABC
+\end{itemize}
+
+\medskip
+\textbf{How events reach the agent}
+\begin{itemize}\scriptsize
+  \item Event arrives $\to$ trigger matcher checks rules
+  \item Match $\to$ prompt executed with event context
+  \item Agent decides what to do (tools, notifications)
+\end{itemize}
+\end{column}
+\begin{column}{0.50\textwidth}
+\begin{lstlisting}[style=json,title={\scriptsize event-schedules.json}]
+{
+  "event_sources": {
+    "mqtt": {
+      "broker": "localhost",
+      "port": 1883
+    }
+  },
+  "actions": [
+    {
+      "name": "CI Alert",
+      "trigger": {
+        "type": "mqtt",
+        "topic": "alerts/#"
+      },
+      "prompt": "Analyze this alert
+        and notify the user
+        if action is needed."
+    },
+    {
+      "name": "DCI Check",
+      "trigger": {
+        "type": "interval",
+        "every": "5m"
+      },
+      "prompt": "Check DCI failures"
+    }
+  ]
+}
+\end{lstlisting}
+\end{column}
+\end{columns}
+\end{frame}
+
 % ══════════════════════════════════════════════════════════════════
 \section{Security}
 % ══════════════════════════════════════════════════════════════════
@@ -1451,12 +1509,14 @@ Task blocks show brief description; hover reveals full goal, context, constraint
   \item \textcolor{green!60!black}{\checkmark} Multi-instance support
   \item \textcolor{green!60!black}{\checkmark} AWL workflow execution from prompts
   \item \textcolor{green!60!black}{\checkmark} AWL workflow visualization (\texttt{/awl-viz})
+  \item \textcolor{green!60!black}{\checkmark} \alert{Event-driven actions} (MQTT, D-Bus)
+  \item \textcolor{green!60!black}{\checkmark} Unified trigger + action model
 \end{itemize}
 \end{column}
 \begin{column}{0.48\textwidth}
 \textbf{Future}
 \begin{itemize}\small
-  \item Multiple event sources (DBUS, webhooks, ...)
+  \item More event sources (webhooks, polling, ...)
   \item More security sandboxing (Landlock or Bubblewrap)
   \item Network restrictions for scripts
   \item A2A (Agent to Agent) communication

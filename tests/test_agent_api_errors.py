@@ -80,7 +80,10 @@ async def test_rate_limit_error_returned_to_agent():
         body={"error": {"message": "rate limit exceeded"}},
     )
 
-    with patch.object(agent.anthropic.messages, "create", side_effect=error):
+    with (
+        patch.object(agent.anthropic.messages, "create", side_effect=error),
+        patch.object(agent.anthropic.messages, "stream", side_effect=error),
+    ):
         result = await agent.query("test query", max_turns=1)
 
     assert "rate limit" in result.lower()
@@ -95,7 +98,10 @@ async def test_connection_error_returned_to_agent():
 
     error = APIConnectionError(message="Connection timeout", request=MagicMock())
 
-    with patch.object(agent.anthropic.messages, "create", side_effect=error):
+    with (
+        patch.object(agent.anthropic.messages, "create", side_effect=error),
+        patch.object(agent.anthropic.messages, "stream", side_effect=error),
+    ):
         result = await agent.query("test query", max_turns=1)
 
     assert "connection" in result.lower() or "timeout" in result.lower()
@@ -120,7 +126,10 @@ async def test_generic_api_error_returned_to_agent():
         body={"error": {"message": "Internal server error"}},
     )
 
-    with patch.object(agent.anthropic.messages, "create", side_effect=error):
+    with (
+        patch.object(agent.anthropic.messages, "create", side_effect=error),
+        patch.object(agent.anthropic.messages, "stream", side_effect=error),
+    ):
         result = await agent.query("test query", max_turns=1)
 
     assert "error" in result.lower()
@@ -139,7 +148,16 @@ async def test_successful_query_not_affected():
     mock_response.stop_reason = "end_turn"
     mock_response.usage = MagicMock(input_tokens=100, output_tokens=20)
 
-    with patch.object(agent.anthropic.messages, "create", return_value=mock_response):
+    mock_stream_ctx = MagicMock()
+    mock_stream_ctx.__enter__ = MagicMock(
+        return_value=MagicMock(get_final_message=MagicMock(return_value=mock_response))
+    )
+    mock_stream_ctx.__exit__ = MagicMock(return_value=False)
+
+    with (
+        patch.object(agent.anthropic.messages, "create", return_value=mock_response),
+        patch.object(agent.anthropic.messages, "stream", return_value=mock_stream_ctx),
+    ):
         result = await agent.query("test query", max_turns=1)
 
     assert "Hello, I'm working fine!" in result

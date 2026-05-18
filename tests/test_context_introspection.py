@@ -29,37 +29,12 @@ async def test_get_context_usage():
     assert "input_tokens" in data
     assert "context_window" in data
     assert "utilization" in data
-    assert "extended_context_available" in data
-    assert "extended_context_active" in data
     assert "turns_in_conversation" in data
 
-    assert data["input_tokens"] == 25000  # Last turn
-    assert data["context_window"] == 200000  # Default
+    assert data["input_tokens"] == 25000
+    assert data["context_window"] == 1000000  # Native 1M for 4.6+
     assert "%" in data["utilization"]
     assert data["turns_in_conversation"] == 3
-
-
-@pytest.mark.asyncio
-async def test_get_context_usage_extended_context():
-    """Test context usage when extended context is active."""
-    config = AiAssistConfig(anthropic_api_key="test-key", working_dirs=["/tmp"])
-    agent = AiAssistAgent(config=config)
-
-    # Activate extended context
-    agent._extended_context_active = True
-    agent._turn_token_usage = [
-        {"turn": 1, "input_tokens": 500000, "output_tokens": 5000},
-    ]
-
-    result = await agent.introspection_tools.execute_tool("get_context_usage", {})
-
-    import json
-
-    data = json.loads(result)
-
-    assert data["context_window"] == 1000000  # Extended
-    assert data["extended_context_active"] is True
-    assert data["input_tokens"] == 500000
 
 
 @pytest.mark.asyncio

@@ -32,12 +32,13 @@ This document provides guidance for AI agents and developers working on the ai-a
 └────────────────┘ └────────────┘ └────────────────┘
 ```
 
-The system has four major subsystems:
+The system has five major subsystems:
 
 1. **MCP Integration** (`agent.py`): Connects to MCP servers (DCI, Jira, etc.) and routes tool calls using the format `server_name__tool_name`
 2. **AWL Runtime** (`awl_parser.py`, `awl_runtime.py`, `awl_ast.py`, `awl_expressions.py`): Agent Workflow Language interpreter for multi-step workflows
 3. **Knowledge Graph** (`knowledge_graph.py`): Temporal SQLite database with vector embeddings for entity tracking, change detection, and conversation memory
 4. **Agent Skills** (`skills_loader.py`, `skills_manager.py`): Loads agentskills.io-compliant skills with optional sandboxed script execution
+5. **Event Sources** (`event_sources.py`, `event_source_mqtt.py`, `event_source_dbus.py`): Pluggable event system for reactive task triggering via MQTT, D-Bus, etc.
 
 Key interaction modes:
 - **Interactive** (`tui_interactive.py`): Rich TUI with streaming responses, history, tab completion
@@ -108,6 +109,94 @@ Cross-platform background service installation for persistent monitoring:
 
 Files: `service.py`
 
+### Event-Driven Actions
+
+Unified action system where everything is a **trigger + prompt**. Actions are stored in `~/.ai-assist/event-schedules.json` and managed via agent tools. Trigger types include time-based (interval, schedule, once) and event-based (MQTT, D-Bus).
+
+- **ActionDefinition** (`action_model.py`): unified model replacing `TaskDefinition` + `ScheduledAction`
+- **TriggerMatcher** (`action_model.py`): matches incoming events against event-based trigger configs
+- **ActionEngine** (`action_engine.py`): executes actions (natural language, MCP prompts, AWL, builtins) with event context
+- **ActionScheduler** (`action_scheduler.py`): unified scheduler for timer and event actions
+- **ActionLoader** (`action_loader.py`): load/save `event-schedules.json`, auto-migration from old format
+- **ActionTools** (`action_tools.py`): agent CRUD tools for actions
+- **EventSource** ABC (`event_sources.py`): pluggable event sources (MQTT, D-Bus)
+- **MQTT** (`event_source_mqtt.py`): optional dep `aiomqtt` — `pip install ai-assist[mqtt]`
+- **D-Bus** (`event_source_dbus.py`): optional dep `dbus-next` — `pip install ai-assist[dbus]`
+
+Configuration in `event-schedules.json`:
+```json
+{
+  "event_sources": {"mqtt": {"broker": "localhost", "port": 1883}},
+  "actions": [
+    {"name": "DCI Check", "trigger": {"type": "interval", "every": "5m"}, "prompt": "Check DCI failures"},
+    {"name": "Alert Handler", "trigger": {"type": "mqtt", "topic": "alerts/#"}, "prompt": "Analyze this alert."}
+  ]
+}
+```
+
+**Example: USB device monitoring via D-Bus**
+
+React to USB filesystem mount/unmount events on Linux:
+```json
+{
+  "event_sources": {
+    "dbus": { "bus": "system" }
+  },
+  "actions": [
+    {
+      "name": "USB Filesystem Mounted",
+      "trigger": {
+        "type": "dbus",
+        "interface": "org.freedesktop.DBus.Properties",
+        "signal": "PropertiesChanged",
+        "payload_contains": "MountPoints"
+      },
+      "prompt": "A USB filesystem was just mounted. Describe the mount point and device.",
+      "notify": true,
+      "notification_channels": ["desktop", "console", "file"]
+    },
+    {
+      "name": "USB Device Removed",
+      "trigger": {
+        "type": "dbus",
+        "interface": "org.freedesktop.DBus.ObjectManager",
+        "signal": "InterfacesRemoved",
+        "path": "/org/freedesktop/UDisks2",
+        "payload_contains": "Filesystem"
+      },
+      "prompt": "A USB filesystem was just removed. Describe what happened.",
+      "notify": true,
+      "notification_channels": ["desktop", "console", "file"]
+    }
+  ]
+}
+```
+
+**Example: "Welcome back" briefing on screen unlock (GNOME)**
+```json
+{
+  "actions": [
+    {
+      "name": "Screen Locked",
+      "trigger": {"type": "dbus", "interface": "org.gnome.ScreenSaver", "signal": "ActiveChanged", "bus": "session", "payload_contains": "True"},
+      "prompt": "Save the current timestamp to the report screen-lock-time."
+    },
+    {
+      "name": "Welcome Back Briefing",
+      "trigger": {"type": "dbus", "interface": "org.gnome.ScreenSaver", "signal": "ActiveChanged", "bus": "session", "payload_contains": "False"},
+      "prompt": "The user unlocked their screen. Read screen-lock-time, check recent notifications, summarize what happened.",
+      "notify": true, "notification_channels": ["desktop", "console", "file"]
+    }
+  ]
+}
+```
+
+D-Bus triggers support per-trigger `bus` field (`system` or `session`) — one D-Bus source connects to both buses as needed. Event-based actions support debouncing (3s window) to collapse burst signals. The `payload_contains` and `payload_regex` fields filter events by their content before execution.
+
+**Context injection**: recent notifications from `/monitor` are automatically injected into the interactive agent's system prompt (last 15 minutes), so the user can ask follow-up questions about events.
+
+Files: `action_model.py`, `action_engine.py`, `action_scheduler.py`, `action_loader.py`, `action_tools.py`, `event_sources.py`, `event_source_mqtt.py`, `event_source_dbus.py`
+
 ### Configuration & State
 
 **Configuration sources** (precedence order):
@@ -126,6 +215,7 @@ Files: `service.py`
 - `allowed_commands.json` - User-approved shell commands
 - `skill_env.json` - Per-skill env var allowlists
 - `scheduled-actions.json` - One-time future actions
+- `events.jsonl` - Event bridge (monitor→interactive IPC)
 - `interactive_history.txt` - Command history
 
 Files: `config.py`, `state.py`, `config_watcher.py`, `file_watchdog.py`
@@ -551,8 +641,17 @@ ai_assist/
 ├── skills_*.py                # Agent Skills loader and manager
 ├── tui*.py                    # Terminal UI components
 ├── monitors.py, tasks.py      # Monitoring and task execution
+├── action_model.py            # Unified action model (trigger + prompt)
+├── action_engine.py           # Action execution engine
+├── action_scheduler.py        # Unified scheduler (timer + event + one-shot)
+├── action_loader.py           # Load/save event-schedules.json
+├── action_tools.py            # Agent tools for action CRUD
+├── awl_executor.py            # Shared AWL script execution
+├── event_sources.py           # Pluggable event source system (ABC, manager)
+├── event_source_mqtt.py       # MQTT event source (optional: aiomqtt)
+├── event_source_dbus.py       # D-Bus event source (optional: dbus-next)
 ├── *_tools.py                 # Tool implementations (report, schedule, KG, filesystem, etc.)
-├── scheduled_actions.py       # One-time future actions
+├── scheduled_actions.py       # One-time future actions (legacy)
 ├── notification_*.py          # Notification channels and dispatcher
 ├── state.py                   # State management and caching
 ├── *_watcher.py               # File watching and hot-reload
@@ -569,7 +668,8 @@ emacs/                         # AWL major mode for Emacs
 - `.env` - Environment variables (API keys, model, feature flags)
 - `~/.ai-assist/mcp_servers.yaml` - MCP server definitions
 - `~/.ai-assist/identity.yaml` - User/assistant personalization
-- `~/.ai-assist/schedules.json` - Monitors and periodic tasks
+- `~/.ai-assist/event-schedules.json` - Unified actions (trigger + prompt)
+- `~/.ai-assist/schedules.json` - Monitors and periodic tasks (legacy, auto-migrated)
 - `.pre-commit-config.yaml` - Git hooks configuration
 - `pyproject.toml` - Python package config, tool settings, linting rules
 
