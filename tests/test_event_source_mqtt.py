@@ -107,7 +107,7 @@ class TestMqttEventSource:
             # Wait for the dispatch to happen and stop the loop
             try:
                 await asyncio.wait_for(task, timeout=2.0)
-            except (TimeoutError, asyncio.CancelledError):
+            except TimeoutError, asyncio.CancelledError:
                 pass
 
         assert len(dispatched) == 1

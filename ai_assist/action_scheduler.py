@@ -303,7 +303,7 @@ class ActionScheduler:
                     continue
                 try:
                     target_time = datetime.fromisoformat(action.trigger["at"])
-                except (ValueError, KeyError):
+                except ValueError, KeyError:
                     continue
                 if target_time > now or target_time < lookback:
                     continue
@@ -323,7 +323,7 @@ class ActionScheduler:
             try:
                 schedule_str = f"{action.trigger['at']} on {action.trigger['days']}"
                 schedule = TaskLoader.parse_time_schedule(schedule_str)
-            except (ValueError, KeyError):
+            except ValueError, KeyError:
                 continue
 
             last_scheduled = TaskLoader.calculate_next_run(schedule, from_time=lookback)

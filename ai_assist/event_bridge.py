@@ -61,7 +61,7 @@ class BridgePublisher:
                         kept.append(line)
                     else:
                         removed += 1
-                except (json.JSONDecodeError, KeyError, ValueError):
+                except json.JSONDecodeError, KeyError, ValueError:
                     kept.append(line)
 
         if removed > 0:

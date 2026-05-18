@@ -1084,7 +1084,7 @@ class AiAssistAgent:
                         ts = datetime.fromisoformat(entry["timestamp"])
                         if ts >= cutoff:
                             recent.append(entry)
-                    except (json_module.JSONDecodeError, KeyError, ValueError):
+                    except json_module.JSONDecodeError, KeyError, ValueError:
                         continue
         except OSError:
             return ""

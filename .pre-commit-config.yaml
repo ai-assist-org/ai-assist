@@ -1,6 +1,9 @@
 # Pre-commit hooks for ai-assist
 # See https://pre-commit.com for more information
 
+default_language_version:
+  python: python3.14
+
 repos:
   # Standard pre-commit hooks
   - repo: https://github.com/pre-commit/pre-commit-hooks
@@ -22,7 +25,6 @@ repos:
     rev: 26.3.1
     hooks:
       - id: black
-        language_version: python3
         args: ['--line-length=120']
 
   # Import sorting handled by ruff (faster, includes isort)

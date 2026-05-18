@@ -69,7 +69,7 @@ class ActionLoader:
         try:
             with open(old_schedules_file) as f:
                 old_data = json.load(f)
-        except (json.JSONDecodeError, OSError):
+        except json.JSONDecodeError, OSError:
             logger.exception("Failed to read old schedules file for migration")
             return
 
@@ -103,7 +103,7 @@ class ActionLoader:
         try:
             with open(old_actions_file) as f:
                 old_data = json.load(f)
-        except (json.JSONDecodeError, OSError):
+        except json.JSONDecodeError, OSError:
             logger.exception("Failed to read old scheduled actions file for migration")
             return
 
