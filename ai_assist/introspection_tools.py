@@ -523,10 +523,9 @@ Use this tool to:
 - See how many tokens you're currently using
 - Check if you're approaching context limits
 - Decide whether to use __save_to_file or compact conversation
-- Determine if extended context (1M tokens) is available or active
 
-Returns JSON with: input_tokens, context_window, utilization, extended_context_available,
-extended_context_active, turns_in_conversation, and tool_results_cached.
+Returns JSON with: input_tokens, context_window, utilization,
+turns_in_conversation, and tool_results_cached.
 
 Use this proactively before making large data fetches or when you notice conversation
 getting long.
@@ -1086,10 +1085,6 @@ Do NOT compact if you still need the old tool results for your current task.
         # Calculate utilization
         utilization = (input_tokens / context_window * 100) if context_window > 0 else 0
 
-        # Check extended context support
-        extended_available = self.agent._supports_extended_context()
-        extended_active = self.agent._extended_context_active
-
         # Count tool results in conversation (cached observations)
         tool_results_count = 0
         if hasattr(self.agent, "_conversation_messages"):
@@ -1103,8 +1098,6 @@ Do NOT compact if you still need the old tool results for your current task.
             "input_tokens": input_tokens,
             "context_window": context_window,
             "utilization": f"{utilization:.1f}%",
-            "extended_context_available": extended_available,
-            "extended_context_active": extended_active,
             "turns_in_conversation": len(self.agent._turn_token_usage),
             "tool_results_cached": tool_results_count,
         }

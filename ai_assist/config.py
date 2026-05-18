@@ -203,16 +203,7 @@ class AiAssistConfig(BaseModel):
         default_factory=list,
     )
 
-    # Extended context window (1M tokens, beta)
-    # When enabled, the agent can dynamically activate the 1M context window
-    # if token usage approaches the 200K default limit. Costs 2x input above 200K.
-    allow_extended_context: bool = Field(
-        default_factory=lambda: os.getenv("AI_ASSIST_ALLOW_EXTENDED_CONTEXT", "false").lower() == "true",
-        description="Allow dynamic activation of 1M context window when needed (beta, higher cost)",
-    )
-
     # Adaptive truncation limits (percentage of context window)
-    # These percentages scale automatically with extended context activation
     message_limit_pct: float = Field(
         default_factory=lambda: float(os.getenv("AI_ASSIST_MESSAGE_LIMIT_PCT", "5.0")),
         description="Maximum percentage of context window per message (default: 5%, range: 1-20%)",

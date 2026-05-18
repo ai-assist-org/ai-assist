@@ -20,7 +20,6 @@ def mock_config():
     config.allowed_commands = ["grep", "find", "wc", "sort", "head", "tail", "ls", "cat", "diff", "file", "stat"]
     config.allowed_paths = ["~/.ai-assist", "/tmp/ai-assist"]
     config.confirm_tools = ["internal__create_directory"]
-    config.allow_extended_context = False
     return config
 
 

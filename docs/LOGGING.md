@@ -158,7 +158,6 @@ TIMESTAMP - MODULE - LEVEL - MESSAGE
 Example:
 
 ```
-2026-03-31 17:15:32,123 - ai_assist.agent - INFO - Activating 1M extended context (input tokens: 185432/200000)
 2026-03-31 17:15:33,456 - ai_assist.filesystem_tools - WARNING - Command 'tar' requires confirmation
 2026-03-31 17:15:34,789 - ai_assist.mcp_client - ERROR - MCP server connection failed: timeout
 ```

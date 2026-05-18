@@ -401,7 +401,6 @@ async def test_query_streaming_cancel_event():
     mock_config.allowed_commands = ["grep", "find", "wc", "sort", "head", "tail", "ls", "cat", "diff", "file", "stat"]
     mock_config.allowed_paths = ["~/.ai-assist", "/tmp/ai-assist"]
     mock_config.confirm_tools = ["internal__create_directory"]
-    mock_config.allow_extended_context = False
     mock_config.message_limit_pct = 5.0
     mock_config.total_messages_pct = 60.0
     mock_config.reserve_pct = 25.0

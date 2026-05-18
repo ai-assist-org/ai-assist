@@ -16,8 +16,7 @@ class TestTokenBudgetMonitoring:
         """Known models return correct context window size"""
         config = AiAssistConfig(anthropic_api_key="test-key", mcp_servers={})
         agent = AiAssistAgent(config)
-        # Default model contains "sonnet-4-5"
-        assert agent.get_context_window_size() == 200000
+        assert agent.get_context_window_size() == 1000000
 
     def test_model_context_window_unknown_model(self):
         """Unknown models return default context window"""
@@ -69,7 +68,7 @@ class TestTokenBudgetMonitoring:
         agent = AiAssistAgent(config)
 
         mock_response = MagicMock()
-        mock_response.usage.input_tokens = 170000  # 85% of 200K
+        mock_response.usage.input_tokens = 850000  # 85% of 1M
         mock_response.usage.output_tokens = 1000
         del mock_response.usage.cache_creation_input_tokens
         del mock_response.usage.cache_read_input_tokens
@@ -341,98 +340,33 @@ class TestConversationCompaction:
         assert mem.compaction_threshold == 5
 
 
-class TestExtendedContext:
-    """Tests for adaptive 1M extended context window"""
+class TestNativeContextWindow:
+    """Tests for native 1M context window on Claude 4.6+ models"""
 
-    @patch.dict("os.environ", {}, clear=False)
-    def test_config_default_disabled(self):
-        """Extended context is disabled by default"""
-        import os
-
-        os.environ.pop("AI_ASSIST_ALLOW_EXTENDED_CONTEXT", None)
-        config = AiAssistConfig(anthropic_api_key="test-key", mcp_servers={})
-        assert config.allow_extended_context is False
-
-    def test_config_enabled(self):
-        """Extended context can be enabled via config"""
-        config = AiAssistConfig(anthropic_api_key="test-key", mcp_servers={}, allow_extended_context=True)
-        assert config.allow_extended_context is True
-
-    def test_supports_extended_context_disabled(self):
-        """Returns False when config disables extended context"""
-        config = AiAssistConfig(anthropic_api_key="test-key", mcp_servers={}, allow_extended_context=False)
+    def test_context_window_1m_for_opus_46(self):
+        config = AiAssistConfig(anthropic_api_key="test-key", mcp_servers={}, model="claude-opus-4-6")
         agent = AiAssistAgent(config)
-        assert agent._supports_extended_context() is False
+        assert agent.get_context_window_size() == 1000000
 
-    def test_supports_extended_context_enabled_supported_model(self):
-        """Returns True for supported model with config enabled"""
-        config = AiAssistConfig(anthropic_api_key="test-key", mcp_servers={}, allow_extended_context=True)
+    def test_context_window_1m_for_sonnet_46(self):
+        config = AiAssistConfig(anthropic_api_key="test-key", mcp_servers={}, model="claude-sonnet-4-6")
         agent = AiAssistAgent(config)
-        # Default model is claude-sonnet-4-5 which is supported
-        assert agent._supports_extended_context() is True
+        assert agent.get_context_window_size() == 1000000
 
-    def test_supports_extended_context_unsupported_model(self):
-        """Returns False for unsupported model even with config enabled"""
-        config = AiAssistConfig(
-            anthropic_api_key="test-key", mcp_servers={}, allow_extended_context=True, model="claude-3-haiku-20240307"
-        )
+    def test_context_window_1m_for_opus_47(self):
+        config = AiAssistConfig(anthropic_api_key="test-key", mcp_servers={}, model="claude-opus-4-7")
         agent = AiAssistAgent(config)
-        assert agent._supports_extended_context() is False
+        assert agent.get_context_window_size() == 1000000
 
-    def test_needs_extended_context_no_usage(self):
-        """Returns False when no token usage data exists"""
-        config = AiAssistConfig(anthropic_api_key="test-key", mcp_servers={}, allow_extended_context=True)
-        agent = AiAssistAgent(config)
-        assert agent._needs_extended_context() is False
-
-    def test_needs_extended_context_below_threshold(self):
-        """Returns False when token usage is below activation threshold"""
-        config = AiAssistConfig(anthropic_api_key="test-key", mcp_servers={}, allow_extended_context=True)
-        agent = AiAssistAgent(config)
-        agent._turn_token_usage = [{"turn": 0, "input_tokens": 100000, "output_tokens": 1000}]
-        assert agent._needs_extended_context() is False
-
-    def test_needs_extended_context_above_threshold(self):
-        """Returns True when token usage exceeds activation threshold"""
-        config = AiAssistConfig(anthropic_api_key="test-key", mcp_servers={}, allow_extended_context=True)
-        agent = AiAssistAgent(config)
-        agent._turn_token_usage = [{"turn": 0, "input_tokens": 160000, "output_tokens": 1000}]
-        assert agent._needs_extended_context() is True
-
-    def test_get_extra_headers_inactive(self):
-        """Returns None when extended context is not active"""
-        config = AiAssistConfig(anthropic_api_key="test-key", mcp_servers={})
-        agent = AiAssistAgent(config)
-        assert agent._get_extra_headers() is None
-
-    def test_get_extra_headers_active(self):
-        """Returns beta header when extended context is active"""
-        config = AiAssistConfig(anthropic_api_key="test-key", mcp_servers={}, allow_extended_context=True)
-        agent = AiAssistAgent(config)
-        agent._extended_context_active = True
-        headers = agent._get_extra_headers()
-        assert headers is not None
-        assert "anthropic-beta" in headers
-        assert headers["anthropic-beta"] == "context-1m-2025-08-07"
-
-    def test_context_window_size_default(self):
-        """Context window is 200K when extended context is not active"""
-        config = AiAssistConfig(anthropic_api_key="test-key", mcp_servers={})
+    def test_context_window_200k_for_older_models(self):
+        config = AiAssistConfig(anthropic_api_key="test-key", mcp_servers={}, model="claude-opus-4-5")
         agent = AiAssistAgent(config)
         assert agent.get_context_window_size() == 200000
 
-    def test_context_window_size_extended(self):
-        """Context window is 1M when extended context is active"""
-        config = AiAssistConfig(anthropic_api_key="test-key", mcp_servers={}, allow_extended_context=True)
+    def test_context_window_default_for_unknown_model(self):
+        config = AiAssistConfig(anthropic_api_key="test-key", mcp_servers={}, model="claude-unknown")
         agent = AiAssistAgent(config)
-        agent._extended_context_active = True
-        assert agent.get_context_window_size() == 1000000
-
-    def test_extended_context_not_active_initially(self):
-        """Extended context starts inactive"""
-        config = AiAssistConfig(anthropic_api_key="test-key", mcp_servers={}, allow_extended_context=True)
-        agent = AiAssistAgent(config)
-        assert agent._extended_context_active is False
+        assert agent.get_context_window_size() == 200000
 
 
 class TestAdaptiveTruncationLimits:
@@ -443,38 +377,33 @@ class TestAdaptiveTruncationLimits:
         config = AiAssistConfig(
             anthropic_api_key="test-key",
             mcp_servers={},
+            model="claude-opus-4-5",
             message_limit_pct=5.0,
             total_messages_pct=60.0,
             reserve_pct=25.0,
         )
         agent = AiAssistAgent(config)
-        agent._extended_context_active = False
 
         limits = agent.get_truncation_limits()
 
-        # 200K tokens * 5% * 4 chars/token = 40K chars per message
         assert limits["max_message_chars"] == 40000
-        # 200K tokens * 60% * 4 chars/token = 480K chars total
         assert limits["max_total_chars"] == 480000
         assert limits["context_window_tokens"] == 200000
 
-    def test_extended_context_limits(self):
-        """Extended 1M context scales limits proportionally"""
+    def test_1m_context_limits(self):
+        """Native 1M context scales limits proportionally"""
         config = AiAssistConfig(
             anthropic_api_key="test-key",
             mcp_servers={},
-            allow_extended_context=True,
+            model="claude-opus-4-6",
             message_limit_pct=5.0,
             total_messages_pct=60.0,
         )
         agent = AiAssistAgent(config)
-        agent._extended_context_active = True
 
         limits = agent.get_truncation_limits()
 
-        # 1M tokens * 5% * 4 chars/token = 200K chars per message
         assert limits["max_message_chars"] == 200000
-        # 1M tokens * 60% * 4 chars/token = 2.4M chars total
         assert limits["max_total_chars"] == 2400000
         assert limits["context_window_tokens"] == 1000000
 
@@ -483,40 +412,17 @@ class TestAdaptiveTruncationLimits:
         config = AiAssistConfig(
             anthropic_api_key="test-key",
             mcp_servers={},
-            message_limit_pct=10.0,  # 10% per message
-            total_messages_pct=70.0,  # 70% total
-            reserve_pct=20.0,  # 20% reserve
+            model="claude-opus-4-5",
+            message_limit_pct=10.0,
+            total_messages_pct=70.0,
+            reserve_pct=20.0,
         )
         agent = AiAssistAgent(config)
 
         limits = agent.get_truncation_limits()
 
-        # 200K * 10% * 4 = 80K chars per message
         assert limits["max_message_chars"] == 80000
-        # 200K * 70% * 4 = 560K chars total
         assert limits["max_total_chars"] == 560000
-
-    def test_limits_change_when_extended_activates(self):
-        """Limits scale up when extended context activates mid-conversation"""
-        config = AiAssistConfig(
-            anthropic_api_key="test-key",
-            mcp_servers={},
-            allow_extended_context=True,
-        )
-        agent = AiAssistAgent(config)
-
-        # Before activation
-        limits_before = agent.get_truncation_limits()
-        assert limits_before["context_window_tokens"] == 200000
-
-        # Simulate activation
-        agent._extended_context_active = True
-
-        # After activation
-        limits_after = agent.get_truncation_limits()
-        assert limits_after["context_window_tokens"] == 1000000
-        assert limits_after["max_message_chars"] == limits_before["max_message_chars"] * 5
-        assert limits_after["max_total_chars"] == limits_before["max_total_chars"] * 5
 
 
 class TestToolResultCache:

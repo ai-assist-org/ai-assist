@@ -80,6 +80,6 @@ Run `pre-commit run --all-files` before declaring a feature complete.
 - **All tests must be green before any change** (TDD baseline assumption)
 - **No automatic truncation** - tools support `__save_to_file` to handle large results
 - **Security**: Script execution is disabled by default. Only enable if you trust installed skills.
-- **Extended context**: 1M token window is opt-in via `AI_ASSIST_ALLOW_EXTENDED_CONTEXT=true` (2x pricing above 200K)
+- **Extended context**: 1M context window is native for Claude 4.6+ models (no opt-in needed)
 - **JSON processing**: `internal__json_query` requires `jq` installed on the system
 - **Vertex AI users**: For Claude 4.6+ models, use dateless IDs (e.g., `claude-sonnet-4-6`). The `@YYYYMMDD` format only applies to older models (e.g., `claude-sonnet-4-5@20250929`)

@@ -264,23 +264,13 @@ Run `scripts/check_fillable_fields.py` to detect form fields.
 
 📋 **Security details:** See [SECURITY.md](SECURITY.md) for the complete security model
 
-#### Extended Context Window
+#### Context Window
 
-For complex tasks that exceed the standard 200K token context, the agent can activate a 1M token context window on demand. **Disabled by default** to avoid premium pricing (2x input above 200K).
-
-```bash
-export AI_ASSIST_ALLOW_EXTENDED_CONTEXT=true
-uv run ai-assist
-```
-
-When enabled, the agent monitors token usage and automatically activates the extended context only when approaching the 200K limit. Supported on Opus 4.6, Sonnet 4.6, Sonnet 4.5, and Sonnet 4.
+Claude 4.6+ models (Opus 4.6, Opus 4.7, Sonnet 4.6) have native 1M token context windows — no opt-in or extra configuration needed.
 
 #### Adaptive Context Limits
 
-Truncation limits scale automatically with the context window. By default, each message is limited to 5% of the context window and total messages to 60%. This means:
-
-- **Standard (200K tokens)**: 40K chars/message, 480K chars total
-- **Extended (1M tokens)**: 200K chars/message, 2.4M chars total
+Truncation limits scale automatically with the context window. By default, each message is limited to 5% of the context window and total messages to 60%.
 
 You can tune these percentages via environment variables:
 
