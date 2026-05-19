@@ -427,6 +427,7 @@ The agent will:
 - **file**: Append to `~/.ai-assist/notifications.log`
 - **console**: Display in /monitor output
 - **TUI**: Automatically displayed in interactive mode (watches notification log)
+- **slack**: Post messages to Slack via webhooks (see [Slack Integration](#slack-integration))
 
 **Agent Decision Making:**
 The agent intelligently decides how to execute scheduled actions:
@@ -715,6 +716,50 @@ ai-assist/
 ├── SECURITY.md            # Security model
 ├── CONTRIBUTING.md        # Development setup
 └── AGENTS.md              # Development philosophy
+```
+
+## Slack Integration
+
+Post messages and notifications to Slack channels using webhooks. Supports dual-webhook configuration for personal and team channels.
+
+**Quick Setup (2 minutes):**
+
+1. Get webhook URLs from https://api.slack.com/apps
+2. Configure in `.env`:
+   ```bash
+   # Personal/logs channel (default)
+   SLACK_WEBHOOK_URL=https://hooks.slack.com/services/T00/B00/XXX
+
+   # Team channel (optional - for announcements)
+   SLACK_TEAM_WEBHOOK_URL=https://hooks.slack.com/services/T00/B01/YYY
+   ```
+
+3. Use in ai-assist:
+   ```bash
+   # Personal messages (default channel)
+   > Poste sur Slack: "Analyse terminée"
+   > Log sur Slack: "Job DCI-12345 vérifié"
+
+   # Team announcements
+   > Alerte l'équipe sur Slack: "Déploiement production terminé ✅"
+   > Notifie l'équipe: "CILAB-456 est bloqué!"
+   ```
+
+**Features:**
+- ✅ Dual-webhook support (personal + team channels)
+- ✅ Automatic channel selection based on context
+- ✅ Markdown formatting (bold, lists, emojis)
+- ✅ Rich Block Kit messages
+- ✅ Secure webhook storage in `.env`
+
+**Documentation:**
+- 🚀 [Quick Start (5 min)](docs/SLACK_WEBHOOK_QUICKSTART.md)
+- 📖 [Complete Setup Guide](docs/SLACK_WEBHOOK_SETUP.md)
+- 📋 [Quick Reference](docs/SLACK_WEBHOOK_REFERENCE.md)
+
+**Test your setup:**
+```bash
+python scripts/test_slack_webhook.py
 ```
 
 ## Documentation

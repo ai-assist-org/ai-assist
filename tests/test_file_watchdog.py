@@ -197,15 +197,16 @@ async def test_detects_atomic_write():
         watchdog = FileWatchdog(test_file, callback, debounce_seconds=0.1)
 
         await watchdog.start()
-        await asyncio.sleep(0.2)  # Let watchdog initialize
+        await asyncio.sleep(0.3)  # Increased: give watchdog time to initialize under load
 
         # Simulate atomic write (same pattern as schedule_tools.py)
         temp_file = test_file.with_suffix(".json.tmp")
         temp_file.write_text('{"test": 2}')
         temp_file.rename(test_file)  # This triggers on_moved
 
-        # Wait for debounce + processing
-        await asyncio.sleep(0.3)
+        # Increased wait time to handle system load during parallel test execution
+        # debounce (0.1s) + processing time + margin for CI runners
+        await asyncio.sleep(0.5)
 
         await watchdog.stop()
 

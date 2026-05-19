@@ -26,6 +26,7 @@ from .script_execution_tools import ScriptExecutionTools
 from .security import ToolDefinitionRegistry, sanitize_tool_result, validate_tool_description
 from .skills_loader import SkillsLoader
 from .skills_manager import SkillsManager
+from .slack_tools import SlackTools
 from .think_tool import ThinkTool
 
 if TYPE_CHECKING:
@@ -289,6 +290,9 @@ class AiAssistAgent:
         # Initialize JSON query tool (requires jq)
         self.json_tools = JsonTools(filesystem_tools=self.filesystem_tools)
 
+        # Initialize Slack webhook tools
+        self.slack_tools = SlackTools()
+
         self.anthropic: Anthropic | AnthropicVertex
         if config.use_vertex:
             vertex_kwargs: dict[str, Any] = {"project_id": config.vertex_project_id}
@@ -504,6 +508,12 @@ class AiAssistAgent:
             print(f"✓ Added {len(json_tool_defs)} JSON query tools (jq)")
         else:
             print("⚠ jq not found — install jq to enable JSON query tool")
+
+        # Add Slack webhook tools
+        slack_tool_defs = self.slack_tools.get_tool_definitions()
+        if slack_tool_defs:
+            self.available_tools.extend(slack_tool_defs)
+            print(f"✓ Added {len(slack_tool_defs)} Slack webhook tools")
 
         # Load installed skills
         self.skills_manager.load_installed_skills()
@@ -2561,6 +2571,7 @@ class AiAssistAgent:
                 script_tools = ["execute_skill_script"]
                 think_tools = ["think"]
                 json_tool_names = ["json_query"]
+                slack_tools = ["post_slack_message"]
                 schedule_action_tools = ["schedule_action"]
                 action_tools = [
                     "create_action",
@@ -2597,6 +2608,8 @@ class AiAssistAgent:
                     result_text = await self.think_tool.execute_tool(original_tool_name, arguments)
                 elif original_tool_name in json_tool_names:
                     result_text = await self.json_tools.execute_tool(original_tool_name, arguments)
+                elif original_tool_name in slack_tools:
+                    result_text = await self.slack_tools.execute_tool(f"internal__{original_tool_name}", arguments)
                 elif original_tool_name in schedule_action_tools:
                     result_text = await self.schedule_action_tools.execute_tool(
                         f"internal__{original_tool_name}", arguments
