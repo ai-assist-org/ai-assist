@@ -10,7 +10,7 @@ async def run_awl_script(prompt: str, agent: object) -> str:
     from .awl_ast import GoalNode
     from .awl_parser import AWLParser
 
-    awl_path = Path(prompt)
+    awl_path = Path(prompt).expanduser()
     if not awl_path.is_absolute():
         awl_path = get_config_dir() / prompt
 

@@ -503,6 +503,20 @@ except Exception as e:
     sys.exit(1)
 ```
 
+#### Path Handling — Always Expand `~`
+
+Any string that could contain a `~` (user input, config files, CLI arguments, tool parameters) **must** have `.expanduser()` called when wrapping it in `Path()`. Without this, `~` is treated as a literal directory name.
+
+```python
+# Good
+path = Path(user_path).expanduser()
+
+# Bad — ~/foo becomes a literal child directory named "~"
+path = Path(user_path)
+```
+
+This applies to all code that receives paths from outside the program (config files, tool arguments, CLI args). Internal paths constructed from `Path(__file__)`, `Path.cwd()`, or `get_config_dir()` don't need it.
+
 #### Error Handling
 
 **Graceful Degradation**

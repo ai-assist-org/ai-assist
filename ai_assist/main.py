@@ -377,7 +377,7 @@ async def run_awl_script(agent: AiAssistAgent, script_path: str, variables: dict
 
     from .introspection_tools import IntrospectionTools
 
-    path = Path(script_path)
+    path = Path(script_path).expanduser()
     if not path.exists():
         print(f"Error: File not found: {script_path}")
         sys.exit(1)

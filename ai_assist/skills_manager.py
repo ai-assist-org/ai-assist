@@ -128,7 +128,7 @@ class SkillsManager:
                 return f"Skill '{skill_name}' installed successfully"
 
             # Determine source type
-            source_path = Path(source)
+            source_path = Path(source).expanduser()
             if source_path.is_absolute() and source_path.exists():
                 # Local path
                 source_type = "local"

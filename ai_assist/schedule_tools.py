@@ -616,7 +616,7 @@ class ScheduleTools:
         - MCP prompts (mcp://server/prompt): server must be in known_mcp_servers if provided
         """
         if prompt.endswith(".awl"):
-            awl_path = Path(prompt)
+            awl_path = Path(prompt).expanduser()
             if not awl_path.is_absolute():
                 awl_path = get_config_dir() / prompt
             if not awl_path.exists():

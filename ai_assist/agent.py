@@ -2306,7 +2306,7 @@ class AiAssistAgent:
 
         if save_to_file:
             try:
-                output_path = Path(save_to_file)
+                output_path = Path(save_to_file).expanduser()
                 output_path.parent.mkdir(parents=True, exist_ok=True)
                 output_path.write_text(result_text)
                 summary = f"Result saved to {save_to_file} ({len(result_text):,} bytes, {len(result_text.splitlines())} lines)"
