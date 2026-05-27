@@ -40,6 +40,7 @@ class ActionScheduler:
         self._debounce_events: dict[str, list[EventContext]] = {}
         self._executing: set[str] = set()
         self._self_write_time: float = 0.0
+        self._resume_event = asyncio.Event()
 
     def load_actions(self) -> list[ActionDefinition]:
         self.loader.ensure_defaults()
@@ -199,6 +200,34 @@ class ActionScheduler:
         except Exception:
             logger.exception("Error executing event action '%s'", action.name)
 
+    def notify_resume(self) -> None:
+        """Signal timer tasks to re-check wall-clock time after system resume."""
+        self._resume_event.set()
+
+    async def _sleep_until(self, target: datetime) -> None:
+        """Sleep until target wall-clock time, resilient to system suspend."""
+        while self.running:
+            remaining = (target - datetime.now()).total_seconds()
+            if remaining <= 0:
+                return
+            self._resume_event.clear()
+            sleep_task = asyncio.ensure_future(asyncio.sleep(remaining))
+            wake_task = asyncio.ensure_future(self._resume_event.wait())
+            tasks = {sleep_task, wake_task}
+            try:
+                done, pending = await asyncio.wait(
+                    tasks,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                for task in pending:
+                    task.cancel()
+                await asyncio.gather(*pending, return_exceptions=True)
+            except asyncio.CancelledError:
+                for task in tasks:
+                    task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+                raise
+
     async def _schedule_timer_action(self, action: ActionDefinition) -> None:
         trigger = action.trigger
         trigger_type = action.trigger_type
@@ -209,12 +238,10 @@ class ActionScheduler:
                     if action.status in ("completed", "failed"):
                         break
                     target_time = datetime.fromisoformat(trigger["at"])
-                    wait = (target_time - datetime.now()).total_seconds()
-                    if wait <= 0:
-                        # Overdue — skip here; run_missed_at_startup handles catchup
+                    if (target_time - datetime.now()).total_seconds() <= 0:
                         break
                     print(f"{action.name}: scheduled for {target_time.strftime('%Y-%m-%d %H:%M')}")
-                    await asyncio.sleep(wait)
+                    await self._sleep_until(target_time)
                     await self._execute_timer_action(action)
                     self._mark_once_completed(action)
                     break
@@ -223,10 +250,9 @@ class ActionScheduler:
                     schedule_str = f"{trigger['at']} on {trigger['days']}"
                     schedule = TaskLoader.parse_time_schedule(schedule_str)
                     next_run = TaskLoader.calculate_next_run(schedule)
-                    wait = (next_run - datetime.now()).total_seconds()
-                    if wait > 0:
+                    if (next_run - datetime.now()).total_seconds() > 0:
                         print(f"{action.name}: next run at {next_run.strftime('%Y-%m-%d %H:%M')}")
-                        await asyncio.sleep(wait)
+                        await self._sleep_until(next_run)
 
                 elif trigger_type == "interval_range":
                     range_str = f"{trigger['every']} between {trigger['between']} and {trigger['and']}"
@@ -234,10 +260,9 @@ class ActionScheduler:
                         range_str += f" on {trigger['days']}"
                     schedule = TaskLoader.parse_interval_with_range(range_str)
                     next_run = TaskLoader.calculate_next_interval_run(schedule)
-                    wait = (next_run - datetime.now()).total_seconds()
-                    if wait > 0:
+                    if (next_run - datetime.now()).total_seconds() > 0:
                         print(f"{action.name}: next run at {next_run.strftime('%Y-%m-%d %H:%M')}")
-                        await asyncio.sleep(wait)
+                        await self._sleep_until(next_run)
 
                 elif trigger_type == "interval":
                     pass  # Execute immediately, then sleep after

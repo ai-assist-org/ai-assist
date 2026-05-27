@@ -417,6 +417,87 @@ async def test_suspend_detector_integration(mock_agent):
 
 
 @pytest.mark.asyncio
+async def test_sleep_until_returns_immediately_when_target_past(mock_agent, temp_schedule_file):
+    """_sleep_until returns immediately when target time is in the past."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_manager = StateManager(Path(tmpdir))
+        scheduler = ActionScheduler(mock_agent, state_manager, temp_schedule_file)
+        scheduler.running = True
+
+        from datetime import timedelta
+
+        past = datetime.now() - timedelta(hours=2)
+        start = asyncio.get_event_loop().time()
+        await scheduler._sleep_until(past)
+        elapsed = asyncio.get_event_loop().time() - start
+        assert elapsed < 0.1
+
+
+@pytest.mark.asyncio
+async def test_sleep_until_returns_near_target(mock_agent, temp_schedule_file):
+    """_sleep_until returns close to the target time."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_manager = StateManager(Path(tmpdir))
+        scheduler = ActionScheduler(mock_agent, state_manager, temp_schedule_file)
+        scheduler.running = True
+
+        from datetime import timedelta
+
+        target = datetime.now() + timedelta(seconds=0.3)
+        await scheduler._sleep_until(target)
+        assert datetime.now() >= target
+
+
+@pytest.mark.asyncio
+async def test_sleep_until_wakes_on_resume(mock_agent, temp_schedule_file):
+    """_sleep_until returns promptly when notify_resume is called and target has passed."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_manager = StateManager(Path(tmpdir))
+        scheduler = ActionScheduler(mock_agent, state_manager, temp_schedule_file)
+        scheduler.running = True
+
+        from datetime import timedelta
+
+        target = datetime.now() + timedelta(hours=1)
+
+        async def signal_resume():
+            await asyncio.sleep(0.1)
+            scheduler.notify_resume()
+
+        asyncio.create_task(signal_resume())
+        start = asyncio.get_event_loop().time()
+        # target is still in the future so _sleep_until will loop and re-sleep
+        # but it should wake within ~0.2s, not an hour
+        task = asyncio.create_task(scheduler._sleep_until(target))
+        await asyncio.sleep(0.3)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        elapsed = asyncio.get_event_loop().time() - start
+        assert elapsed < 1.0
+
+
+@pytest.mark.asyncio
+async def test_sleep_until_respects_cancellation(mock_agent, temp_schedule_file):
+    """_sleep_until raises CancelledError when the task is cancelled."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_manager = StateManager(Path(tmpdir))
+        scheduler = ActionScheduler(mock_agent, state_manager, temp_schedule_file)
+        scheduler.running = True
+
+        from datetime import timedelta
+
+        target = datetime.now() + timedelta(hours=1)
+        task = asyncio.create_task(scheduler._sleep_until(target))
+        await asyncio.sleep(0.1)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+
+@pytest.mark.asyncio
 async def test_action_scheduler_file_watchdog_integration(mock_agent, temp_schedule_file):
     """Test that action scheduler file watchdog is initialized and watching."""
     with tempfile.TemporaryDirectory() as tmpdir:

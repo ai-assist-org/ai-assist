@@ -110,6 +110,7 @@ class MonitoringScheduler:
         print("Checking for missed scheduled runs...")
         print("=" * 60)
 
+        self.action_scheduler.notify_resume()
         await self.action_scheduler.run_missed_at_startup(now=now)
 
         print("✓ Suspension recovery complete")
