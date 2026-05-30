@@ -228,7 +228,7 @@ Files: `config.py`, `state.py`, `config_watcher.py`, `file_watchdog.py`
 - `schedule_action_tools.py` - One-time scheduled actions with notifications
 - `knowledge_tools.py` - KG synthesis and learning
 - `kg_query_tools.py` - KG querying (stats, changes, historical state)
-- `filesystem_tools.py` - File operations (read, search, execute)
+- `filesystem_tools.py` - File operations (read, write, edit, search, execute)
 - `think_tool.py` - Planning/reasoning scratchpad
 - `json_tools.py` - JSON querying via jq (requires jq installed)
 - `introspection_tools.py` - Context awareness (current date/time, working directory, user info)

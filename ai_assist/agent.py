@@ -2555,6 +2555,8 @@ class AiAssistAgent:
                     "search_in_file",
                     "create_directory",
                     "list_directory",
+                    "write_file",
+                    "edit_file",
                     "execute_command",
                 ]
 

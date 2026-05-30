@@ -513,6 +513,50 @@ class FilesystemTools:
                 "_original_name": "list_directory",
             },
             {
+                "name": "internal__write_file",
+                "description": "Write content to a file. Creates the file if it doesn't exist, or replaces its content if it does. Parent directories are created automatically.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "Path to the file to write (~ is expanded automatically)",
+                        },
+                        "content": {
+                            "type": "string",
+                            "description": "Content to write to the file",
+                        },
+                    },
+                    "required": ["path", "content"],
+                },
+                "_server": "internal",
+                "_original_name": "write_file",
+            },
+            {
+                "name": "internal__edit_file",
+                "description": "Edit a file by replacing an exact string match with new content. The old_string must appear exactly once in the file (for safety). Read the file first to get the exact text to replace. Works with multi-line strings.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "Path to the file to edit (~ is expanded automatically)",
+                        },
+                        "old_string": {
+                            "type": "string",
+                            "description": "The exact text to find and replace (must appear exactly once in the file)",
+                        },
+                        "new_string": {
+                            "type": "string",
+                            "description": "The text to replace it with",
+                        },
+                    },
+                    "required": ["path", "old_string", "new_string"],
+                },
+                "_server": "internal",
+                "_original_name": "edit_file",
+            },
+            {
                 "name": "internal__execute_command",
                 "description": "Execute a command and return the output. Commands are checked against an allowlist. Non-allowlisted commands require user approval in interactive mode. For commands that produce large output, consider using __save_to_file parameter or redirecting output to a file.",
                 "input_schema": {
@@ -555,6 +599,10 @@ class FilesystemTools:
             return await self._create_directory(arguments)
         elif tool_name == "list_directory":
             return await self._list_directory(arguments)
+        elif tool_name == "write_file":
+            return await self._write_file(arguments)
+        elif tool_name == "edit_file":
+            return await self._edit_file(arguments)
         elif tool_name == "execute_command":
             return await self._execute_command(arguments)
         else:
@@ -619,7 +667,7 @@ class FilesystemTools:
                             break
                         if len(lines) >= limit:
                             break
-                        lines.append(f"{line_num}: {line.rstrip()}")
+                        lines.append(f"{line_num}\t{line.rstrip()}")
 
                     content = "\n".join(lines)
 
@@ -850,6 +898,73 @@ class FilesystemTools:
                     return f"Error: {cmd_name} target path is not allowed. {path_error}"
 
         return None
+
+    async def _write_file(self, args: dict) -> str:
+        """Write content to a file"""
+        path = args.get("path")
+        content = args.get("content")
+
+        if not path:
+            return "Error: path parameter is required"
+        if content is None:
+            return "Error: content parameter is required"
+
+        path_error = await self._validate_path(path)
+        if path_error:
+            return path_error
+
+        confirm_error = await self._check_confirmation("internal__write_file", f"Write file: {path}")
+        if confirm_error:
+            return confirm_error
+
+        try:
+            path_obj = Path(path).expanduser()
+            path_obj.parent.mkdir(parents=True, exist_ok=True)
+            path_obj.write_text(content)
+            return f"File written: {path_obj} ({len(content)} chars)"
+        except Exception as e:
+            return f"Error writing file: {e}"
+
+    async def _edit_file(self, args: dict) -> str:
+        """Edit a file by replacing an exact string match"""
+        for param in ("path", "old_string", "new_string"):
+            if not args.get(param) and args.get(param) != "":
+                return f"Error: {param} parameter is required"
+
+        path: str = args["path"]
+        old_string: str = args["old_string"]
+        new_string: str = args["new_string"]
+
+        if old_string == new_string:
+            return "Error: old_string and new_string are identical"
+
+        for check in (
+            await self._validate_path(path),
+            await self._check_confirmation("internal__edit_file", f"Edit file: {path}"),
+        ):
+            if check:
+                return check
+
+        try:
+            path_obj = Path(path).expanduser()
+
+            if not path_obj.is_file():
+                kind = "File not found" if not path_obj.exists() else "Not a file"
+                return f"Error: {kind}: {path}"
+
+            content = path_obj.read_text()
+            count = content.count(old_string)
+
+            if count != 1:
+                if count == 0:
+                    return "Error: old_string not found in file"
+                return f"Error: old_string appears {count} times in file (must be unique). Provide more surrounding context to make it unique."
+
+            new_content = content.replace(old_string, new_string, 1)
+            path_obj.write_text(new_content)
+            return f"File edited: {path_obj} (replaced 1 occurrence)"
+        except Exception as e:
+            return f"Error editing file: {e}"
 
     async def _execute_command(self, args: dict) -> str:
         """Execute a command with allowlist enforcement"""

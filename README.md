@@ -655,6 +655,8 @@ Schedules stored in `~/.ai-assist/schedules.json` with hot-reload support.
 
 **Filesystem Tools:**
 - `read_file` - Read files with line-range support
+- `write_file` - Write content to files (creates parent directories)
+- `edit_file` - Surgical string replacement in files (exact match, must be unique)
 - `search_in_file` - Regex search in files
 - `create_directory` - Create directories
 - `list_directory` - List directory contents
