@@ -342,7 +342,7 @@ ai-assist
 \begin{column}{0.48\textwidth}
 \textbf{Tech Stack}
 \begin{itemize}\scriptsize
-  \item Python 3.12+
+  \item Python 3.14+
   \item Claude Opus 4.6 / Sonnet 4.5/4.6 (Vertex AI or direct)
   \item MCP (Model Context Protocol)
   \item SQLite + sqlite-vec (Knowledge Graph)
@@ -353,8 +353,8 @@ ai-assist
 \begin{column}{0.48\textwidth}
 \textbf{Project Stats}
 \begin{itemize}\scriptsize
-  \item 16,864 lines of production code
-  \item 366 tests across 71 test files
+  \item 22,000+ lines of production code
+  \item 1,600+ tests across 92 test files
   \item 16 core dependencies
   \item Pre-commit hooks (black, ruff, mypy, pylint for similarities, pytest)
   \item Comprehensive user documentation
@@ -598,7 +598,7 @@ Skills are \alert{untrusted code} --- defense in depth:
 \smallskip
 \textbf{\color{rhorange}Filesystem}
 \begin{itemize}\scriptsize
-  \item Read files (with ranges)
+  \item Read / write / edit files
   \item Search with regex
   \item List directories
   \item Execute safe commands
@@ -1229,7 +1229,7 @@ def filter_env(env):
   \item Write failing test first
   \item Make it pass
   \item Refactor
-  \item 366 tests, 71 files
+  \item 1,600+ tests, 92 files
   \item pytest + asyncio + mocks
   \item Pre-commit enforced
 \end{itemize}
