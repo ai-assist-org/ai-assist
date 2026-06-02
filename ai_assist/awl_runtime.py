@@ -612,7 +612,7 @@ class AWLRuntime:
 
     async def _execute_notify(self, node: NotifyNode):
         message = self._expr.interpolate(node.message, self._variables)
-        self._check_unresolved_interpolations("notify", message)
+        self._check_unresolved_interpolations("notify", [node.message])
         logger.info("AWL @notify: %s", message)
         print(f"  [*] {message}", flush=True)
 
@@ -722,11 +722,21 @@ class AWLRuntime:
         self._variables["_goal_success_met"] = result.get("success_met", False)
         self._variables["_goal_success_reason"] = result.get("reason", "")
 
-    def _check_unresolved_interpolations(self, task_id: str, text: str) -> None:
-        """Warn about ${var} references that were not resolved during interpolation."""
-        unresolved = re.findall(r"\$\{(\w+)(?:\.\w+)*\}", text)
+    def _check_unresolved_interpolations(self, task_id: str, raw_templates: list[str | None]) -> None:
+        """Warn about ${var} references in raw task templates that cannot be resolved.
+
+        Scans the original template strings (before interpolation) so that
+        shell-style variables introduced by substituted content (e.g. bash
+        ``${GL_VERSION}`` embedded in a file read into an AWL variable) are
+        not falsely flagged.
+        """
+        all_refs: list[str] = []
+        for text in raw_templates:
+            if text:
+                all_refs.extend(re.findall(r"\$\{(\w+)(?:\.\w+)*\}", text))
+        unresolved = [name for name in dict.fromkeys(all_refs) if name not in self._variables]
         if unresolved:
-            names = ", ".join(dict.fromkeys(unresolved))  # unique, preserving order
+            names = ", ".join(unresolved)
             logger.warning(
                 "AWL task '%s': unresolved variable(s) in prompt: %s",
                 task_id,
@@ -770,7 +780,7 @@ class AWLRuntime:
             )
 
         prompt = "\n".join(parts)
-        self._check_unresolved_interpolations(task.task_id, prompt)
+        self._check_unresolved_interpolations(task.task_id, [task.goal, task.context, task.constraints, task.success])
         return prompt
 
     def _extract_exposed(self, response: str, expose_vars: list[str]) -> dict[str, Any]:

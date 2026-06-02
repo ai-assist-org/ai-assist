@@ -550,6 +550,24 @@ async def test_task_resolved_interpolation_no_warning(mock_agent, runtime, caplo
 
 
 @pytest.mark.asyncio
+async def test_substituted_content_dollar_vars_no_warning(mock_agent, runtime, caplog):
+    """Shell-style ${VAR} inside substituted content should not trigger warnings."""
+    mock_agent.query.return_value = '{"status": "done"}'
+    workflow = WorkflowNode(
+        body=[
+            TaskNode(
+                task_id="deploy",
+                goal="Write the script from ${script_content} to disk.",
+                expose=["status"],
+            ),
+        ]
+    )
+    script = 'echo "version=${GL_VERSION}"\nsha="${GL_SHA256}"'
+    await runtime.execute(workflow, variables={"script_content": script})
+    assert "unresolved variable" not in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_loop_with_json_string_variable(mock_agent, runtime):
     """Test that @loop parses JSON string variables into lists"""
     mock_agent.query = AsyncMock(return_value='{"summary": "done"}')
