@@ -752,7 +752,7 @@ async def main_async():
         if command:
 
             if command == "help":
-                print("\nai-assist - AI Assistant for Managers")
+                print("\nai-assist - AI Assistant for Knowledge Workers")
                 print("=" * 60)
                 print("\nAvailable commands:")
                 print("  /monitor           - Start monitoring DCI and Jira")

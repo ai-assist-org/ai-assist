@@ -1,6 +1,6 @@
-# ai-assist - AI Assistant for Managers
+# ai-assist - AI Assistant for Knowledge Workers
 
-An intelligent AI assistant powered by Claude, Skills and MCP (Model Context Protocol) that helps managers with periodic automated monitoring and interactive querying.
+An intelligent AI assistant powered by Claude, Skills and MCP (Model Context Protocol) that helps knowledge workers with periodic automated monitoring and interactive querying.
 
 Works with MCP servers like:
 - [DCI MCP Server](https://github.com/redhat-community-ai-tools/dci-mcp-server) for DCI and Jira

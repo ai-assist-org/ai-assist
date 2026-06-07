@@ -4,7 +4,7 @@ This document provides guidance for AI agents and developers working on the ai-a
 
 ## Project Overview
 
-**ai-assist** (AI Assistant for Managers) is an intelligent assistant that integrates with Claude, MCP (Model Context Protocol) servers, Agent Skills, and a temporal knowledge graph to provide intelligent monitoring, querying, and workflow automation.
+**ai-assist** (AI Assistant for Knowledge Workers) is an intelligent assistant that integrates with Claude, MCP (Model Context Protocol) servers, Agent Skills, and a temporal knowledge graph to provide intelligent monitoring, querying, and workflow automation.
 
 ### Core Architecture
 
