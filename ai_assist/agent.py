@@ -895,6 +895,14 @@ class AiAssistAgent:
         if hasattr(usage, "cache_read_input_tokens"):
             entry["cache_read_input_tokens"] = usage.cache_read_input_tokens
 
+        # Track thinking tokens breakdown if available (SDK 0.105+)
+        if hasattr(usage, "output_tokens_details") and usage.output_tokens_details:
+            entry["thinking_tokens"] = usage.output_tokens_details.thinking_tokens
+
+        # Track service tier if available (SDK 0.105+)
+        if hasattr(usage, "service_tier") and usage.service_tier:
+            entry["service_tier"] = usage.service_tier
+
         self._turn_token_usage.append(entry)
 
         # Warn if approaching context limit
@@ -944,6 +952,7 @@ class AiAssistAgent:
         token_usage = self.get_token_usage()
         total_input = sum(t.get("input_tokens", 0) for t in token_usage)
         total_output = sum(t.get("output_tokens", 0) for t in token_usage)
+        total_thinking = sum(t.get("thinking_tokens", 0) for t in token_usage)
 
         return QueryTrace(
             query_text=query_text,
@@ -954,6 +963,7 @@ class AiAssistAgent:
             token_usage=token_usage,
             total_input_tokens=total_input,
             total_output_tokens=total_output,
+            total_thinking_tokens=total_thinking,
             duration_seconds=round(time.time() - start_time, 2),
             model=self.config.model,
             tools_available_count=len(self.available_tools),

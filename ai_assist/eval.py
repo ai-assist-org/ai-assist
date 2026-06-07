@@ -47,6 +47,7 @@ class QueryTrace:
     token_usage: list[dict] = field(default_factory=list)
     total_input_tokens: int = 0
     total_output_tokens: int = 0
+    total_thinking_tokens: int = 0
 
     # Performance
     duration_seconds: float = 0.0

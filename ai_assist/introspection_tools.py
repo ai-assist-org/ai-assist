@@ -1102,6 +1102,13 @@ Do NOT compact if you still need the old tool results for your current task.
             "tool_results_cached": tool_results_count,
         }
 
+        if self.agent._turn_token_usage:
+            last = self.agent._turn_token_usage[-1]
+            if last.get("thinking_tokens"):
+                result["thinking_tokens"] = last["thinking_tokens"]
+            if last.get("service_tier"):
+                result["service_tier"] = last["service_tier"]
+
         return json.dumps(result, indent=2)
 
     def _compact_conversation(self, arguments: dict) -> str:

@@ -120,6 +120,62 @@ class TestTokenBudgetMonitoring:
         agent._track_token_usage(mock_response, turn=0)
         assert len(agent.get_token_usage()) == 0
 
+    def test_track_token_usage_with_thinking_tokens(self):
+        """Thinking tokens from output_tokens_details are recorded"""
+        config = AiAssistConfig(anthropic_api_key="test-key", mcp_servers={})
+        agent = AiAssistAgent(config)
+
+        mock_response = MagicMock()
+        mock_response.usage.input_tokens = 5000
+        mock_response.usage.output_tokens = 2000
+        mock_response.usage.output_tokens_details.thinking_tokens = 1500
+        del mock_response.usage.cache_creation_input_tokens
+        del mock_response.usage.cache_read_input_tokens
+        del mock_response.usage.service_tier
+
+        agent._track_token_usage(mock_response, turn=0)
+
+        usage = agent.get_token_usage()
+        assert usage[0]["thinking_tokens"] == 1500
+        assert usage[0]["output_tokens"] == 2000
+
+    def test_track_token_usage_with_service_tier(self):
+        """Service tier is recorded when available"""
+        config = AiAssistConfig(anthropic_api_key="test-key", mcp_servers={})
+        agent = AiAssistAgent(config)
+
+        mock_response = MagicMock()
+        mock_response.usage.input_tokens = 5000
+        mock_response.usage.output_tokens = 1000
+        mock_response.usage.service_tier = "priority"
+        del mock_response.usage.cache_creation_input_tokens
+        del mock_response.usage.cache_read_input_tokens
+        del mock_response.usage.output_tokens_details
+
+        agent._track_token_usage(mock_response, turn=0)
+
+        usage = agent.get_token_usage()
+        assert usage[0]["service_tier"] == "priority"
+
+    def test_track_token_usage_without_new_fields(self):
+        """New fields are absent when not provided by the API"""
+        config = AiAssistConfig(anthropic_api_key="test-key", mcp_servers={})
+        agent = AiAssistAgent(config)
+
+        mock_response = MagicMock()
+        mock_response.usage.input_tokens = 5000
+        mock_response.usage.output_tokens = 1000
+        del mock_response.usage.cache_creation_input_tokens
+        del mock_response.usage.cache_read_input_tokens
+        del mock_response.usage.output_tokens_details
+        del mock_response.usage.service_tier
+
+        agent._track_token_usage(mock_response, turn=0)
+
+        usage = agent.get_token_usage()
+        assert "thinking_tokens" not in usage[0]
+        assert "service_tier" not in usage[0]
+
 
 class TestObservationMasking:
     """Tests for _mask_old_observations"""
