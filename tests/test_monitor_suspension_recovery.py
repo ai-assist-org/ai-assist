@@ -395,9 +395,7 @@ async def test_suspend_detector_integration(mock_agent):
             schedule_file = Path(f.name)
 
         try:
-            scheduler = MonitoringScheduler(
-                agent=mock_agent, config=config, state_manager=state_manager, schedule_file=schedule_file
-            )
+            scheduler = MonitoringScheduler(agent=mock_agent, config=config, state_manager=state_manager)
 
             start_task = asyncio.create_task(scheduler.start())
             await asyncio.sleep(0.2)
@@ -504,9 +502,7 @@ async def test_action_scheduler_file_watchdog_integration(mock_agent, temp_sched
         state_manager = StateManager(Path(tmpdir))
         config = MagicMock()
 
-        scheduler = MonitoringScheduler(
-            agent=mock_agent, config=config, state_manager=state_manager, schedule_file=temp_schedule_file
-        )
+        scheduler = MonitoringScheduler(agent=mock_agent, config=config, state_manager=state_manager)
 
         start_task = asyncio.create_task(scheduler.start())
         await asyncio.sleep(0.2)

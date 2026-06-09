@@ -288,7 +288,7 @@ Run periodic monitoring with automated checks:
 uv run ai-assist /monitor
 ```
 
-- Runs monitors and tasks from `~/.ai-assist/schedules.json`
+- Runs actions from `~/.ai-assist/event-event-schedules.json`
 - Auto-saves findings to knowledge graph
 - Hot-reloads when schedules or actions change (FileWatchdog)
 - Sends notifications on important updates
@@ -303,24 +303,23 @@ You: Create a monitor to check for failed DCI jobs every 5 minutes
 
 **Enable notifications for periodic tasks:**
 
-Add `notify` and `notification_channels` to any task or monitor in `schedules.json`:
+Add `notify` and `notification_channels` to any action in `event-event-schedules.json`:
 
 ```json
 {
-  "monitors": [
+  "version": "2.0",
+  "actions": [
     {
       "name": "critical-failures",
       "prompt": "Check for critical DCI failures",
-      "interval": "1h",
+      "trigger": {"type": "interval", "every": "1h"},
       "notify": true,
       "notification_channels": ["desktop", "file"]
-    }
-  ],
-  "tasks": [
+    },
     {
       "name": "daily-summary",
       "prompt": "Summarize yesterday's DCI jobs",
-      "interval": "9:00 on weekdays",
+      "trigger": {"type": "schedule", "at": "9:00", "days": "weekdays"},
       "notify": true,
       "notification_channels": ["console"]
     }
@@ -337,7 +336,7 @@ When `notify` is true, you'll receive notifications on task completion via:
 
 ### Event-Driven Actions
 
-React to external events via MQTT or D-Bus. Actions in `~/.ai-assist/event-schedules.json` use a unified **trigger + prompt** model. D-Bus triggers support per-trigger bus selection (`system` or `session`).
+React to external events via MQTT or D-Bus. Actions in `~/.ai-assist/event-event-schedules.json` use a unified **trigger + prompt** model. D-Bus triggers support per-trigger bus selection (`system` or `session`).
 
 **Example: USB device monitoring**
 
@@ -536,7 +535,7 @@ uv run ai-assist /interactive
 /prompt-info tpci/weekly_report
 ```
 
-See `.ai-assist/schedules.json.example` for complete examples.
+See `.ai-assist/event-schedules.json.example` for complete examples.
 
 ### One-off Queries
 
@@ -614,7 +613,7 @@ The knowledge graph automatically stores:
 - Temporal changes (when created vs. when discovered)
 - Conversation exchanges (user/assistant pairs)
 
-**KG Synthesis**: A built-in scheduled task (`kg-synthesis`) runs at 22:00 on weekdays to review the day's conversations, extract structured knowledge (preferences, lessons, context, rationale), and discover connections between entities. The schedule is configurable in `schedules.json`.
+**KG Synthesis**: A built-in scheduled task (`kg-synthesis`) runs at 22:00 on weekdays to review the day's conversations, extract structured knowledge (preferences, lessons, context, rationale), and discover connections between entities. The schedule is configurable in `event-schedules.json`.
 
 **Learning Reinforcement**: Synthesized knowledge from the KG is automatically injected into the system prompt:
 - **User preferences** are always present so the assistant remembers your communication style and choices
@@ -637,15 +636,15 @@ The knowledge graph automatically stores:
 
 Reports are stored in `~/ai-reports/` (configurable via `AI_ASSIST_REPORTS_DIR`).
 
-**Schedule Management:**
-- `create_monitor` - Create monitor with knowledge graph support
-- `create_task` - Create periodic task
-- `list_schedules` - List all schedules
-- `update_schedule` - Update schedule properties
-- `delete_schedule` - Remove schedule
-- `enable_schedule` - Enable/disable schedule
+**Action Management:**
+- `create_action` - Create periodic or event-driven action
+- `list_actions` - List all actions
+- `update_action` - Update action properties
+- `delete_action` - Remove action
+- `enable_action` - Enable/disable action
+- `get_action_status` - Get action execution status
 
-Schedules stored in `~/.ai-assist/schedules.json` with hot-reload support.
+Actions stored in `~/.ai-assist/event-event-schedules.json` with hot-reload support.
 
 **Planning:**
 - `think` - Planning and reasoning scratchpad for complex multi-step tasks
@@ -686,7 +685,7 @@ Persistent state stored in `~/.ai-assist/`:
 ~/.ai-assist/
 ├── state/                   # Monitor states and cache
 ├── knowledge_graph.db       # Temporal database (SQLite)
-├── schedules.json          # Monitor/task definitions
+├── event-schedules.json          # Monitor/task definitions
 ├── mcp_servers.yaml        # MCP server configuration
 ├── allowed_commands.json   # Permanently allowed commands
 ├── skill_env.json          # Per-skill env var allowlists
@@ -741,7 +740,7 @@ Configuration files are automatically watched and reloaded in both monitor and i
 - **`mcp_servers.yaml`** - Reconnects to changed MCP servers
 - **`identity.yaml`** - Updates identity and system prompt
 - **`installed-skills.json`** - Reloads Agent Skills
-- **`schedules.json`** - Restarts monitors and tasks (monitor mode only)
+- **`event-schedules.json`** - Restarts monitors and tasks (monitor mode only)
 
 Changes take effect immediately without manual restart.
 

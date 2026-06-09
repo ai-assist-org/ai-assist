@@ -21,7 +21,6 @@ from .introspection_tools import IntrospectionTools
 from .json_tools import JsonTools
 from .mcp_stdio_fix import stdio_client_fixed
 from .report_tools import ReportTools
-from .schedule_tools import ScheduleTools
 from .script_execution_tools import ScriptExecutionTools
 from .security import ToolDefinitionRegistry, sanitize_tool_result, validate_tool_description
 from .skills_loader import SkillsLoader
@@ -246,12 +245,7 @@ class AiAssistAgent:
         # Initialize internal report tools
         self.report_tools = ReportTools()
 
-        # Initialize internal schedule management tools
-        self.schedule_tools = ScheduleTools(
-            known_mcp_servers=set(config.mcp_servers.keys()) if config.mcp_servers else None
-        )
-
-        # Initialize unified action tools (event-schedules.json)
+        # Initialize action tools (event-schedules.json)
         self.action_tools = ActionTools(
             known_mcp_servers=set(config.mcp_servers.keys()) if config.mcp_servers else None
         )
@@ -458,11 +452,6 @@ class AiAssistAgent:
             print(f"✓ Added {len(report_tool_defs)} internal report tools")
 
         # Add internal schedule management tools
-        schedule_tool_defs = self.schedule_tools.get_tool_definitions()
-        if schedule_tool_defs:
-            self.available_tools.extend(schedule_tool_defs)
-            print(f"✓ Added {len(schedule_tool_defs)} schedule management tools")
-
         # Add internal filesystem tools
         filesystem_tool_defs = self.filesystem_tools.get_tool_definitions()
         if filesystem_tool_defs:
@@ -1098,6 +1087,11 @@ class AiAssistAgent:
         )
         prompt += "Break the task into steps, then execute them. Use internal__think again to track progress or revise your plan based on intermediate results.\n"
 
+        # Add action management guidance
+        prompt += "\n\n# Action Management\n\n"
+        prompt += "Use the action tools (internal__create_action, internal__list_actions, internal__update_action, internal__delete_action, internal__enable_action) to manage scheduled and event-driven actions. "
+        prompt += "NEVER read or edit `event-schedules.json` directly — always use these tools.\n"
+
         # Add MCP tools guidance
         mcp_servers = list(self.sessions.keys())
         if mcp_servers:
@@ -1183,7 +1177,7 @@ class AiAssistAgent:
             prompt += "- When success criteria are met, the goal status becomes 'completed'\n\n"
             prompt += "Scheduling is independent from the goal definition:\n"
             prompt += "- Run once from CLI: ai-assist /run goal.awl\n"
-            prompt += '- Schedule periodically via schedules.json: {"prompt": "goals/my_goal.awl", "interval": "30m"}\n'
+            prompt += '- Schedule periodically via internal__create_action: {"prompt": "goals/my_goal.awl", "trigger": {"type": "interval", "every": "30m"}}\n'
             prompt += "- Use goal__create to generate a goal AWL file from natural language\n"
 
         # Add MCP resource guidance if any resources are available
@@ -2577,16 +2571,6 @@ class AiAssistAgent:
         if server_name == "internal":
             try:
                 # Route to appropriate internal tool handler
-                schedule_tools = [
-                    "create_monitor",
-                    "create_task",
-                    "list_schedules",
-                    "update_schedule",
-                    "delete_schedule",
-                    "enable_schedule",
-                    "get_schedule_status",
-                ]
-
                 filesystem_tools = [
                     "read_file",
                     "search_in_file",
@@ -2618,9 +2602,7 @@ class AiAssistAgent:
                     "kg_stats",
                 ]
 
-                if original_tool_name in schedule_tools:
-                    result_text = await self.schedule_tools.execute_tool(original_tool_name, arguments)
-                elif original_tool_name in filesystem_tools:
+                if original_tool_name in filesystem_tools:
                     result_text = await self.filesystem_tools.execute_tool(original_tool_name, arguments)
                 elif original_tool_name in script_tools:
                     result_text = await self.script_execution_tools.execute_tool(original_tool_name, arguments)

@@ -770,19 +770,10 @@ async def tui_interactive_mode(agent: AiAssistAgent, state_manager: StateManager
             from .filesystem_tools import compute_allowlist_prefix
 
             prefix = compute_allowlist_prefix(command)
-            if prefix:
-                try:
-                    edited = await session.prompt_async(
-                        f'Save as permanently allowed: "{prefix}" [Enter to confirm, or edit]\n> ',
-                        default=prefix,
-                    )
-                    edited = edited.strip()
-                    if edited and edited not in agent.filesystem_tools.allowed_commands:
-                        agent.filesystem_tools.add_permanent_allowed_command(edited)
-                        console.print(f"[green]'{edited}' permanently added to allowed commands[/green]")
-                except EOFError, KeyboardInterrupt:
-                    console.print("[yellow]Cancelled — approved for this session only[/yellow]")
-            else:
+            if prefix and prefix not in agent.filesystem_tools.allowed_commands:
+                agent.filesystem_tools.add_permanent_allowed_command(prefix)
+                console.print(f"[green]'{prefix}' permanently added to allowed commands[/green]")
+            elif not prefix:
                 console.print("[yellow]Approved for this session only[/yellow]")
         return approved
 
@@ -801,23 +792,14 @@ async def tui_interactive_mode(agent: AiAssistAgent, state_manager: StateManager
             # Extract path from description ("Access path: /foo/bar/file.txt")
             path_str = description.replace("Access path: ", "")
             resolved_path = Path(path_str).resolve()
-            # For regular files, propose the parent directory;
-            # for directories, propose the directory itself
+            # For regular files, save the parent directory;
+            # for directories, save the directory itself
             if resolved_path.is_file():
-                resolved = str(resolved_path.parent)
+                save_path = str(resolved_path.parent)
             else:
-                resolved = str(resolved_path)
-            try:
-                edited = await session.prompt_async(
-                    f'Save as permanently allowed path: "{resolved}" [Enter to confirm, or edit]\n> ',
-                    default=resolved,
-                )
-                edited = edited.strip()
-                if edited:
-                    agent.filesystem_tools.add_permanent_allowed_path(edited)
-                    console.print(f"[green]'{edited}' permanently added to allowed paths[/green]")
-            except EOFError, KeyboardInterrupt:
-                console.print("[yellow]Cancelled — approved for this session only[/yellow]")
+                save_path = str(resolved_path)
+            agent.filesystem_tools.add_permanent_allowed_path(save_path)
+            console.print(f"[green]'{save_path}' permanently added to allowed paths[/green]")
         return approved
 
     agent.filesystem_tools.confirmation_callback = command_confirmation_callback
