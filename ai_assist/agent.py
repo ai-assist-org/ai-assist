@@ -1106,6 +1106,12 @@ class AiAssistAgent:
             prompt += "Always use tools to retrieve real data. Never fabricate information that could be obtained through a tool call.\n"
             prompt += "For detailed tool documentation (query syntax, available fields, examples), call introspection__get_tool_help with the tool name.\n"
             prompt += "\n## Handling Large Tool Results\n\n"
+            prompt += "**IMPORTANT:** When fetching more than 10 results from any search/list tool, ALWAYS use `__collect_to_report` to auto-paginate all results into a file. "
+            prompt += (
+                "Then process the saved file with `internal__json_query` (jq filters) to extract only what you need. "
+            )
+            prompt += "Never dump large result sets (limit > 10) directly into context — it wastes tokens and may get truncated. "
+            prompt += "Avoid combining a high limit (e.g. limit=200) with `__save_to_file` — that only saves one page. Use `__collect_to_report` instead to get ALL matching results automatically.\n\n"
             prompt += "MCP tools and selected internal tools (internal__execute_command, internal__json_query) support these special parameters:\n\n"
             prompt += "**`__save_to_file`**: Save raw result to a file. Not available on internal__read_file, internal__search_in_file, internal__list_directory, or report tools (use the file path returned by those tools directly instead).\n"
             prompt += '- Example: `search_dci_jobs(query="...", limit=200, __save_to_file="/tmp/batch.json")`\n\n'
@@ -1622,8 +1628,14 @@ class AiAssistAgent:
                     f"Please retry the request."
                 )
             except APIError as e:
-                # Generic API error
-                return f"API Error: {str(e)}\n\nPlease check the error message and adjust your request accordingly."
+                error_msg = str(e)
+                if "overloaded" in error_msg.lower():
+                    return (
+                        "The API is currently overloaded (all retry attempts failed). "
+                        "This is a temporary capacity issue on the server side. "
+                        f"Please wait a few minutes and try again.\n\n{error_msg}"
+                    )
+                return f"API Error: {error_msg}\n\nPlease check the error message and adjust your request accordingly."
 
             # Track token usage
             self._track_token_usage(response, turn)
@@ -1944,6 +1956,18 @@ class AiAssistAgent:
 
                     # Handle API errors
                     error_msg = str(e)
+
+                    if "overloaded" in error_msg.lower():
+                        yield {
+                            "type": "error",
+                            "message": (
+                                "The API is currently overloaded (all retry attempts failed). "
+                                "This is a temporary capacity issue on the server side. "
+                                "Please wait a few minutes and try again.\n\n"
+                                f"{error_msg}"
+                            ),
+                        }
+                        return
                     if isinstance(e, BadRequestError) and (
                         "too long" in error_msg.lower() or "prompt" in error_msg.lower()
                     ):
@@ -1952,23 +1976,26 @@ class AiAssistAgent:
                         system_chars = sum(len(b["text"]) for b in system_prompt) if "system_prompt" in locals() else 0
                         tools_chars = sum(len(str(t)) for t in api_tools) if "api_tools" in locals() else 0
 
-                        yield (
-                            f"API Error: {error_msg}\n\n"
-                            f"Context breakdown (estimated):\n"
-                            f"- System prompt: {system_chars // 4:,} tokens ({system_chars:,} chars)\n"
-                            f"- Messages: {messages_chars // 4:,} tokens ({len(messages)} messages, {messages_chars:,} chars)\n"
-                            f"- Tools: {tools_chars // 4:,} tokens ({len(api_tools)} tools, {tools_chars:,} chars)\n"
-                            f"- Total: ~{(system_chars + messages_chars + tools_chars) // 4:,} tokens\n\n"
-                            f"The context is too large. To fix this:\n"
-                            f"- Use /clear to reset conversation history\n"
-                            f"- Use __save_to_file parameter to save large tool results to files\n"
-                            f"- Reduce batch sizes when fetching data (use smaller limit/offset)\n"
-                            f"- Process data in smaller chunks"
-                        )
+                        yield {
+                            "type": "error",
+                            "message": (
+                                f"The context is too large.\n\n"
+                                f"Context breakdown (estimated):\n"
+                                f"- System prompt: {system_chars // 4:,} tokens ({system_chars:,} chars)\n"
+                                f"- Messages: {messages_chars // 4:,} tokens ({len(messages)} messages, {messages_chars:,} chars)\n"
+                                f"- Tools: {tools_chars // 4:,} tokens ({len(api_tools)} tools, {tools_chars:,} chars)\n"
+                                f"- Total: ~{(system_chars + messages_chars + tools_chars) // 4:,} tokens\n\n"
+                                f"To fix this:\n"
+                                f"- Use /clear to reset conversation history\n"
+                                f"- Use __save_to_file parameter to save large tool results to files\n"
+                                f"- Reduce batch sizes when fetching data (use smaller limit/offset)\n"
+                                f"- Process data in smaller chunks\n\n"
+                                f"{error_msg}"
+                            ),
+                        }
                     else:
-                        yield f"API Error: {error_msg}"
+                        yield {"type": "error", "message": error_msg}
 
-                    yield {"type": "error", "message": error_msg}
                     return
 
             # Max turns reached
