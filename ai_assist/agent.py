@@ -2591,6 +2591,7 @@ class AiAssistAgent:
                     "update_action",
                     "delete_action",
                     "enable_action",
+                    "get_action",
                     "get_action_status",
                 ]
                 knowledge_tools = ["save_knowledge", "search_knowledge", "trigger_synthesis", "run_kg_synthesis"]

@@ -34,7 +34,7 @@ class GoalTools:
                     "Create a new autonomous goal as an AWL script (.awl file). "
                     "The generated file uses the @goal directive with a @task inside. "
                     "The user can then run it from CLI (ai-assist /run <file>) or "
-                    "schedule it in schedules.json. Each cycle, the goal body executes "
+                    "schedule it via internal__create_action. Each cycle, the goal body executes "
                     "and success criteria are evaluated — when met, the goal completes. "
                     "Variables persist between cycles."
                 ),
@@ -144,7 +144,7 @@ class GoalTools:
             f"  File: {awl_path}\n"
             f"  Max actions: {max_actions}\n\n"
             f"To run once: ai-assist /run {awl_path}\n"
-            f"To schedule: add to schedules.json with prompt={awl_path}\n"
+            f"To schedule: use internal__create_action with prompt={awl_path}\n"
             f"Edit {awl_path} to customize the AWL workflow."
         )
 

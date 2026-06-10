@@ -112,6 +112,18 @@ class ActionTools:
                 "_server": "internal",
             },
             {
+                "name": "internal__get_action",
+                "description": "Get full details of an action including prompt, trigger, conditions, and notification settings.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "Action name"},
+                    },
+                    "required": ["name"],
+                },
+                "_server": "internal",
+            },
+            {
                 "name": "internal__get_action_status",
                 "description": "Get execution history and current state of an action.",
                 "input_schema": {
@@ -133,6 +145,7 @@ class ActionTools:
             "internal__update_action": self._update_action,
             "internal__delete_action": self._delete_action,
             "internal__enable_action": self._enable_action,
+            "internal__get_action": self._get_action,
             "internal__get_action_status": self._get_action_status,
         }
         handler = handlers.get(tool_name)
@@ -235,6 +248,17 @@ class ActionTools:
                 loader.save_actions(actions)
                 state = "enabled" if enabled else "disabled"
                 return f"Action '{name}' {state}"
+
+        return f"Action '{name}' not found."
+
+    async def _get_action(self, args: dict[str, Any]) -> str:
+        name = args["name"]
+        loader = ActionLoader(self.schedules_file)
+        actions = loader.load_actions()
+
+        for a in actions:
+            if a.name == name:
+                return json.dumps(a.to_dict(), indent=2)
 
         return f"Action '{name}' not found."
 
