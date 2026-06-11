@@ -541,18 +541,12 @@ getting long.
                     "name": "introspection__compact_conversation",
                     "description": """Manually compact the conversation by masking old tool results.
 
-Use this tool to:
-- Reduce context usage before making large data fetches
-- Clean up conversation when approaching token limits
-- Free context space while keeping recent tool results available
-
 Replaces old tool results with "[Result already retrieved]" placeholder.
 Recent tool results (controlled by keep_recent_turns parameter) are preserved.
 
-Use this strategically:
-- Before fetching bulk data (e.g., 200 jobs)
-- When context usage > 50%
-- After completing a multi-step task
+IMPORTANT: With 1M token context windows, you have plenty of room. Do NOT compact prematurely.
+Only compact when context utilization exceeds 60% (check with introspection__get_context_status first).
+The system already auto-masks old results at 50% utilization — manual compaction is rarely needed.
 
 Do NOT compact if you still need the old tool results for your current task.
 """,
