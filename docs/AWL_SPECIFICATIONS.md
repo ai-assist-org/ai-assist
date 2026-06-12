@@ -684,7 +684,7 @@ Parameters:
 Scheduling is independent from the goal definition. Goals can be run:
 
 - From the CLI: `ai-assist /run goal.awl`
-- Via `schedules.json`: `{"prompt": "goals/track_failures.awl", "interval": "30m"}`
+- Via `event-schedules.json`: `{"prompt": "goals/track_failures.awl", "trigger": {"type": "interval", "every": "30m"}}`
 - As a one-shot scheduled action
 
 The `Success:` field is mandatory. After each cycle, Claude evaluates whether the criterion is met. When met, the goal status is set to "completed" and scheduling stops.

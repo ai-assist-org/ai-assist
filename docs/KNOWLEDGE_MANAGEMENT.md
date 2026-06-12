@@ -16,7 +16,7 @@ The agent automatically saves:
 ## How It Works
 
 1. Every conversation exchange is saved to the Knowledge Graph as it happens
-2. A **KG synthesis** task (configurable in `schedules.json`) reviews the day's conversations
+2. A **KG synthesis** task (configurable in `event-schedules.json`) reviews the day's conversations
 3. The synthesis extracts structured knowledge (preferences, lessons, context, rationale)
 4. Extracted insights are saved to the Knowledge Graph automatically
 5. Agent can recall saved knowledge in future conversations

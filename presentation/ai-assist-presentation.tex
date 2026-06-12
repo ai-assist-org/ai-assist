@@ -88,7 +88,7 @@
 \begin{column}{0.45\textwidth}
 \begin{itemize}
   \item Engineers juggle DCI jobs, Jira tickets, multiple dashboards
-  \item Managers need summaries but lack time for deep dives
+  \item Teams need summaries but lack time for deep dives
   \item Knowledge is scattered across systems
   \item Failures repeat --- lessons are not captured
   \item Periodic manual checks are tedious and error-prone
@@ -986,7 +986,7 @@ KG sections are capped at 1500 chars}
 \begin{columns}[T]
 \begin{column}{0.45\textwidth}
 \begin{itemize}\small
-  \item Define tasks in \texttt{schedules.json}
+  \item Define actions in \texttt{event-schedules.json}
   \item Interval or time-based scheduling
   \item \alert{Hot-reload}: edit config, changes apply immediately
   \item Laptop suspension recovery
@@ -996,23 +996,29 @@ KG sections are capped at 1500 chars}
 \end{itemize}
 \end{column}
 \begin{column}{0.50\textwidth}
-\begin{lstlisting}[style=json,title={\scriptsize schedules.json}]
+\begin{lstlisting}[style=json,title={\scriptsize event-schedules.json}]
 {
-  "tasks": [
+  "version": "2.0",
+  "actions": [
     {
       "name": "Failing Jobs Report",
       "prompt": "Search for DCI jobs
         that failed in the last
         24h and write a report",
-      "interval": "8:00 on weekdays",
+      "trigger": {"type": "schedule",
+        "at": "8:00",
+        "days": "weekdays"},
       "notify": true,
       "notification_channels":
         ["desktop", "file"]
     },
     {
       "name": "KG Synthesis",
-      "prompt": "__builtin__:kg_synthesis",
-      "interval": "22:00 on weekdays"
+      "prompt":
+        "__builtin__:kg_synthesis",
+      "trigger": {"type": "schedule",
+        "at": "22:00",
+        "days": "weekdays"}
     }
   ]
 }

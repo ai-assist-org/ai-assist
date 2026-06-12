@@ -101,7 +101,7 @@ sudo apt install libnotify-bin  # Ubuntu/Debian
 
 ## Periodic Task Notifications
 
-Add notifications to periodic monitors/tasks in `~/.ai-assist/schedules.json`:
+Add notifications to actions in `~/.ai-assist/event-schedules.json`:
 
 ```json
 {

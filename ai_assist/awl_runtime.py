@@ -156,6 +156,20 @@ def _compute_input_variables(workflow: WorkflowNode) -> set[str]:
     return used - defined
 
 
+def _collect_exposed_vars(nodes: list[ASTNode]) -> set[str]:
+    """Recursively collect all variable names exposed by tasks in a node list."""
+    exposed: set[str] = set()
+    for node in nodes:
+        if isinstance(node, TaskNode):
+            exposed.update(node.expose)
+        elif isinstance(node, IfNode):
+            exposed.update(_collect_exposed_vars(node.then_body))
+            exposed.update(_collect_exposed_vars(node.else_body))
+        elif isinstance(node, LoopNode):
+            exposed.update(_collect_exposed_vars(node.body))
+    return exposed
+
+
 def validate_workflow_variables(workflow: WorkflowNode, initial_variables: set[str] | None = None) -> list[str]:
     """Static analysis: detect variables used before they are defined.
 
@@ -219,6 +233,15 @@ def validate_workflow_variables(workflow: WorkflowNode, initial_variables: set[s
                 # collect becomes available after the loop
                 if node.collect:
                     defined.add(node.collect)
+                # Check that collect_fields are actually exposed by tasks in the loop body
+                if node.collect_fields:
+                    body_exposed: set[str] = _collect_exposed_vars(node.body)
+                    missing = [f for f in node.collect_fields if f not in body_exposed]
+                    if missing:
+                        warnings.append(
+                            f"@loop collect={node.collect}: field(s) {', '.join(missing)} "
+                            f"not exposed by any task in the loop body"
+                        )
             elif isinstance(node, ReturnNode):
                 _check_expr(node.expression, "@return")
             elif isinstance(node, GoalNode):
@@ -347,6 +370,8 @@ class AWLRuntime:
                 self._agent.on_inner_execution = renderer.on_inner_execution
             else:
                 self._agent.on_inner_execution = None
+            # Snapshot tool call count before this task
+            tool_calls_before = len(self._agent.last_tool_calls)
             try:
                 max_turns = task.max_tool_calls or self._limits.max_tool_calls
                 response = await self._agent.query(
@@ -357,6 +382,34 @@ class AWLRuntime:
                 )
             finally:
                 self._agent.on_inner_execution = prev_inner
+
+            # Surface security rejections (path/command blocks) from THIS task only
+            security_rejections = [
+                tc
+                for tc in self._agent.last_tool_calls[tool_calls_before:]
+                if isinstance(tc.get("result"), str)
+                and tc["result"].startswith("Error:")
+                and any(
+                    phrase in tc["result"]
+                    for phrase in ("not in the allowed", "not allowed", "outside allowed", "rejected by the user")
+                )
+            ]
+            if security_rejections:
+                details = []
+                for tc in security_rejections:
+                    short_result = tc["result"][:150]
+                    details.append(f"    [!] {tc['tool_name']}: {short_result}")
+                detail_text = "\n".join(details)
+                logger.warning(
+                    "AWL task '%s': %d security rejection(s):\n%s",
+                    task.task_id,
+                    len(security_rejections),
+                    detail_text,
+                )
+                print(f"    [!] {len(security_rejections)} security rejection(s) during task:")
+                for line in details:
+                    print(line)
+
             exposed = self._extract_exposed(response, task.expose)
 
             # Retry: if exposed vars are missing, nudge the agent to emit the JSON block

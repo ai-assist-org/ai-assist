@@ -203,11 +203,11 @@ Files: `action_model.py`, `action_engine.py`, `action_scheduler.py`, `action_loa
 1. Environment variables (`.env` file)
 2. `~/.ai-assist/mcp_servers.yaml` (MCP server definitions)
 3. `~/.ai-assist/identity.yaml` (personalization)
-4. `~/.ai-assist/schedules.json` (monitors/tasks)
+4. `~/.ai-assist/event-schedules.json` (actions/triggers)
 
 **Hot-reload** (`config_watcher.py`, `file_watchdog.py`):
 - Changes to config files trigger automatic reload without restart
-- Monitor mode restarts tasks when `schedules.json` changes
+- Monitor mode restarts actions when `event-schedules.json` changes
 
 **State persistence** (`~/.ai-assist/`):
 - `knowledge_graph.db` - Temporal database
@@ -224,7 +224,7 @@ Files: `config.py`, `state.py`, `config_watcher.py`, `file_watchdog.py`
 
 **Built-in tools** are organized by domain:
 - `report_tools.py` - Markdown report management (`~/ai-reports/`)
-- `schedule_tools.py` - Create/update/delete monitors and tasks
+- `action_tools.py` - Create/update/delete actions (event-schedules.json)
 - `schedule_action_tools.py` - One-time scheduled actions with notifications
 - `knowledge_tools.py` - KG synthesis and learning
 - `kg_query_tools.py` - KG querying (stats, changes, historical state)
@@ -682,8 +682,7 @@ emacs/                         # AWL major mode for Emacs
 - `.env` - Environment variables (API keys, model, feature flags)
 - `~/.ai-assist/mcp_servers.yaml` - MCP server definitions
 - `~/.ai-assist/identity.yaml` - User/assistant personalization
-- `~/.ai-assist/event-schedules.json` - Unified actions (trigger + prompt)
-- `~/.ai-assist/schedules.json` - Monitors and periodic tasks (legacy, auto-migrated)
+- `~/.ai-assist/event-schedules.json` - Actions (trigger + prompt)
 - `.pre-commit-config.yaml` - Git hooks configuration
 - `pyproject.toml` - Python package config, tool settings, linting rules
 

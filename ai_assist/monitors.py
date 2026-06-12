@@ -2,7 +2,6 @@
 
 import asyncio
 import logging
-from pathlib import Path
 
 from .action_scheduler import ActionScheduler
 from .agent import AiAssistAgent
@@ -25,7 +24,6 @@ class MonitoringScheduler:
         config,
         state_manager: StateManager,
         knowledge_graph: KnowledgeGraph | None = None,
-        schedule_file: Path | None = None,
     ):
         self.agent = agent
         self.config = config
@@ -38,8 +36,7 @@ class MonitoringScheduler:
         self.config_watcher: ConfigWatcher | None = None
 
         # Unified action scheduler (event-schedules.json)
-        config_dir = get_config_dir() if not schedule_file else schedule_file.parent
-        event_schedules_file = config_dir / "event-schedules.json"
+        event_schedules_file = get_config_dir() / "event-schedules.json"
         self.action_scheduler = ActionScheduler(agent, state_manager, event_schedules_file)
         self.action_scheduler_file_watchdog: FileWatchdog | None = None
 

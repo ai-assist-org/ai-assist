@@ -767,17 +767,14 @@ async def tui_interactive_mode(agent: AiAssistAgent, state_manager: StateManager
         approved = choice in ("y", "yes", "a", "always")
         logger.info("Security prompt: command %s by user: %s", "approved" if approved else "denied", command[:200])
         if choice in ("a", "always"):
-            from .filesystem_tools import SHELL_BUILTINS, extract_command_names
+            from .filesystem_tools import compute_allowlist_prefix
 
-            cmd_names = extract_command_names(command)
-            added = []
-            for name in cmd_names:
-                if name not in SHELL_BUILTINS and name not in agent.filesystem_tools.allowed_commands:
-                    agent.filesystem_tools.add_permanent_allowed_command(name)
-                    added.append(name)
-            if added:
-                label = ", ".join(repr(n) for n in added)
-                console.print(f"[green]{label} permanently added to allowed commands[/green]")
+            prefix = compute_allowlist_prefix(command)
+            if prefix and prefix not in agent.filesystem_tools.allowed_commands:
+                agent.filesystem_tools.add_permanent_allowed_command(prefix)
+                console.print(f"[green]'{prefix}' permanently added to allowed commands[/green]")
+            elif not prefix:
+                console.print("[yellow]Approved for this session only[/yellow]")
         return approved
 
     async def path_confirmation_callback(description: str) -> bool:
@@ -793,11 +790,16 @@ async def tui_interactive_mode(agent: AiAssistAgent, state_manager: StateManager
         logger.info("Security prompt: path %s by user: %s", "approved" if approved else "denied", description[:200])
         if choice in ("a", "always"):
             # Extract path from description ("Access path: /foo/bar/file.txt")
-            # Add the parent directory for broader usability
             path_str = description.replace("Access path: ", "")
-            parent_dir = str(Path(path_str).parent)
-            agent.filesystem_tools.add_permanent_allowed_path(parent_dir)
-            console.print(f"[green]'{parent_dir}' permanently added to allowed paths[/green]")
+            resolved_path = Path(path_str).resolve()
+            # For regular files, save the parent directory;
+            # for directories, save the directory itself
+            if resolved_path.is_file():
+                save_path = str(resolved_path.parent)
+            else:
+                save_path = str(resolved_path)
+            agent.filesystem_tools.add_permanent_allowed_path(save_path)
+            console.print(f"[green]'{save_path}' permanently added to allowed paths[/green]")
         return approved
 
     agent.filesystem_tools.confirmation_callback = command_confirmation_callback

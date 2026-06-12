@@ -21,7 +21,6 @@ from .introspection_tools import IntrospectionTools
 from .json_tools import JsonTools
 from .mcp_stdio_fix import stdio_client_fixed
 from .report_tools import ReportTools
-from .schedule_tools import ScheduleTools
 from .script_execution_tools import ScriptExecutionTools
 from .security import ToolDefinitionRegistry, sanitize_tool_result, validate_tool_description
 from .skills_loader import SkillsLoader
@@ -246,12 +245,7 @@ class AiAssistAgent:
         # Initialize internal report tools
         self.report_tools = ReportTools()
 
-        # Initialize internal schedule management tools
-        self.schedule_tools = ScheduleTools(
-            known_mcp_servers=set(config.mcp_servers.keys()) if config.mcp_servers else None
-        )
-
-        # Initialize unified action tools (event-schedules.json)
+        # Initialize action tools (event-schedules.json)
         self.action_tools = ActionTools(
             known_mcp_servers=set(config.mcp_servers.keys()) if config.mcp_servers else None
         )
@@ -458,11 +452,6 @@ class AiAssistAgent:
             print(f"✓ Added {len(report_tool_defs)} internal report tools")
 
         # Add internal schedule management tools
-        schedule_tool_defs = self.schedule_tools.get_tool_definitions()
-        if schedule_tool_defs:
-            self.available_tools.extend(schedule_tool_defs)
-            print(f"✓ Added {len(schedule_tool_defs)} schedule management tools")
-
         # Add internal filesystem tools
         filesystem_tool_defs = self.filesystem_tools.get_tool_definitions()
         if filesystem_tool_defs:
@@ -1098,6 +1087,11 @@ class AiAssistAgent:
         )
         prompt += "Break the task into steps, then execute them. Use internal__think again to track progress or revise your plan based on intermediate results.\n"
 
+        # Add action management guidance
+        prompt += "\n\n# Action Management\n\n"
+        prompt += "Use the action tools (internal__create_action, internal__list_actions, internal__update_action, internal__delete_action, internal__enable_action) to manage scheduled and event-driven actions. "
+        prompt += "NEVER read or edit `event-schedules.json` directly — always use these tools.\n"
+
         # Add MCP tools guidance
         mcp_servers = list(self.sessions.keys())
         if mcp_servers:
@@ -1106,6 +1100,12 @@ class AiAssistAgent:
             prompt += "Always use tools to retrieve real data. Never fabricate information that could be obtained through a tool call.\n"
             prompt += "For detailed tool documentation (query syntax, available fields, examples), call introspection__get_tool_help with the tool name.\n"
             prompt += "\n## Handling Large Tool Results\n\n"
+            prompt += "**IMPORTANT:** When fetching more than 10 results from any search/list tool, ALWAYS use `__collect_to_report` to auto-paginate all results into a file. "
+            prompt += (
+                "Then process the saved file with `internal__json_query` (jq filters) to extract only what you need. "
+            )
+            prompt += "Never dump large result sets (limit > 10) directly into context — it wastes tokens and may get truncated. "
+            prompt += "Avoid combining a high limit (e.g. limit=200) with `__save_to_file` — that only saves one page. Use `__collect_to_report` instead to get ALL matching results automatically.\n\n"
             prompt += "MCP tools and selected internal tools (internal__execute_command, internal__json_query) support these special parameters:\n\n"
             prompt += "**`__save_to_file`**: Save raw result to a file. Not available on internal__read_file, internal__search_in_file, internal__list_directory, or report tools (use the file path returned by those tools directly instead).\n"
             prompt += '- Example: `search_dci_jobs(query="...", limit=200, __save_to_file="/tmp/batch.json")`\n\n'
@@ -1177,7 +1177,7 @@ class AiAssistAgent:
             prompt += "- When success criteria are met, the goal status becomes 'completed'\n\n"
             prompt += "Scheduling is independent from the goal definition:\n"
             prompt += "- Run once from CLI: ai-assist /run goal.awl\n"
-            prompt += '- Schedule periodically via schedules.json: {"prompt": "goals/my_goal.awl", "interval": "30m"}\n'
+            prompt += '- Schedule periodically via internal__create_action: {"prompt": "goals/my_goal.awl", "trigger": {"type": "interval", "every": "30m"}}\n'
             prompt += "- Use goal__create to generate a goal AWL file from natural language\n"
 
         # Add MCP resource guidance if any resources are available
@@ -1622,8 +1622,14 @@ class AiAssistAgent:
                     f"Please retry the request."
                 )
             except APIError as e:
-                # Generic API error
-                return f"API Error: {str(e)}\n\nPlease check the error message and adjust your request accordingly."
+                error_msg = str(e)
+                if "overloaded" in error_msg.lower():
+                    return (
+                        "The API is currently overloaded (all retry attempts failed). "
+                        "This is a temporary capacity issue on the server side. "
+                        f"Please wait a few minutes and try again.\n\n{error_msg}"
+                    )
+                return f"API Error: {error_msg}\n\nPlease check the error message and adjust your request accordingly."
 
             # Track token usage
             self._track_token_usage(response, turn)
@@ -1944,6 +1950,18 @@ class AiAssistAgent:
 
                     # Handle API errors
                     error_msg = str(e)
+
+                    if "overloaded" in error_msg.lower():
+                        yield {
+                            "type": "error",
+                            "message": (
+                                "The API is currently overloaded (all retry attempts failed). "
+                                "This is a temporary capacity issue on the server side. "
+                                "Please wait a few minutes and try again.\n\n"
+                                f"{error_msg}"
+                            ),
+                        }
+                        return
                     if isinstance(e, BadRequestError) and (
                         "too long" in error_msg.lower() or "prompt" in error_msg.lower()
                     ):
@@ -1952,23 +1970,26 @@ class AiAssistAgent:
                         system_chars = sum(len(b["text"]) for b in system_prompt) if "system_prompt" in locals() else 0
                         tools_chars = sum(len(str(t)) for t in api_tools) if "api_tools" in locals() else 0
 
-                        yield (
-                            f"API Error: {error_msg}\n\n"
-                            f"Context breakdown (estimated):\n"
-                            f"- System prompt: {system_chars // 4:,} tokens ({system_chars:,} chars)\n"
-                            f"- Messages: {messages_chars // 4:,} tokens ({len(messages)} messages, {messages_chars:,} chars)\n"
-                            f"- Tools: {tools_chars // 4:,} tokens ({len(api_tools)} tools, {tools_chars:,} chars)\n"
-                            f"- Total: ~{(system_chars + messages_chars + tools_chars) // 4:,} tokens\n\n"
-                            f"The context is too large. To fix this:\n"
-                            f"- Use /clear to reset conversation history\n"
-                            f"- Use __save_to_file parameter to save large tool results to files\n"
-                            f"- Reduce batch sizes when fetching data (use smaller limit/offset)\n"
-                            f"- Process data in smaller chunks"
-                        )
+                        yield {
+                            "type": "error",
+                            "message": (
+                                f"The context is too large.\n\n"
+                                f"Context breakdown (estimated):\n"
+                                f"- System prompt: {system_chars // 4:,} tokens ({system_chars:,} chars)\n"
+                                f"- Messages: {messages_chars // 4:,} tokens ({len(messages)} messages, {messages_chars:,} chars)\n"
+                                f"- Tools: {tools_chars // 4:,} tokens ({len(api_tools)} tools, {tools_chars:,} chars)\n"
+                                f"- Total: ~{(system_chars + messages_chars + tools_chars) // 4:,} tokens\n\n"
+                                f"To fix this:\n"
+                                f"- Use /clear to reset conversation history\n"
+                                f"- Use __save_to_file parameter to save large tool results to files\n"
+                                f"- Reduce batch sizes when fetching data (use smaller limit/offset)\n"
+                                f"- Process data in smaller chunks\n\n"
+                                f"{error_msg}"
+                            ),
+                        }
                     else:
-                        yield f"API Error: {error_msg}"
+                        yield {"type": "error", "message": error_msg}
 
-                    yield {"type": "error", "message": error_msg}
                     return
 
             # Max turns reached
@@ -2550,16 +2571,6 @@ class AiAssistAgent:
         if server_name == "internal":
             try:
                 # Route to appropriate internal tool handler
-                schedule_tools = [
-                    "create_monitor",
-                    "create_task",
-                    "list_schedules",
-                    "update_schedule",
-                    "delete_schedule",
-                    "enable_schedule",
-                    "get_schedule_status",
-                ]
-
                 filesystem_tools = [
                     "read_file",
                     "search_in_file",
@@ -2580,6 +2591,7 @@ class AiAssistAgent:
                     "update_action",
                     "delete_action",
                     "enable_action",
+                    "get_action",
                     "get_action_status",
                 ]
                 knowledge_tools = ["save_knowledge", "search_knowledge", "trigger_synthesis", "run_kg_synthesis"]
@@ -2591,9 +2603,7 @@ class AiAssistAgent:
                     "kg_stats",
                 ]
 
-                if original_tool_name in schedule_tools:
-                    result_text = await self.schedule_tools.execute_tool(original_tool_name, arguments)
-                elif original_tool_name in filesystem_tools:
+                if original_tool_name in filesystem_tools:
                     result_text = await self.filesystem_tools.execute_tool(original_tool_name, arguments)
                 elif original_tool_name in script_tools:
                     result_text = await self.script_execution_tools.execute_tool(original_tool_name, arguments)

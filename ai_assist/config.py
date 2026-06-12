@@ -193,7 +193,7 @@ class AiAssistConfig(BaseModel):
 
     # Filesystem path restrictions (Phase 2 security)
     allowed_paths: list[str] = Field(
-        default_factory=lambda: [str(get_config_dir()), "/tmp/ai-assist"],  # nosec B108
+        default_factory=lambda: ["/tmp/ai-assist"],  # nosec B108
     )
 
     # Tools requiring user confirmation (Phase 4 security)

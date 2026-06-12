@@ -22,7 +22,7 @@ Each instance uses its own isolated configuration directory containing:
 
 - **mcp_servers.yaml** - MCP server configurations
 - **identity.yaml** - User/assistant identity and preferences
-- **schedules.json** - Monitor and task schedules
+- **event-schedules.json** - Action schedules and event triggers
 - **knowledge_graph.db** - Bi-temporal knowledge graph database
 - **installed-skills.json** - Installed Agent Skills registry
 - **state/** - Monitor state and cache

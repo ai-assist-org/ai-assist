@@ -66,7 +66,7 @@ A: Only what you explicitly state or the agent learns from conversation. Typical
 A: Knowledge retrieval works offline. Synthesis requires Claude API (uses Haiku model).
 
 **Q: Can I see synthesis happen?**
-A: Synthesis runs as a nightly scheduled task (configurable in `schedules.json`). You'll see logs in monitor mode when it runs.
+A: Synthesis runs as a nightly scheduled task (configurable in `event-schedules.json`). You'll see logs in monitor mode when it runs.
 
 ### Example: Real knowledge base
 

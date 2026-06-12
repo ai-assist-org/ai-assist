@@ -120,7 +120,7 @@ max-positional-args = 6
 "ai_assist/tui_interactive.py" = ["PLR0912", "PLR0915"]  # interactive REPL loop is inherently complex
 "ai_assist/conditions.py" = ["PLR0911"]  # condition evaluator needs many return paths
 "ai_assist/knowledge_graph.py" = ["PLR0913"]  # insert_relationship has many parameters by design
-"ai_assist/schedule_tools.py" = ["PLR0913"]  # schedule functions have many parameters by design
+"ai_assist/filesystem_tools.py" = ["PLR0911"]  # _edit_file has many validation return paths
 
 [tool.pytest.ini_options]
 minversion = "8.0"

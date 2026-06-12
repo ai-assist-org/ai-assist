@@ -360,9 +360,7 @@ async def basic_interactive_mode(agent: AiAssistAgent, state_manager: StateManag
 
 async def monitoring_mode(agent: AiAssistAgent, config, state_manager: StateManager, knowledge_graph: KnowledgeGraph):
     """Run in monitoring mode"""
-    schedule_file = get_config_dir() / "schedules.json"
-
-    scheduler = MonitoringScheduler(agent, config, state_manager, knowledge_graph, schedule_file=schedule_file)
+    scheduler = MonitoringScheduler(agent, config, state_manager, knowledge_graph)
 
     try:
         await scheduler.start()
@@ -672,12 +670,7 @@ async def main_async():
 
     config = get_config()
 
-    # Ensure schedules.json exists with default tasks (creates file on first run)
-    from .schedule_loader import ScheduleLoader
-
-    ScheduleLoader(get_config_dir() / "schedules.json").ensure_default_tasks()
-
-    # Auto-migrate to event-schedules.json if needed
+    # Initialize event-schedules.json (migrate from legacy formats if needed)
     from .action_loader import ActionLoader
 
     event_schedules_file = get_config_dir() / "event-schedules.json"
