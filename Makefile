@@ -1,4 +1,4 @@
-.PHONY: help install install-dev test test-cov lint format clean pre-commit-install pre-commit-run
+.PHONY: help install install-dev test test-cov lint format clean pre-commit-install pre-commit-run sandbox-build
 
 help:  ## Show this help message
 	@echo "Available targets:"
@@ -53,6 +53,12 @@ pre-commit-update:  ## Update pre-commit hooks to latest versions
 	pre-commit autoupdate
 
 all-checks: format-check lint test  ## Run all quality checks (CI mode)
+
+DCI_MCP_SERVER_DIR ?= ../dci-mcp-server
+
+sandbox-build:  ## Build sandbox container images (ai-assist + dci-mcp-server)
+	podman build -t ai-assist-sandbox -f sandbox/ai-assist/Dockerfile .
+	podman build -t dci-mcp-server -f sandbox/dci-mcp-server/Dockerfile $(DCI_MCP_SERVER_DIR)
 
 dev-setup: install-dev pre-commit-install  ## Complete dev environment setup
 	@echo "✓ Development environment ready!"

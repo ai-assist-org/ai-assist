@@ -1,0 +1,16 @@
+version: '1.0'
+user:
+  name: ""
+  role: ""
+  organization: ""
+  timezone: UTC
+  context: |
+    Describe your role and context here.
+assistant:
+  nickname: Nexus
+  personality: |
+    You are an AI assistant.
+preferences:
+  formality: professional
+  verbosity: concise
+  emoji_usage: moderate

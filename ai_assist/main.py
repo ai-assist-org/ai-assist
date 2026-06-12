@@ -703,8 +703,16 @@ async def main_async():
     action_commands = ["cleanup-actions"]
     eval_commands = ["eval-stats"]
     service_commands = ["service"]
+    sandbox_commands = ["sandbox"]
     no_agent_commands = (
-        kg_commands + identity_commands + state_commands + action_commands + eval_commands + service_commands + ["help"]
+        kg_commands
+        + identity_commands
+        + state_commands
+        + action_commands
+        + eval_commands
+        + service_commands
+        + sandbox_commands
+        + ["help"]
     )
 
     needs_agent = command not in no_agent_commands
@@ -765,6 +773,8 @@ async def main_async():
                 print("  /awl-viz [script]  - Visualize an AWL workflow in browser")
                 print("  /cleanup-actions   - Archive old completed/failed actions")
                 print("  /eval-stats        - Show evaluation metrics from query traces")
+                print("  /sandbox <sub> [name] [args]  - Manage sandboxed instances")
+                print("    init, run, stop, list, delete")
                 print("  /service <sub> [dir] [rpts]   - Manage systemd user service")
                 print("    install, remove, start, stop, restart, enable, disable, status, logs")
                 print("\nRun without arguments for interactive mode\n")
@@ -883,6 +893,11 @@ async def main_async():
 
                 archived = await manager.cleanup_old_actions(max_age_days=7)
                 print(f"✓ Archived {archived} old actions")
+            # Sandbox commands
+            elif command == "sandbox":
+                from .sandbox import handle_sandbox_command
+
+                await handle_sandbox_command(sys.argv[2:])
             # Service commands
             elif command == "service":
                 subcmd = sys.argv[2] if len(sys.argv) > 2 else None

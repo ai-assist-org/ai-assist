@@ -470,6 +470,55 @@ ai-assist /service install ~/.iris  # additional instance
 
 See [docs/MULTI_INSTANCE.md](docs/MULTI_INSTANCE.md#systemd-services) for details.
 
+#### Sandbox Instances (Container Isolation)
+
+Run ai-assist in isolated podman-compose stacks with per-service credential isolation.
+Each MCP server runs in its own container and only sees its own secrets:
+
+```bash
+# Build container images
+make sandbox-build
+
+# Create and configure an instance
+ai-assist /sandbox init my-agent                          # all features (ssh,gpg,git,gh)
+ai-assist /sandbox init my-agent --features=ssh,git       # only ssh and git
+cp ~/.ai-assist-instances/my-agent/.env.example ~/.ai-assist-instances/my-agent/.env
+# Edit .env with credentials, edit sandbox/.ai-assist/identity.yaml
+
+# Run queries, AWL scripts, or monitoring in the sandbox
+ai-assist /sandbox run my-agent /query "What failed today?"
+ai-assist /sandbox run my-agent /run workflow.awl
+ai-assist /sandbox run my-agent /monitor
+
+# Manage instances
+ai-assist /sandbox list
+ai-assist /sandbox stop my-agent
+ai-assist /sandbox delete my-agent
+```
+
+Available features: `ssh` (agent forwarding), `gpg` (commit signing), `git` (gitconfig), `gh` (GitHub CLI), `dci` (DCI MCP server).
+Vertex AI (gcloud) is always included. Default: all features enabled.
+
+Instance directory layout:
+```
+~/.ai-assist-instances/my-agent/
+  compose.yaml          # host-only: stack definition
+  .env                  # host-only: credentials (never mounted)
+  sandbox/              # bind-mounted into the ai-assist container
+    .ai-assist/         # config, state, logs, KG
+    reports/            # output reports
+    workspace/          # agent working area
+```
+
+MCP servers connect via SSE transport instead of stdio. Configure with `url` in `mcp_servers.yaml`:
+```yaml
+servers:
+  dci:
+    url: "http://dci-mcp-server:8001/sse"
+```
+
+The instances root directory is configurable via `AI_ASSIST_INSTANCES_DIR` (default: `~/.ai-assist-instances`).
+
 #### MCP Prompts in Tasks
 
 Execute MCP prompts directly from periodic tasks for consistent, automated workflows:

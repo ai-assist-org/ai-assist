@@ -34,6 +34,7 @@ CLI_COMMANDS = [
     "/kg-viz",
     "/awl-viz",
     "/eval-stats",
+    "/sandbox",
     "/service",
     "/help",
 ]

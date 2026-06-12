@@ -109,6 +109,20 @@ Cross-platform background service installation for persistent monitoring:
 
 Files: `service.py`
 
+### Sandbox Instances (Container Isolation)
+
+Isolated ai-assist instances via podman-compose with per-service credential isolation. Each MCP server runs in its own container and only receives its own secrets via compose environment injection. The ai-assist container never sees MCP server credentials.
+
+- **SSE transport**: MCP servers connect via SSE (`MCPServerConfig.url`) instead of stdio
+- **`_transport()` method** in `agent.py`: selects SSE or stdio based on config
+- **Instance directory**: `$AI_ASSIST_INSTANCES_DIR/<name>/` with host-only `compose.yaml`/`.env` and bind-mounted `sandbox/` directory
+- **Readiness check**: `_wait_for_mcp_servers()` polls TCP ports before launching ai-assist
+- **CLI**: `ai-assist /sandbox init|run|stop|list|delete`
+- **Features**: `--features=ssh,gpg,git,gh,dci` (default: all). Vertex AI (gcloud) always included. Features control which host configs are mounted, which commands are allowed, and which MCP server containers are started.
+
+Files: `sandbox.py`, `sandbox_templates/`, `config.py` (`MCPServerConfig.url` field)
+Container images: `sandbox/ai-assist/Dockerfile`, `sandbox/dci-mcp-server/Dockerfile`
+
 ### Event-Driven Actions
 
 Unified action system where everything is a **trigger + prompt**. Actions are stored in `~/.ai-assist/event-schedules.json` and managed via agent tools. Trigger types include time-based (interval, schedule, once) and event-based (MQTT, D-Bus).

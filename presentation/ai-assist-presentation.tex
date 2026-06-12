@@ -1517,14 +1517,14 @@ Task blocks show brief description; hover reveals full goal, context, constraint
   \item \textcolor{green!60!black}{\checkmark} AWL workflow visualization (\texttt{/awl-viz})
   \item \textcolor{green!60!black}{\checkmark} \alert{Event-driven actions} (MQTT, D-Bus)
   \item \textcolor{green!60!black}{\checkmark} Unified trigger + action model
+  \item \textcolor{green!60!black}{\checkmark} \alert{Sandbox instances} (podman-compose, SSE transport, per-service credential isolation)
 \end{itemize}
 \end{column}
 \begin{column}{0.48\textwidth}
 \textbf{Future}
 \begin{itemize}\small
   \item More event sources (webhooks, polling, ...)
-  \item More security sandboxing (Landlock or Bubblewrap)
-  \item Network restrictions for scripts
+  \item OpenShell policy layer (L7 network rules, dynamic credentials)
   \item A2A (Agent to Agent) communication
   \item Multi-channel notifications (Slack, Teams)
   \item ML-based anomaly detection

@@ -1,0 +1,29 @@
+servers:
+  dci:
+    url: "http://dci-mcp-server:8001/sse"
+    pagination:
+      offset_param: offset
+      limit_param: limit
+      default_page_size: 200
+      total_field: _meta.count
+      data_field: auto
+      tool_overrides:
+        search_dci_jobs:
+          total_field: total
+          data_field: hits
+        search_github_issues:
+          limit_param: max_results
+          total_field: total_count
+          data_field: items
+        search_jira_tickets:
+          limit_param: max_results
+          total_field: total_count
+          data_field: items
+        search_gitlab_issues:
+          limit_param: max_results
+          total_field: total_count
+          data_field: items
+        search_gitlab_merge_requests:
+          limit_param: max_results
+          total_field: total_count
+          data_field: items

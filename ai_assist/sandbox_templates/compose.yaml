@@ -1,0 +1,54 @@
+services:
+  ai-assist:
+    image: ai-assist-sandbox:latest
+    userns_mode: keep-id
+    stdin_open: true
+    tty: true
+    security_opt:
+      - label=disable
+    volumes:
+      - ./sandbox:/workspace:rw,z
+      - ${HOME}/.config/gcloud:/home/agent/.config/gcloud:ro,z
+      - ${HOME}/.ssh:/home/agent/.ssh:ro,z
+      - ${HOME}/.gnupg:/home/agent/.gnupg:ro,z
+      - ${HOME}/.gitconfig:/home/agent/.gitconfig:ro,z
+      - ${SSH_AUTH_SOCK:-/dev/null}:/ssh-agent
+    environment:
+      HOME: /home/agent
+      AI_ASSIST_CONFIG_DIR: /workspace/.ai-assist
+      AI_ASSIST_REPORTS_DIR: /workspace/reports
+      CLOUDSDK_CONFIG: /home/agent/.config/gcloud
+      SSH_AUTH_SOCK: /ssh-agent
+      FASTEMBED_CACHE_PATH: /workspace/.ai-assist/fastembed-cache
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_VERTEX_PROJECT_ID: ${ANTHROPIC_VERTEX_PROJECT_ID:-}
+      ANTHROPIC_VERTEX_REGION: ${ANTHROPIC_VERTEX_REGION:-}
+    working_dir: /workspace
+    depends_on:
+      dci-mcp-server:
+        condition: service_started
+    networks:
+      - mcp-net
+
+  dci-mcp-server:
+    image: dci-mcp-server:latest
+    environment:
+      MCP_TRANSPORT: sse
+      MCP_HOST: "0.0.0.0"
+      MCP_PORT: "8001"
+      DCI_CLIENT_ID: ${DCI_CLIENT_ID:-}
+      DCI_API_SECRET: ${DCI_API_SECRET:-}
+      DCI_CS_URL: ${DCI_CS_URL:-https://api.distributed-ci.io}
+      JIRA_URL: ${JIRA_URL:-https://redhat.atlassian.net}
+      JIRA_API_TOKEN: ${JIRA_API_TOKEN:-}
+      JIRA_WRITE_ENABLED: ${JIRA_WRITE_ENABLED:-false}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      GITLAB_TOKEN: ${GITLAB_TOKEN:-}
+      GITLAB_URL: ${GITLAB_URL:-https://gitlab.cee.redhat.com}
+      OFFLINE_TOKEN: ${OFFLINE_TOKEN:-}
+    networks:
+      - mcp-net
+
+networks:
+  mcp-net:
+    driver: bridge

@@ -137,9 +137,10 @@ class PaginationConfig(BaseModel):
 class MCPServerConfig(BaseModel):
     """MCP Server configuration"""
 
-    command: str
+    command: str = ""
     args: list[str] = Field(default_factory=list)
     env: dict[str, str] = Field(default_factory=dict)
+    url: str | None = None
     enabled: bool = True
     pagination: PaginationConfig | None = None
 
@@ -302,9 +303,10 @@ def load_mcp_servers_from_yaml(path: Path) -> dict[str, MCPServerConfig]:
                 pagination = PaginationConfig(**config["pagination"])
 
             servers[name] = MCPServerConfig(
-                command=config["command"],
+                command=config.get("command", ""),
                 args=config.get("args", []),
                 env=env,
+                url=config.get("url"),
                 enabled=config.get("enabled", True),
                 pagination=pagination,
             )

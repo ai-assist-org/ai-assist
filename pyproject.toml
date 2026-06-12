@@ -43,6 +43,10 @@ dev = [
 [project.scripts]
 ai-assist = "ai_assist.main:main"
 
+[tool.hatch.build.targets.wheel]
+packages = ["ai_assist"]
+artifacts = ["ai_assist/sandbox_templates/*"]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
@@ -181,6 +185,8 @@ skips = [
     "B606",  # start_process_with_no_shell - intentional for code reloading
     "B607",  # partial_path - using standard system tools (git, notify-send, etc.)
     "B113",  # request_without_timeout - false positive, we do specify timeouts
+    "B104",  # hardcoded_bind_all_interfaces - compose container binding
+    "B105",  # hardcoded_password_string - compose variable references like ${TOKEN:-}
 ]
 
 [dependency-groups]
