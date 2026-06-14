@@ -5,19 +5,23 @@ Container images for running ai-assist instances in isolated podman-compose stac
 ## Build
 
 ```bash
-# From the ai-assist repo root:
-podman build -t ai-assist-sandbox -f sandbox/ai-assist/Dockerfile .
+# Or use make targets:
+make sandbox-build          # base image + dci-mcp-server
+make sandbox-build-dev      # dev profile (Go, Ansible, uv, shellcheck, yamllint)
 
-# DCI MCP server (uses its own Containerfile.sse):
+# Manual build:
+podman build -t ai-assist-sandbox -f sandbox/ai-assist/Dockerfile .
 podman build -t dci-mcp-server -f /path/to/dci-mcp-server/Containerfile.sse /path/to/dci-mcp-server/
+podman build -t ai-assist-dev -f sandbox/profiles/dev/Dockerfile .
 ```
 
 ## Usage
 
 ```bash
 # Create an instance
-ai-assist /sandbox init my-instance                        # all features
+ai-assist /sandbox init my-instance                        # all features, base image
 ai-assist /sandbox init my-instance --features=ssh,git     # only ssh and git
+ai-assist /sandbox init my-instance --image=ai-assist-dev  # use dev image
 
 # Configure credentials
 cp ~/.ai-assist-instances/my-instance/.env.example ~/.ai-assist-instances/my-instance/.env
@@ -64,3 +68,22 @@ instance-dir/
 
 Credentials reach each container exclusively via compose environment injection.
 The ai-assist container never sees MCP server credentials.
+
+## Image Profiles
+
+The base image (`ai-assist-sandbox`) contains only runtime essentials. Custom profiles
+in `sandbox/profiles/` extend it with workload-specific tools:
+
+| Profile | Image | Tools |
+|---------|-------|-------|
+| base | `ai-assist-sandbox` | jq, git, ssh, gpg, gh |
+| dev | `ai-assist-dev` | + Go, Ansible, uv, shellcheck, yamllint, gcc, make, cmake |
+
+Create your own profile: add a `sandbox/profiles/<name>/Dockerfile` starting with
+`FROM ai-assist-sandbox:latest`. Do not set `USER` — the sandbox uses `userns_mode: keep-id`.
+
+## Testing
+
+```bash
+make test-integration    # builds images and runs integration tests
+```

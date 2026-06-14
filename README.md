@@ -482,11 +482,13 @@ Each MCP server runs in its own container and only sees its own secrets:
 
 ```bash
 # Build container images
-make sandbox-build
+make sandbox-build                                         # base + dci-mcp-server
+make sandbox-build-dev                                     # dev profile (adds Go, Ansible, uv, shellcheck, yamllint)
 
 # Create and configure an instance
-ai-assist /sandbox init my-agent                          # all features (ssh,gpg,git,gh)
+ai-assist /sandbox init my-agent                          # all features, base image
 ai-assist /sandbox init my-agent --features=ssh,git       # only ssh and git
+ai-assist /sandbox init my-agent --image=ai-assist-dev    # use dev image with extra tools
 cp ~/.ai-assist-instances/my-agent/.env.example ~/.ai-assist-instances/my-agent/.env
 # Edit .env with credentials, edit sandbox/.ai-assist/identity.yaml
 
@@ -508,8 +510,11 @@ ai-assist /sandbox service my-agent stop
 ai-assist /sandbox service my-agent remove
 ```
 
-Available features: `ssh` (agent forwarding), `gpg` (commit signing), `git` (gitconfig), `gh` (GitHub CLI), `dci` (DCI MCP server).
+Available features: `ssh` (agent forwarding), `gpg` (commit signing), `git` (gitconfig), `gh` (GitHub CLI), `dci` (DCI MCP server), `dbus` (session bus).
 Vertex AI (gcloud) is always included. Default: all features enabled.
+
+Image profiles allow different toolchains per workload. The base image (`ai-assist-sandbox`) has only runtime essentials.
+Custom profiles in `sandbox/profiles/` extend it — e.g. `ai-assist-dev` adds Go, Ansible, Python dev tools, shellcheck, and yamllint.
 
 Instance directory layout:
 ```

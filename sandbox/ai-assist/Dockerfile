@@ -2,7 +2,7 @@ FROM fedora:44
 
 RUN dnf install -y \
         python3.14 python3.14-pip \
-        jq git shellcheck yamllint openssh-clients gnupg2 gh && \
+        jq git openssh-clients gnupg2 gh && \
     dnf clean all
 
 COPY . /opt/ai-assist

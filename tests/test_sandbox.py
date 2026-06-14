@@ -8,6 +8,7 @@ import yaml
 
 from ai_assist.sandbox import (
     ALL_FEATURES,
+    DEFAULT_IMAGE,
     SANDBOX_SUBDIRS,
     SANDBOX_TEMPLATE_FILES,
     _build_compose,
@@ -48,6 +49,14 @@ class TestBuildCompose:
         compose = _build_compose(set())
         volumes = compose["services"]["ai-assist"]["volumes"]
         assert any("./sandbox:/workspace" in v for v in volumes)
+
+    def test_default_image(self):
+        compose = _build_compose(set())
+        assert compose["services"]["ai-assist"]["image"] == DEFAULT_IMAGE
+
+    def test_custom_image(self):
+        compose = _build_compose(set(), image="ai-assist-dev:latest")
+        assert compose["services"]["ai-assist"]["image"] == "ai-assist-dev:latest"
 
     def test_ssh_adds_volumes_and_env(self):
         compose = _build_compose({"ssh"})
@@ -244,6 +253,14 @@ class TestSandboxInit:
         volumes = compose["services"]["ai-assist"]["volumes"]
         assert any(".ssh" in v for v in volumes)
         assert not any(".gnupg" in v for v in volumes)
+
+    def test_init_with_custom_image(self, tmp_path):
+        with patch.dict("os.environ", {"AI_ASSIST_INSTANCES_DIR": str(tmp_path)}):
+            sandbox_init("custom-img", image="ai-assist-dev:latest")
+
+        compose_path = tmp_path / "custom-img" / "compose.yaml"
+        compose = yaml.safe_load(compose_path.read_text())
+        assert compose["services"]["ai-assist"]["image"] == "ai-assist-dev:latest"
 
 
 class TestComposeCmd:

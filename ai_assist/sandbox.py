@@ -50,12 +50,16 @@ def _instance_dir(name: str) -> Path:
 def _compose_cmd(instance_dir: Path) -> list[str]:
     return [
         "podman-compose",
+        "--in-pod=false",
         "-f",
         str(instance_dir / "compose.yaml"),
     ]
 
 
-def _build_compose(features: set[str]) -> dict:
+DEFAULT_IMAGE = "ai-assist-sandbox:latest"
+
+
+def _build_compose(features: set[str], image: str = DEFAULT_IMAGE) -> dict:
     """Build compose dict with only the requested features."""
     volumes = [
         "./sandbox:/workspace:rw,z",
@@ -101,7 +105,7 @@ def _build_compose(features: set[str]) -> dict:
         if "label=disable" not in security_opt:
             security_opt.append("label=disable")
     ai_assist_service: dict = {
-        "image": "ai-assist-sandbox:latest",
+        "image": image,
         "userns_mode": "keep-id",
         "stdin_open": True,
         "tty": True,
@@ -198,7 +202,7 @@ def _parse_features(feature_str: str | None) -> set[str]:
     return features
 
 
-def sandbox_init(name: str, features: set[str] | None = None) -> None:
+def sandbox_init(name: str, features: set[str] | None = None, image: str = DEFAULT_IMAGE) -> None:
     """Scaffold a new sandbox instance directory."""
     if features is None:
         features = set(ALL_FEATURES)
@@ -217,7 +221,7 @@ def sandbox_init(name: str, features: set[str] | None = None) -> None:
         dst = sandbox / dest_rel
         shutil.copy2(src, dst)
 
-    compose = _build_compose(features)
+    compose = _build_compose(features, image=image)
     with open(instance / "compose.yaml", "w") as f:
         yaml.dump(compose, f, default_flow_style=False, sort_keys=False)
 
@@ -228,6 +232,7 @@ def sandbox_init(name: str, features: set[str] | None = None) -> None:
 
     enabled = ", ".join(sorted(features)) if features else "none"
     print(f"Sandbox '{name}' initialized at {instance}")
+    print(f"Image: {image}")
     print(f"Features: {enabled}")
     print("\nNext steps:")
     print("  1. Copy .env.example to .env and fill in credentials:")
@@ -499,13 +504,14 @@ async def handle_sandbox_command(args: list[str]) -> None:
             sys.exit(1)
         name = args[1]
         feature_str = None
+        image = DEFAULT_IMAGE
         for arg in args[2:]:
             if arg.startswith("--features="):
                 feature_str = arg.split("=", 1)[1]
-            elif arg == "--features" and args.index(arg) + 1 < len(args):
-                feature_str = args[args.index(arg) + 1]
+            elif arg.startswith("--image="):
+                image = arg.split("=", 1)[1]
         features = _parse_features(feature_str)
-        sandbox_init(name, features)
+        sandbox_init(name, features, image=image)
     elif subcmd == "run":
         if len(args) < 3:
             print("Usage: ai-assist /sandbox run <name> /mode [args...]")
@@ -539,18 +545,23 @@ async def handle_sandbox_command(args: list[str]) -> None:
 
 
 def _print_init_usage():
-    print("Usage: ai-assist /sandbox init <name> [--features=ssh,gpg,git]")
+    print("Usage: ai-assist /sandbox init <name> [--features=ssh,gpg,git,gh,dci,dbus] [--image=NAME]")
     print()
     print(f"Available features: {', '.join(sorted(ALL_FEATURES))}")
     print("Default: all features enabled")
     print("Vertex AI (gcloud) is always included.")
+    print()
+    print(f"Default image: {DEFAULT_IMAGE}")
+    print("Build custom images from sandbox/profiles/ (e.g. ai-assist-dev)")
 
 
 def _print_usage():
     print("Usage: ai-assist /sandbox <command> [args...]")
     print()
     print("Commands:")
-    print("  init <name> [--features=ssh,gpg,git,gh,dci]  Create a new sandbox instance")
+    print("  init <name> [options]                         Create a new sandbox instance")
+    print("    --features=ssh,gpg,git,gh,dci,dbus          Features to enable (default: all)")
+    print("    --image=NAME                                 Container image (default: ai-assist-sandbox:latest)")
     print("  run <name> /mode [args...]                    Run ai-assist in a sandbox")
     print("  stop <name>                                   Stop a running sandbox")
     print("  list                                          List sandbox instances")
