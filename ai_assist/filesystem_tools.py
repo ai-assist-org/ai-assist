@@ -110,6 +110,20 @@ PROTECTED_CONFIG_FILES = frozenset(
 ENV_VAR_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 
 
+def _resolve_command_token(token: str) -> str:
+    """Return the effective command name for allowlist matching.
+
+    Bare names (e.g. "grep") are returned as-is — the shell resolves them via PATH.
+    Fully qualified or home-relative paths (e.g. "/usr/bin/grep", "~/bin/tool")
+    are kept as-is so that the allowlist must explicitly permit that exact path.
+    This prevents a malicious binary at an arbitrary path from matching a
+    basename-only allowlist entry.
+    """
+    if "/" in token or token.startswith("~"):
+        return token
+    return token
+
+
 def _strip_shell_comments(command: str) -> str:
     """Strip shell comments (# to end) outside of quotes.
 
@@ -240,7 +254,7 @@ def extract_command_names(command: str) -> list[str]:
         cmd_token = tokens[idx].lstrip("(").rstrip(")")
         if not cmd_token or cmd_token.startswith("-"):
             continue
-        cmd_name = Path(cmd_token).name
+        cmd_name = _resolve_command_token(cmd_token)
         commands.append(cmd_name)
 
     return commands
@@ -281,7 +295,7 @@ def compute_allowlist_prefix(command: str) -> str | None:
         return None
 
     # Strip transparent wrappers
-    while idx < len(tokens) and Path(tokens[idx]).name in TRANSPARENT_WRAPPERS:
+    while idx < len(tokens) and _resolve_command_token(tokens[idx]) in TRANSPARENT_WRAPPERS:
         idx += 1
         # Also skip any env var assignments after the wrapper
         while idx < len(tokens) and ENV_VAR_PATTERN.match(tokens[idx]):
@@ -293,8 +307,9 @@ def compute_allowlist_prefix(command: str) -> str | None:
     prefix_parts: list[str] = []
 
     # Keep privilege wrappers as part of the prefix
-    if Path(tokens[idx]).name in PRIVILEGE_WRAPPERS:
-        prefix_parts.append(Path(tokens[idx]).name)
+    cmd_token = _resolve_command_token(tokens[idx])
+    if cmd_token in PRIVILEGE_WRAPPERS:
+        prefix_parts.append(cmd_token)
         idx += 1
         # Skip flags after sudo (e.g. sudo -u user)
         while idx < len(tokens) and tokens[idx].startswith("-"):
@@ -306,8 +321,8 @@ def compute_allowlist_prefix(command: str) -> str | None:
     if idx >= len(tokens):
         return " ".join(prefix_parts) if prefix_parts else None
 
-    # Add the command name
-    cmd_name = Path(tokens[idx]).name
+    # Add the command name (preserving full path if given)
+    cmd_name = _resolve_command_token(tokens[idx])
     if cmd_name in SHELL_BUILTINS:
         return None
     prefix_parts.append(cmd_name)
@@ -1002,7 +1017,7 @@ class FilesystemTools:
                 continue
 
             # Strip transparent wrappers
-            while idx < len(tokens) and Path(tokens[idx]).name in TRANSPARENT_WRAPPERS:
+            while idx < len(tokens) and _resolve_command_token(tokens[idx]) in TRANSPARENT_WRAPPERS:
                 idx += 1
                 while idx < len(tokens) and ENV_VAR_PATTERN.match(tokens[idx]):
                     idx += 1
@@ -1010,17 +1025,17 @@ class FilesystemTools:
             if idx >= len(tokens):
                 continue
 
-            cmd_name = Path(tokens[idx]).name
+            cmd_name = _resolve_command_token(tokens[idx])
             if cmd_name in SHELL_BUILTINS:
                 continue
 
-            # Build the effective token list for matching (resolve full paths to names)
+            # Build the effective token list for matching (preserve full paths)
             effective: list[str] = []
             for t in tokens[idx:]:
                 if effective:
                     effective.append(t)
                 else:
-                    effective.append(Path(t).name)
+                    effective.append(_resolve_command_token(t))
 
             # Check if any allowlist entry is a prefix of the effective tokens
             matched = False

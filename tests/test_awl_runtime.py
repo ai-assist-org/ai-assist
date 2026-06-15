@@ -824,7 +824,7 @@ def test_extract_commands_from_workflow_backticks():
 
 
 def test_extract_commands_from_workflow_full_path():
-    """Full path commands in backticks should extract the basename."""
+    """Full path commands in backticks should preserve the full path."""
     workflow = WorkflowNode(
         body=[
             TaskNode(
@@ -834,7 +834,7 @@ def test_extract_commands_from_workflow_full_path():
         ]
     )
     commands = _extract_commands_from_workflow(workflow)
-    assert "process.sh" in commands
+    assert "/home/user/scripts/process.sh" in commands
 
 
 def test_extract_commands_from_nested_structures():

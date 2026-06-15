@@ -109,9 +109,13 @@ async def test_allowlist_checks_first_token():
     config = AiAssistConfig(anthropic_api_key="test")
     tools = FilesystemTools(config, load_user_config=False)
 
-    # Full path to an allowlisted command should work
-    result = await tools.execute_tool("execute_command", {"command": "/usr/bin/ls /tmp"})
+    # Bare allowlisted command should work
+    result = await tools.execute_tool("execute_command", {"command": "ls /tmp"})
     assert "not allowed" not in result.lower()
+
+    # Full path is NOT matched by bare allowlist entry — different binary could live there
+    result = await tools.execute_tool("execute_command", {"command": "/usr/bin/ls /tmp"})
+    assert "not allowed" in result.lower() or "not in the allowed" in result.lower()
 
     # Pipe with allowlisted first command should work (shell constructs preserved)
     result = await tools.execute_tool("execute_command", {"command": "ls /tmp | grep test"})
@@ -119,6 +123,29 @@ async def test_allowlist_checks_first_token():
 
     # Non-allowlisted command is still blocked
     result = await tools.execute_tool("execute_command", {"command": "rm -rf /tmp/test"})
+    assert "not allowed" in result.lower() or "not in the allowed" in result.lower()
+
+
+@pytest.mark.asyncio
+async def test_full_path_allowlist_requires_exact_match():
+    """Full-path commands must be explicitly allowlisted — basename alone won't match"""
+    config = AiAssistConfig(anthropic_api_key="test")
+
+    # With only bare "ls" in allowlist, a full path is blocked
+    tools_bare = FilesystemTools(config, load_user_config=False)
+    result = await tools_bare.execute_tool("execute_command", {"command": "/usr/bin/ls /tmp"})
+    assert "not allowed" in result.lower() or "not in the allowed" in result.lower()
+
+    # With "/usr/bin/ls" explicitly in allowlist, the full path works
+    config_full = AiAssistConfig(
+        anthropic_api_key="test", allowed_commands=list(config.allowed_commands) + ["/usr/bin/ls"]
+    )
+    tools_full = FilesystemTools(config_full, load_user_config=False)
+    result = await tools_full.execute_tool("execute_command", {"command": "/usr/bin/ls /tmp"})
+    assert "not allowed" not in result.lower()
+
+    # But a different path to the same basename is still blocked
+    result = await tools_full.execute_tool("execute_command", {"command": "/tmp/evil/ls /tmp"})
     assert "not allowed" in result.lower() or "not in the allowed" in result.lower()
 
 
@@ -822,7 +849,13 @@ class TestExtractCommandNames:
         assert extract_command_names("ls /tmp") == ["ls"]
 
     def test_full_path(self):
-        assert extract_command_names("/usr/bin/ls /tmp") == ["ls"]
+        assert extract_command_names("/usr/bin/ls /tmp") == ["/usr/bin/ls"]
+
+    def test_home_relative_path(self):
+        assert extract_command_names("~/bin/tool --flag") == ["~/bin/tool"]
+
+    def test_relative_path(self):
+        assert extract_command_names("./scripts/run.sh") == ["./scripts/run.sh"]
 
     def test_comment_only(self):
         assert extract_command_names("# this is a comment") == []
@@ -1359,6 +1392,12 @@ class TestComputeAllowlistPrefix:
 
     def test_env_only_returns_none(self):
         assert compute_allowlist_prefix("FOO=bar") is None
+
+    def test_full_path_preserved(self):
+        assert compute_allowlist_prefix("/usr/bin/ls -la /tmp") == "/usr/bin/ls /tmp"
+
+    def test_home_relative_path_preserved(self):
+        assert compute_allowlist_prefix("~/bin/tool --flag arg") == "~/bin/tool arg"
 
 
 class TestShellKeywordsInBuiltins:
