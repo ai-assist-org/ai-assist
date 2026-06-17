@@ -23,6 +23,44 @@ from .state import StateManager
 logger = logging.getLogger(__name__)
 
 
+def set_terminal_title(title: str):
+    """Set the terminal and/or tmux window title."""
+    if not sys.stdout.isatty():
+        return
+    sys.stdout.write(f"\033]0;{title}\007")
+    sys.stdout.flush()
+    if os.environ.get("TMUX"):
+        import subprocess
+
+        subprocess.run(["tmux", "rename-window", title], check=False, capture_output=True)
+    if os.environ.get("ZELLIJ"):
+        import subprocess
+
+        subprocess.run(["zellij", "action", "rename-tab", title], check=False, capture_output=True)
+    if os.environ.get("STY"):
+        sys.stdout.write(f"\033k{title}\033\\")
+        sys.stdout.flush()
+
+
+def reset_terminal_title():
+    """Restore default terminal/multiplexer title behavior."""
+    if not sys.stdout.isatty():
+        return
+    sys.stdout.write("\033]0;\007")
+    sys.stdout.flush()
+    if os.environ.get("TMUX"):
+        import subprocess
+
+        subprocess.run(["tmux", "set-option", "-w", "automatic-rename", "on"], check=False, capture_output=True)
+    if os.environ.get("ZELLIJ"):
+        import subprocess
+
+        subprocess.run(["zellij", "action", "rename-tab", ""], check=False, capture_output=True)
+    if os.environ.get("STY"):
+        sys.stdout.write("\033k\033\\")
+        sys.stdout.flush()
+
+
 async def handle_prompt_command_basic(command: str, agent: AiAssistAgent, conversation_history: list, identity) -> bool:
     """Handle /server/prompt slash commands for basic mode
 
@@ -179,6 +217,7 @@ async def basic_interactive_mode(agent: AiAssistAgent, state_manager: StateManag
     """Original simple interactive mode (fallback)"""
     agent.interactive_mode = True
     identity = get_identity()
+    set_terminal_title(identity.assistant.nickname)
 
     print("\n" + "=" * 60)
     print(f"ai-assist - {identity.get_greeting()}")
@@ -956,6 +995,7 @@ def main():
                 termios.tcsetattr(stdin_fd, termios.TCSADRAIN, _saved_terminal_attrs)
             except Exception:
                 pass
+        reset_terminal_title()
 
     atexit.register(_restore_terminal)
 
