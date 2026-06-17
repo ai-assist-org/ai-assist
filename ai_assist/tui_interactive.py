@@ -29,6 +29,7 @@ from .escape_watcher import EscapeWatcher
 from .file_watchdog import FileWatchdog
 from .identity import get_identity
 from .knowledge_graph import KnowledgeGraph
+from .main import reset_terminal_title, set_terminal_title
 from .prompt_utils import extract_prompt_messages
 from .state import StateManager
 from .tui import AiAssistCompleter, format_tool_display_name
@@ -531,6 +532,7 @@ async def tui_interactive_mode(agent: AiAssistAgent, state_manager: StateManager
     agent.interactive_mode = True
     console = Console()
     identity = get_identity()
+    set_terminal_title(identity.assistant.nickname)
 
     # Save terminal state before prompt_toolkit changes it
     saved_terminal_attrs = None
@@ -1121,6 +1123,7 @@ async def tui_interactive_mode(agent: AiAssistAgent, state_manager: StateManager
                 termios.tcsetattr(sys.stdin.fileno(), termios.TCSANOW, saved_terminal_attrs)
             except ImportError, termios.error, OSError:
                 pass
+        reset_terminal_title()
 
 
 async def handle_status_command(state_manager: StateManager, console: Console):
