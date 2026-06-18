@@ -81,5 +81,5 @@ Run `pre-commit run --all-files` before declaring a feature complete.
 - **No automatic truncation** - tools support `__save_to_file` to handle large results
 - **Security**: Script execution is disabled by default. Only enable if you trust installed skills.
 - **Extended context**: 1M context window is native for Claude 4.6+ models (no opt-in needed)
-- **JSON processing**: `internal__json_query` requires `jq` installed on the system
+- **JSON processing**: `__jq_filter` parameter on any tool call for inline filtering; `internal__json_query` for processing saved files. Both require `jq` installed
 - **Vertex AI users**: For Claude 4.6+ models, use dateless IDs (e.g., `claude-sonnet-4-6`). The `@YYYYMMDD` format only applies to older models (e.g., `claude-sonnet-4-5@20250929`)

@@ -621,7 +621,7 @@ Skills are \alert{untrusted code} --- defense in depth:
 \textbf{\color{rhdarkgray}Planning \& Data}
 \begin{itemize}\scriptsize\setlength{\itemsep}{0pt}
   \item Think / plan / reason
-  \item JSON query via \texttt{jq}
+  \item JSON query via \texttt{jq} (file or inline \texttt{\_\_jq\_filter})
   \item Date \& time
 \end{itemize}
 \end{column}
@@ -719,9 +719,10 @@ search_github_issues(query="...",
   __collect_to_report="all-prs:jsonl")
 # => "Collected 110 items (6 pages)"
 
-# Limit to 50 items
+# Inline jq filter (returns filtered data)
 search_dci_jobs(query="...",
-  __collect_to_report="jobs:jsonl:50")
+  __jq_filter=".hits[] | {id, status}")
+# Also composes with __save_to_file etc.
 \end{lstlisting}
 
 \smallskip

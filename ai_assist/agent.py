@@ -1104,9 +1104,8 @@ class AiAssistAgent:
             prompt += "For detailed tool documentation (query syntax, available fields, examples), call introspection__get_tool_help with the tool name.\n"
             prompt += "\n## Handling Large Tool Results\n\n"
             prompt += "**IMPORTANT:** When fetching more than 10 results from any search/list tool, ALWAYS use `__collect_to_report` to auto-paginate all results into a file. "
-            prompt += (
-                "Then process the saved file with `internal__json_query` (jq filters) to extract only what you need. "
-            )
+            prompt += "For quick inline filtering, use `__jq_filter` on any tool call. "
+            prompt += "For post-hoc processing of saved files, use `internal__json_query` (jq filters). "
             prompt += "Never dump large result sets (limit > 10) directly into context — it wastes tokens and may get truncated. "
             prompt += "Avoid combining a high limit (e.g. limit=200) with `__save_to_file` — that only saves one page. Use `__collect_to_report` instead to get ALL matching results automatically.\n\n"
             prompt += "MCP tools and selected internal tools (internal__execute_command, internal__json_query) support these special parameters:\n\n"
@@ -1122,6 +1121,13 @@ class AiAssistAgent:
             )
             prompt += "- Ideal for paginated collection: use `__write_to_report` for the first batch, `__append_to_report` for subsequent batches.\n\n"
             prompt += "All of the above return a short summary instead of the full result, keeping context clean.\n\n"
+            prompt += (
+                "**`__jq_filter`**: Apply a jq filter to the tool result inline, returning only the filtered data. "
+            )
+            prompt += "Composes with `__save_to_file`/`__write_to_report`/`__append_to_report` — the filter runs first, then the filtered result is saved. "
+            prompt += "Not supported with `__collect_to_report` (use `internal__json_query` on the collected report instead).\n"
+            prompt += '- Example: `search_dci_jobs(query="...", __jq_filter=".hits[] | {id, status}")`\n'
+            prompt += '- Example: `search_jira_tickets(jql="...", __jq_filter="[.items[] | {key, summary}]", __save_to_file="/tmp/filtered.json")`\n\n'
             prompt += '**`__collect_to_report`**: Auto-paginate and collect ALL results into a report in a single tool call. Format: `"name:format"` or `"name:format:N"` (N = max items, omit for all).\n'
             prompt += '- Example: `search_github_issues(query="...", __collect_to_report="quarterly-prs:jsonl")`\n'
             prompt += '- Example: `search_dci_jobs(query="...", __collect_to_report="recent-jobs:jsonl:50")` -- at most 50 items\n'
@@ -1147,10 +1153,9 @@ class AiAssistAgent:
 
         if self.json_tools.jq_path:
             prompt += "## JSON Processing\n\n"
-            prompt += "When you need to extract or transform data from a JSON file "
-            prompt += "(e.g., saved via __save_to_file), use internal__json_query with a jq filter "
-            prompt += "instead of writing Python scripts. "
-            prompt += "Common filters: `.key`, `.[] | {id, status}`, "
+            prompt += "For inline filtering, use `__jq_filter` on any tool call — no file needed. "
+            prompt += "For processing already-saved files, use `internal__json_query`. "
+            prompt += "Common jq filters: `.key`, `.[] | {id, status}`, "
             prompt += '`[.[] | select(.status == "failed")]`, '
             prompt += "`length`, `map(.field)`, `group_by(.key)`, `sort_by(.key)`.\n\n"
 
@@ -2323,6 +2328,10 @@ class AiAssistAgent:
             raise ValueError(f"Unsupported format '{fmt}'. Supported: {', '.join(sorted(SUPPORTED_FORMATS))}")
         return name, fmt, max_items
 
+    def _apply_jq_filter(self, result_text: str, jq_filter: str) -> str:
+        """Apply a jq filter expression to a result string."""
+        return self.json_tools.filter_string(result_text, jq_filter)
+
     def _handle_result_redirection(
         self,
         result_text: str,
@@ -2493,6 +2502,7 @@ class AiAssistAgent:
         write_to_report = arguments.pop("__write_to_report", None)
         append_to_report = arguments.pop("__append_to_report", None)
         collect_to_report = arguments.pop("__collect_to_report", None)
+        jq_filter = arguments.pop("__jq_filter", None)
         _SAVE_TO_FILE_ALLOWED = {"internal__execute_command", "internal__json_query"}
         if save_to_file and tool_name.startswith("internal__") and tool_name not in _SAVE_TO_FILE_ALLOWED:
             logger.warning("Ignoring __save_to_file on %s", tool_name)
@@ -2505,6 +2515,8 @@ class AiAssistAgent:
             logger.info("Tool %s called with __append_to_report=%s", tool_name, append_to_report)
         if collect_to_report:
             logger.info("Tool %s called with __collect_to_report=%s", tool_name, collect_to_report)
+        if jq_filter:
+            logger.info("Tool %s called with __jq_filter=%s", tool_name, jq_filter)
 
         # Validate arguments against tool schema before execution
         validation_error = self._validate_tool_arguments(tool_name, arguments)
@@ -2536,6 +2548,9 @@ class AiAssistAgent:
                 )
 
                 self.audit_logger.log_tool_call(tool_name, arguments, result_text, success=True)
+
+                if jq_filter:
+                    result_text = self._apply_jq_filter(result_text, jq_filter)
 
                 redirect = self._handle_result_redirection(result_text, save_to_file, write_to_report, append_to_report)
                 if redirect:
@@ -2657,6 +2672,9 @@ class AiAssistAgent:
                 is_success = not (isinstance(result_text, str) and result_text.startswith("Error:"))
                 self.audit_logger.log_tool_call(tool_name, arguments, result_text, success=is_success)
 
+                if jq_filter:
+                    result_text = self._apply_jq_filter(result_text, jq_filter)
+
                 redirect = self._handle_result_redirection(result_text, save_to_file, write_to_report, append_to_report)
                 if redirect:
                     return redirect
@@ -2673,6 +2691,8 @@ class AiAssistAgent:
 
         # Auto-paginated collection
         if collect_to_report:
+            if jq_filter:
+                logger.warning("__jq_filter ignored with __collect_to_report for %s", tool_name)
             try:
                 summary = await self._collect_paginated_to_report(
                     server_name, original_tool_name, arguments, collect_to_report
@@ -2718,6 +2738,9 @@ class AiAssistAgent:
                 await self._save_tool_result_to_kg(tool_name, original_tool_name, arguments, result_text)
 
             self.audit_logger.log_tool_call(tool_name, arguments, result_text, success=True)
+
+            if jq_filter:
+                result_text = self._apply_jq_filter(result_text, jq_filter)
 
             redirect = self._handle_result_redirection(result_text, save_to_file, write_to_report, append_to_report)
             if redirect:

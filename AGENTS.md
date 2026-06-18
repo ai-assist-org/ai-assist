@@ -260,7 +260,7 @@ Files: `config.py`, `state.py`, `config_watcher.py`, `file_watchdog.py`
 
 **MCP tools** from configured servers are dynamically loaded and prefixed with server name.
 
-**Large tool results**: All tools support `__save_to_file`, `__write_to_report`, `__append_to_report`, and `__collect_to_report` parameters. Add to any tool call to redirect raw results to a file or report. Agent receives a summary. `__collect_to_report` auto-paginates and collects all results in one call (requires server pagination config in `mcp_servers.yaml`).
+**Large tool results**: All tools support `__save_to_file`, `__write_to_report`, `__append_to_report`, `__collect_to_report`, and `__jq_filter` parameters. Add to any tool call to redirect raw results to a file or report. Agent receives a summary. `__jq_filter` applies a jq filter inline before returning or saving — composes with the other parameters (filter runs first). `__collect_to_report` auto-paginates and collects all results in one call (requires server pagination config in `mcp_servers.yaml`).
 
 ## Documentation
 

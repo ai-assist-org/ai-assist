@@ -97,3 +97,25 @@ class JsonTools:
             return f"jq error: {result.stderr.strip()}"
 
         return result.stdout
+
+    def filter_string(self, input_text: str, filter_expr: str) -> str:
+        """Run a jq filter on a string (piped via stdin)."""
+        if not self.jq_path:
+            return "Error: jq is not installed. __jq_filter requires jq."
+
+        try:
+            result = subprocess.run(
+                [self.jq_path, filter_expr],
+                input=input_text,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            return "jq error: filter timed out after 30 seconds"
+
+        if result.returncode != 0:
+            return f"jq error: {result.stderr.strip()}"
+
+        return result.stdout
