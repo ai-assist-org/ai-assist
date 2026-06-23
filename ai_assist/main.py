@@ -350,7 +350,7 @@ async def basic_interactive_mode(agent: AiAssistAgent, state_manager: StateManag
                     {"user": user_input, "assistant": response, "timestamp": str(asyncio.get_event_loop().time())}
                 )
 
-        except (KeyboardInterrupt, EOFError):
+        except KeyboardInterrupt, EOFError:
             print("\n\nGoodbye!")
             break
         except Exception as e:
