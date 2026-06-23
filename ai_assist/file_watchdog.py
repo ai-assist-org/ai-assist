@@ -156,6 +156,7 @@ class _DebounceHandler(FileSystemEventHandler):
         self.debounce_seconds = debounce_seconds
         self.loop = loop
         self._debounce_task: asyncio.Task | None = None
+        self._last_mtime: float = target_file.stat().st_mtime if target_file.exists() else 0.0
 
     def on_modified(self, event: FileSystemEvent) -> None:
         """Handle file modification events."""
@@ -168,6 +169,15 @@ class _DebounceHandler(FileSystemEventHandler):
 
         if event_path != target_path:
             return
+
+        # macOS FSEvents emits directory-level events; guard with mtime to filter false positives.
+        try:
+            current_mtime = self.target_file.stat().st_mtime
+        except OSError:
+            return
+        if current_mtime == self._last_mtime:
+            return
+        self._last_mtime = current_mtime
 
         print(f"Detected change in {self.target_file.name}", flush=True)
         # Trigger debounced callback
