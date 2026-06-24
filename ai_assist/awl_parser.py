@@ -147,6 +147,12 @@ class AWLParser:
         if max_time_match:
             max_time = int(max_time_match.group(1))
 
+        # Extract model=<name> (optional)
+        model = None
+        model_match = re.search(r"model=([\w.\-]+)", line)
+        if model_match:
+            model = model_match.group(1)
+
         self._advance()
 
         goal = None
@@ -192,6 +198,7 @@ class AWLParser:
             expose=expose,
             max_tool_calls=max_tool_calls,
             max_time=max_time,
+            model=model,
         )
 
     def _parse_field_value(self, prefix: str, all_fields: set[str]) -> str:

@@ -149,6 +149,29 @@ Expose: jira_ticket
 
 ---
 
+## model=\<model_name\>
+
+`model` overrides the global model for a single task. Use this when a task needs a
+more capable model (e.g., Opus for deep analysis) or a cheaper/faster model
+(e.g., Haiku for mechanical data gathering).
+
+The model name is validated against known models at workflow load time. Unknown
+models cause the workflow to fail before any task executes.
+
+Example:
+
+@task search_jobs model=claude-haiku-4-5-20251001 @no-kg
+Goal: Search DCI for failed jobs in the last 24 hours.
+Expose: failed_jobs
+@end
+
+@task root_cause model=claude-opus-4-6
+Goal: Perform root cause analysis on ${failed_jobs}.
+Expose: rca_result
+@end
+
+---
+
 ## @continue-on-failure
 
 By default, if a top-level task (outside a loop) fails, the workflow **stops immediately** and returns `success: false`. This prevents cascading errors from missing variables.
@@ -171,7 +194,7 @@ Tasks represent **objectives for the agent**.
 
 Syntax:
 
-@task <task_id> [hints...] [max_tool_calls=N] [max_time=N]
+@task <task_id> [hints...] [max_tool_calls=N] [max_time=N] [model=<model_name>]
 ...
 @end
 

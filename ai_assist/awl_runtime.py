@@ -64,6 +64,29 @@ class RuntimeLimits:
     timeout: float = 300.0
 
 
+def _validate_workflow_models(workflow: WorkflowNode, known_prefixes: list[str]) -> list[str]:
+    """Check that all model= overrides match a known model prefix."""
+    errors: list[str] = []
+
+    def _walk(nodes: list[ASTNode]):
+        for node in nodes:
+            if isinstance(node, TaskNode) and node.model:
+                if not any(prefix in node.model for prefix in known_prefixes):
+                    errors.append(f"@task '{node.task_id}': unknown model '{node.model}'")
+            elif isinstance(node, IfNode):
+                _walk(node.then_body)
+                _walk(node.else_body)
+            elif isinstance(node, LoopNode):
+                _walk(node.body)
+            elif isinstance(node, WhileNode):
+                _walk(node.body)
+            elif isinstance(node, GoalNode):
+                _walk(node.body)
+
+    _walk(workflow.body)
+    return errors
+
+
 def _extract_commands_from_workflow(workflow: WorkflowNode) -> set[str]:
     """Extract command names from commands in AWL task/goal text.
 
@@ -279,6 +302,13 @@ class AWLRuntime:
             logger.warning("AWL validation: %s", w)
             print(f"  [!] {w}")
 
+        # Validate model= overrides against known models
+        model_prefixes = list(getattr(type(self._agent), "MODEL_CONTEXT_WINDOWS", {}).keys())
+        if model_prefixes:
+            model_errors = _validate_workflow_models(workflow, model_prefixes)
+            for err in model_errors:
+                raise AWLRuntimeError(f"Model validation failed: {err}")
+
         if workflow.max_steps is not None:
             self._limits.max_steps = workflow.max_steps
 
@@ -360,7 +390,8 @@ class AWLRuntime:
             prompt = "@no-kg " + prompt
 
         logger.info("AWL task '%s' starting", task.task_id)
-        print(f"  > task '{task.task_id}' ...", flush=True)
+        model_info = f" (model={task.model})" if task.model else ""
+        print(f"  > task '{task.task_id}'{model_info} ...", flush=True)
         try:
             callback = self._progress_callback if self._verbose else None
             # During AWL tasks, use renderer for inner execution (no noisy text)
@@ -374,12 +405,21 @@ class AWLRuntime:
             tool_calls_before = len(self._agent.last_tool_calls)
             try:
                 max_turns = task.max_tool_calls or self._limits.max_tool_calls
-                response = await self._agent.query(
-                    prompt,
-                    max_turns=max_turns,
-                    progress_callback=callback,
-                    max_time_seconds=task.max_time,
-                )
+                saved_model = None
+                if task.model:
+                    saved_model = self._agent.config.model
+                    self._agent.config.model = task.model
+                    logger.info("AWL task '%s' using model override: %s", task.task_id, task.model)
+                try:
+                    response = await self._agent.query(
+                        prompt,
+                        max_turns=max_turns,
+                        progress_callback=callback,
+                        max_time_seconds=task.max_time,
+                    )
+                finally:
+                    if saved_model is not None:
+                        self._agent.config.model = saved_model
             finally:
                 self._agent.on_inner_execution = prev_inner
 

@@ -625,7 +625,7 @@ AWL scripts define intent-driven workflows where the agent autonomously selects 
 ```
 @start
 
-@task find_handlers @no-kg
+@task find_handlers @no-kg model=claude-haiku-4-5-20251001
 Goal: Find HTTP handlers defined in the repository.
 Expose: handlers
 @end
@@ -634,7 +634,7 @@ Expose: handlers
 
 @loop handlers as handler limit=5 collect=summaries(handler_summary)
 
-@task inspect_handler @no-history
+@task inspect_handler @no-history model=claude-sonnet-4-6
 Goal: Understand what ${handler} does.
 Expose: handler_summary
 @end
@@ -645,6 +645,12 @@ Expose: handler_summary
 
 @end
 ```
+
+Task parameters:
+- `@no-kg`, `@no-history`, `@continue-on-failure` — context and error handling hints
+- `max_tool_calls=N` — override tool call budget (default: 100)
+- `max_time=N` — override timeout in seconds (default: 600)
+- `model=<name>` — use a different model for this task (validated at load time)
 
 Loops support `collect=<var>` to accumulate results across iterations (map-reduce pattern). Use `collect=<var>(<fields>)` to capture only specific fields.
 

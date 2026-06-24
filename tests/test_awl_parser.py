@@ -472,6 +472,34 @@ def test_parse_task_without_max_tool_calls():
     assert task.max_tool_calls is None
 
 
+def test_parse_task_with_model():
+    script = "@start\n@task t1 model=claude-opus-4-6\nGoal: Deep analysis.\n@end\n@end"
+    result = AWLParser(script).parse()
+    task = result.body[0]
+    assert isinstance(task, TaskNode)
+    assert task.model == "claude-opus-4-6"
+
+
+def test_parse_task_with_model_and_hints():
+    script = (
+        "@start\n@task t1 @no-kg model=claude-haiku-4-5-20251001 max_tool_calls=50\nGoal: Quick search.\n@end\n@end"
+    )
+    result = AWLParser(script).parse()
+    task = result.body[0]
+    assert isinstance(task, TaskNode)
+    assert task.model == "claude-haiku-4-5-20251001"
+    assert task.max_tool_calls == 50
+    assert task.hints == ["no-kg"]
+
+
+def test_parse_task_without_model():
+    script = "@start\n@task t1\nGoal: Normal task.\n@end\n@end"
+    result = AWLParser(script).parse()
+    task = result.body[0]
+    assert isinstance(task, TaskNode)
+    assert task.model is None
+
+
 def test_parse_fail_basic():
     script = "@start\n@fail Jira is down\n@end\n"
     result = AWLParser(script).parse()
