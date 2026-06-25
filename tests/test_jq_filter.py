@@ -107,6 +107,26 @@ async def test_jq_filter_with_collect_to_report_ignored():
     assert "not configured" in result.lower() or "error" in result.lower() or "report" in result.lower()
 
 
+@requires_jq
+@pytest.mark.asyncio
+async def test_jq_filter_on_execute_command():
+    """Test __jq_filter on execute_command applies to stdout, not the wrapper."""
+    config = AiAssistConfig(anthropic_api_key="test-key", working_dirs=["/tmp"])
+    agent = AiAssistAgent(config=config)
+    await agent.connect_to_servers()
+
+    result = await agent._execute_tool(
+        "internal__execute_command",
+        {
+            "command": 'echo \'[{"name":"alpha","score":10},{"name":"beta","score":20}]\'',
+            "__jq_filter": "[.[].name]",
+        },
+    )
+
+    parsed = json.loads(result.strip())
+    assert parsed == ["alpha", "beta"]
+
+
 @pytest.mark.asyncio
 async def test_without_jq_filter_unchanged():
     """Test that tools without __jq_filter return unmodified results."""

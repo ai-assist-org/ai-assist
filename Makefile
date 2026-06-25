@@ -17,7 +17,7 @@ test-cov:  ## Run tests with coverage
 	pytest --cov=ai_assist --cov-report=html --cov-report=term
 
 test-fast:  ## Run only fast tests (skip slow/integration)
-	pytest -m "not slow"
+	pytest -o 'addopts=-v --strict-markers --tb=short -n auto -m "not slow and not integration"'
 
 lint:  ## Run linting (ruff)
 	ruff check ai_assist tests
@@ -59,6 +59,12 @@ DCI_MCP_SERVER_DIR ?= ../dci-mcp-server
 sandbox-build:  ## Build sandbox container images (ai-assist + dci-mcp-server)
 	podman build -t ai-assist-sandbox -f sandbox/ai-assist/Dockerfile .
 	podman build -t dci-mcp-server -f $(DCI_MCP_SERVER_DIR)/Containerfile.sse $(DCI_MCP_SERVER_DIR)
+
+test-eval:  ## Run agent behavior eval suite (requires API key)
+	uv run --extra eval python eval/run_eval.py --config eval/eval.yaml --model claude-sonnet-4-6 --no-llm-judges
+
+test-eval-full:  ## Run eval suite with LLM judges (slower, requires claude CLI)
+	uv run --extra eval python eval/run_eval.py --config eval/eval.yaml --model claude-sonnet-4-6
 
 test-integration: sandbox-build-dev  ## Run sandbox integration tests (builds images first)
 	pytest tests/test_sandbox_integration.py -v -m integration --override-ini="addopts="

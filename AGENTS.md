@@ -332,13 +332,23 @@ All tests are green before any change. If tests fail, your change broke them —
 - **Test Error Handling**: Ensure graceful degradation when services fail
 
 ```bash
-# Running tests (when implemented)
-pytest tests/
-pytest tests/test_agent.py -v
-pytest tests/ --cov=ai_assist --cov-report=html
-```
+# Unit tests (excludes integration tests by default)
+make test                    # All non-integration tests (parallel)
+make test-fast               # Skip slow + integration tests
+make test-cov                # With coverage report (≥71% required)
+pytest tests/test_agent.py   # Specific test file
 
-Run `make test-cov` to verify coverage (≥71% required for build).
+# Integration tests (require podman + built container images)
+make test-integration        # Builds images then runs sandbox tests
+
+# Eval tests (agent behavior validation, requires API key)
+make test-eval               # Eval suite with check judges only
+make test-eval-full          # Eval suite with LLM judges (slower, requires claude CLI)
+uv run --extra eval python eval/run_eval.py --config eval/eval.yaml --model claude-sonnet-4-6 --cases case-name  # Single case
+
+# Pre-commit (runs all hooks: black, ruff, mypy, bandit, pylint, pytest)
+pre-commit run --all-files
+```
 
 ### 2. DRY - Don't Repeat Yourself
 

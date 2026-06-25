@@ -11,9 +11,9 @@ runner:
     - "uv"
     - "run"
     - "--project"
-    - "/home/flepied/work/ai-assist-branch2"
+    - "{project_root}"
     - "python"
-    - "/home/flepied/work/ai-assist-branch2/eval/eval_wrapper.py"
+    - "{project_root}/eval/eval_wrapper.py"
     - "--workspace"
     - "{workspace}"
     - "--output-dir"
@@ -33,6 +33,8 @@ dataset:
     annotations.yaml has expected_tools (list of tool name substrings
     the agent should call) and optional forbidden_tools (tool name
     substrings that should NOT be called).
+    Optional: forbid_python_pipe (bool) — agent must not pipe
+    through python3 -c for JSON processing.
 
 outputs:
   - path: output
@@ -79,6 +81,22 @@ judges:
       if violations:
         return False, f"Called forbidden tools: {violations}"
       return True, "No forbidden tools called"
+
+  - name: no_python_pipe
+    description: Verify the agent does not pipe through python3 -c for JSON processing
+    check: |
+      import json
+      annotations = outputs.get("annotations", {})
+      if not annotations.get("forbid_python_pipe"):
+        return True, "Not applicable to this case"
+      files = outputs.get("files", {})
+      tc_content = next((v for k, v in files.items() if "tool_calls.json" in k), "[]")
+      tool_calls = json.loads(tc_content)
+      for tc in tool_calls:
+        cmd = tc.get("input", {}).get("command", "")
+        if "python3 -c" in cmd or "python -c" in cmd:
+          return False, f"Used python -c pipe instead of jq/json_query: {cmd[:100]}"
+      return True, "Did not use python -c for JSON processing"
 
   - name: response_quality
     description: Evaluate if the response is coherent and addresses the prompt

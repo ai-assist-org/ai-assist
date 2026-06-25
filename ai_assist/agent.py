@@ -1110,6 +1110,7 @@ class AiAssistAgent:
             prompt += "\n## Handling Large Tool Results\n\n"
             prompt += "**IMPORTANT:** When fetching more than 10 results from any search/list tool, ALWAYS use `__collect_to_report` to auto-paginate all results into a file. "
             prompt += "For quick inline filtering, use `__jq_filter` on any tool call. "
+            prompt += "**Never pipe command output through `python3 -c` for JSON processing** — use `__jq_filter` on the execute_command call instead. "
             prompt += "For post-hoc processing of saved files, use `internal__json_query` (jq filters). "
             prompt += "Never dump large result sets (limit > 10) directly into context — it wastes tokens and may get truncated. "
             prompt += "Avoid combining a high limit (e.g. limit=200) with `__save_to_file` — that only saves one page. Use `__collect_to_report` instead to get ALL matching results automatically.\n\n"
@@ -2678,7 +2679,11 @@ class AiAssistAgent:
                 self.audit_logger.log_tool_call(tool_name, arguments, result_text, success=is_success)
 
                 if jq_filter:
-                    result_text = self._apply_jq_filter(result_text, jq_filter)
+                    if original_tool_name == "execute_command" and "\nSTDOUT:\n" in result_text:
+                        stdout = result_text.split("\nSTDOUT:\n", 1)[1].split("\nSTDERR:\n", 1)[0].strip()
+                        result_text = self._apply_jq_filter(stdout, jq_filter)
+                    else:
+                        result_text = self._apply_jq_filter(result_text, jq_filter)
 
                 redirect = self._handle_result_redirection(result_text, save_to_file, write_to_report, append_to_report)
                 if redirect:

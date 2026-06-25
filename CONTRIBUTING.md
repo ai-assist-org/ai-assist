@@ -28,22 +28,23 @@ This installs git hooks that will automatically:
 - Fix trailing whitespace and line endings
 - Run tests with pytest
 
-### 3. Manual Testing
-
-Run tests manually:
+### 3. Running Tests
 
 ```bash
-# Run all tests
-pytest
+# Unit tests (excludes integration tests by default)
+make test                    # All non-integration tests (parallel)
+make test-fast               # Skip slow + integration tests
+make test-cov                # With coverage report (≥71% required)
+pytest tests/test_file.py    # Specific test file
+pytest -v -s                 # Verbose with print output
 
-# Run specific test file
-pytest tests/test_filesystem_tools.py
+# Integration tests (require podman + built container images)
+make test-integration        # Builds images then runs sandbox tests
 
-# Run with verbose output
-pytest -v
-
-# Run only fast tests (skip slow/integration tests)
-pytest -m "not slow"
+# Eval tests (agent behavior validation, requires API key)
+make test-eval               # Eval suite with check judges only
+make test-eval-full          # Eval suite with LLM judges (slower, requires claude CLI)
+uv run --extra eval python eval/run_eval.py --config eval/eval.yaml --model claude-sonnet-4-6 --cases case-name  # Single case
 ```
 
 ### 4. Code Quality
@@ -164,12 +165,13 @@ pytest tests/test_filesystem_tools.py
 # Run only agent tests
 pytest tests/test_agent*.py
 
+# Run only security tests
+pytest tests/test_filesystem_security.py
+
 # Run with coverage (target: ≥71%; build fails below 71%)
 make test-cov
-# or: pytest --cov=ai_assist --cov-report=html --cov-report=term
 
-# Run tests in parallel (requires pytest-xdist)
-pytest -n auto
+# Tests run in parallel by default (pytest-xdist, -n auto in pyproject.toml)
 ```
 
 ## Debugging Failed Tests

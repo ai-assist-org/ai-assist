@@ -1,0 +1,1 @@
+prompt: "Run 'echo [{\"name\":\"alpha\",\"score\":10},{\"name\":\"beta\",\"score\":20},{\"name\":\"gamma\",\"score\":30}]' and extract only the names from the JSON output."

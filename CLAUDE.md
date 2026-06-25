@@ -19,11 +19,19 @@ make pre-commit-install
 
 ### Testing
 ```bash
-make test                    # Run all tests (pytest with -n auto for parallelism)
+make test                    # Run all tests (excludes integration, parallel with -n auto)
 make test-cov                # Run tests with coverage report (≥71% required)
 make test-fast               # Skip slow/integration tests
+make test-integration        # Run sandbox integration tests (requires podman + built images)
 pytest tests/test_file.py    # Run specific test file
 pytest -v -s                 # Verbose with print output
+```
+
+### Eval (agent behavior tests)
+```bash
+make test-eval               # Run eval suite with check judges only
+make test-eval-full          # Run eval suite with LLM judges (slower, requires claude CLI)
+uv run --extra eval python eval/run_eval.py --config eval/eval.yaml --model claude-sonnet-4-6 --cases jq-filter-json  # Single case
 ```
 
 ### Code Quality

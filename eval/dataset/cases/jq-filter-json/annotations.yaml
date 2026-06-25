@@ -1,0 +1,6 @@
+expected_tools:
+  - "execute_command"
+forbid_python_pipe: true
+notes: |
+  The agent should use __jq_filter on execute_command or pipe through jq,
+  NOT pipe through python3 -c for JSON processing.

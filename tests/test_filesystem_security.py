@@ -17,6 +17,7 @@ from ai_assist.filesystem_tools import (
     _split_shell_commands,
     _strip_shell_comments,
     compute_allowlist_prefix,
+    compute_allowlist_prefixes,
     extract_command_names,
 )
 
@@ -1419,6 +1420,126 @@ class TestComputeAllowlistPrefix:
 
     def test_home_relative_path_preserved(self):
         assert compute_allowlist_prefix("~/bin/tool --flag arg") == "~/bin/tool arg"
+
+    def test_redirect_stripped(self):
+        assert compute_allowlist_prefix("./script.sh 2>&1") == "./script.sh"
+
+    def test_redirect_stdout(self):
+        assert compute_allowlist_prefix("git status > /tmp/out") == "git status"
+
+    def test_redirect_append(self):
+        assert compute_allowlist_prefix("cmd >> /tmp/log") == "cmd"
+
+    def test_redirect_input(self):
+        assert compute_allowlist_prefix("cmd < /tmp/input") == "cmd"
+
+
+class TestComputeAllowlistPrefixes:
+    """Tests for compute_allowlist_prefixes() — multi-segment support"""
+
+    def test_cd_then_script(self):
+        assert compute_allowlist_prefixes("cd /tmp && ./script.sh") == ["./script.sh"]
+
+    def test_cd_then_git(self):
+        assert compute_allowlist_prefixes("cd /path && git status") == ["git status"]
+
+    def test_multiple_cd_then_command(self):
+        assert compute_allowlist_prefixes("cd /a && cd /b && curl http://example.com") == ["curl http://example.com"]
+
+    def test_two_non_builtin_commands(self):
+        assert compute_allowlist_prefixes("git status && curl http://example.com") == [
+            "git status",
+            "curl http://example.com",
+        ]
+
+    def test_all_builtins(self):
+        assert compute_allowlist_prefixes("cd /tmp && echo hello") == []
+
+    def test_cd_only(self):
+        assert compute_allowlist_prefixes("cd /tmp") == []
+
+    def test_empty(self):
+        assert compute_allowlist_prefixes("") == []
+
+    def test_single_command(self):
+        assert compute_allowlist_prefixes("git status --short") == ["git status"]
+
+    def test_compute_allowlist_prefix_delegates(self):
+        """compute_allowlist_prefix returns first prefix from compound command"""
+        assert compute_allowlist_prefix("cd /tmp && ./script.sh") == "./script.sh"
+        assert compute_allowlist_prefix("cd /tmp && echo hello") is None
+
+
+@pytest.mark.asyncio
+async def test_compound_cd_validates_path_per_segment(tmp_path, monkeypatch):
+    """cd path in compound commands is validated via path_confirmation_callback"""
+    monkeypatch.setattr("ai_assist.filesystem_tools.get_config_dir", lambda: tmp_path)
+    config = AiAssistConfig(
+        anthropic_api_key="test",
+        allowed_commands=["grep"],
+        allowed_paths=[str(tmp_path)],
+    )
+    tools = FilesystemTools(config, load_user_config=False)
+
+    prompts = []
+
+    async def track_path_callback(description: str) -> bool:
+        prompts.append(("path", description))
+        return True
+
+    async def track_cmd_callback(command: str) -> bool:
+        prompts.append(("cmd", command))
+        return True
+
+    tools.path_confirmation_callback = track_path_callback
+    tools.confirmation_callback = track_cmd_callback
+
+    # cd to a path outside allowed dirs + a non-allowed command
+    await tools.execute_tool(
+        "execute_command",
+        {"command": "cd /some/outside/path && unknown_cmd arg"},
+    )
+
+    # Should have prompted for the path and the command separately
+    path_prompts = [p for p in prompts if p[0] == "path"]
+    cmd_prompts = [p for p in prompts if p[0] == "cmd"]
+    assert len(path_prompts) == 1
+    assert "/some/outside/path" in path_prompts[0][1]
+    assert len(cmd_prompts) == 1
+    assert "unknown_cmd" in cmd_prompts[0][1]
+
+
+@pytest.mark.asyncio
+async def test_compound_cd_allowed_path_skips_prompt(tmp_path, monkeypatch):
+    """cd to an already-allowed path doesn't prompt"""
+    monkeypatch.setattr("ai_assist.filesystem_tools.get_config_dir", lambda: tmp_path)
+    config = AiAssistConfig(
+        anthropic_api_key="test",
+        allowed_commands=["grep"],
+        allowed_paths=["/tmp"],
+    )
+    tools = FilesystemTools(config, load_user_config=False)
+
+    prompts = []
+
+    async def track_path_callback(description: str) -> bool:
+        prompts.append(("path", description))
+        return True
+
+    async def track_cmd_callback(command: str) -> bool:
+        prompts.append(("cmd", command))
+        return True
+
+    tools.path_confirmation_callback = track_path_callback
+    tools.confirmation_callback = track_cmd_callback
+
+    await tools.execute_tool(
+        "execute_command",
+        {"command": "cd /tmp && grep pattern file"},
+    )
+
+    # No path prompt (path is allowed), no cmd prompt (grep is allowed)
+    assert len(prompts) == 0
 
 
 class TestShellKeywordsInBuiltins:

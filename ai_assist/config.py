@@ -232,7 +232,6 @@ class AiAssistConfig(BaseModel):
             "file",
             "stat",
             "realpath",
-            "jq",
         ],
     )
 

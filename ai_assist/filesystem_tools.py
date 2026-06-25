@@ -109,6 +109,8 @@ PROTECTED_CONFIG_FILES = frozenset(
 
 ENV_VAR_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 
+_SHELL_REDIRECT = re.compile(r"^(\d*[<>]|&>|>>|>&|<&|\d+>&)")
+
 
 def _resolve_command_token(token: str) -> str:
     """Return the effective command name for allowlist matching.
@@ -298,33 +300,14 @@ def extract_command_names(command: str) -> list[str]:
     return commands
 
 
-def compute_allowlist_prefix(command: str) -> str | None:
-    """Compute a meaningful allowlist prefix from a full command string.
+def _compute_segment_prefix(tokens: list[str]) -> str | None:
+    """Compute an allowlist prefix from a single command segment's tokens.
 
-    Strips transparent wrappers (env, nohup) and env var assignments.
-    Keeps privilege wrappers (sudo, su) as part of the prefix.
-    Returns command + first non-flag argument as the prefix.
-
-    Returns None if the command is empty or only builtins/wrappers.
+    Returns None if the segment is empty, only builtins, or only wrappers.
     """
-    stripped = _strip_shell_comments(command)
-    if not stripped.strip():
-        return None
-
-    segments = _split_shell_commands(stripped)
-    if not segments:
-        return None
-
-    # Use only the first segment (before pipes/&&/||)
-    try:
-        tokens = shlex.split(segments[0])
-    except ValueError:
-        tokens = segments[0].split()
-
     if not tokens:
         return None
 
-    # Skip env var assignments
     idx = 0
     while idx < len(tokens) and ENV_VAR_PATTERN.match(tokens[idx]):
         idx += 1
@@ -332,7 +315,6 @@ def compute_allowlist_prefix(command: str) -> str | None:
     if idx >= len(tokens):
         return None
 
-    # Strip transparent wrappers and their arguments
     while idx < len(tokens) and _resolve_command_token(tokens[idx]) in TRANSPARENT_WRAPPERS:
         idx += 1
         idx = _skip_wrapper_args(tokens, idx)
@@ -342,33 +324,32 @@ def compute_allowlist_prefix(command: str) -> str | None:
 
     prefix_parts: list[str] = []
 
-    # Keep privilege wrappers as part of the prefix
     cmd_token = _resolve_command_token(tokens[idx])
     if cmd_token in PRIVILEGE_WRAPPERS:
         prefix_parts.append(cmd_token)
         idx += 1
-        # Skip flags after sudo (e.g. sudo -u user)
         while idx < len(tokens) and tokens[idx].startswith("-"):
             idx += 1
-            # Skip the flag's argument if it's a known value-flag
             if idx < len(tokens) and not tokens[idx].startswith("-"):
                 idx += 1
 
     if idx >= len(tokens):
         return " ".join(prefix_parts) if prefix_parts else None
 
-    # Add the command name (preserving full path if given)
     cmd_name = _resolve_command_token(tokens[idx])
     if cmd_name in SHELL_BUILTINS:
         return None
     prefix_parts.append(cmd_name)
     idx += 1
 
-    # Add first non-flag argument, but skip if preceded by inline-code
-    # flags like -c or -e (means next token is code, not a script/subcommand)
     saw_inline_flag = False
     while idx < len(tokens):
         token = tokens[idx]
+        if _SHELL_REDIRECT.match(token):
+            idx += 1
+            if idx < len(tokens):
+                idx += 1
+            continue
         if token.startswith("-"):
             if token in ("-c", "-e"):
                 saw_inline_flag = True
@@ -379,6 +360,39 @@ def compute_allowlist_prefix(command: str) -> str | None:
             break
 
     return " ".join(prefix_parts)
+
+
+def compute_allowlist_prefixes(command: str) -> list[str]:
+    """Compute allowlist prefixes for all non-builtin segments of a command.
+
+    For compound commands (&&, ||, ;, |), returns a prefix for each segment
+    that contains a non-builtin command. Builtin-only segments (cd, echo, etc.)
+    are skipped.
+    """
+    stripped = _strip_shell_comments(command)
+    if not stripped.strip():
+        return []
+
+    prefixes: list[str] = []
+    for segment in _split_shell_commands(stripped):
+        try:
+            tokens = shlex.split(segment)
+        except ValueError:
+            tokens = segment.split()
+        prefix = _compute_segment_prefix(tokens)
+        if prefix:
+            prefixes.append(prefix)
+    return prefixes
+
+
+def compute_allowlist_prefix(command: str) -> str | None:
+    """Compute a meaningful allowlist prefix from a command string.
+
+    For compound commands, returns the prefix of the first non-builtin segment.
+    Returns None if only builtins/wrappers.
+    """
+    prefixes = compute_allowlist_prefixes(command)
+    return prefixes[0] if prefixes else None
 
 
 def _extract_command_argument_paths(command: str) -> list[tuple[str, str]]:
@@ -1092,35 +1106,99 @@ class FilesystemTools:
     async def _check_command_allowed(self, cmd_names: list[str], full_command: str) -> str | None:
         """Check if all commands in a command line are allowed.
 
-        Uses prefix-based matching: each allowlist entry is matched as a
-        prefix of the command's tokens. Shell builtins are always allowed.
+        For compound commands (&&, ;, ||, |), validates each segment
+        independently:
+        - cd <path> segments: validates the path via path_confirmation_callback
+        - Non-builtin command segments: checks allowlist, prompts per-segment
 
         Returns:
             Error message if blocked, None if allowed
         """
         rejected = self._is_command_prefix_allowed(full_command)
         if not rejected:
+            # All non-builtin segments are already allowed; still validate
+            # cd paths (builtins are skipped by _is_command_prefix_allowed).
+            pairs = _extract_command_argument_paths(full_command)
+            for cmd_name, path_or_marker in pairs:
+                if cmd_name == "cd" and path_or_marker not in ("<inline-code>", "<stdin>", "<interactive>"):
+                    path_error = await self._validate_path(path_or_marker)
+                    if path_error:
+                        return f"Error: cd target path is not allowed. {path_error}"
             return None
 
-        if self.confirmation_callback is not None:
-            approved = await self.confirmation_callback(full_command)
-            if approved:
-                return None
-            return f"Error: Command '{full_command}' was rejected by the user. Try a different approach or use only allowed commands: {', '.join(self.allowed_commands)}."
+        # Per-segment validation
+        stripped = _strip_shell_comments(full_command)
+        segments = _split_shell_commands(stripped)
 
-        allowed_list = ", ".join(self.allowed_commands)
-        return (
-            f"Error: Command '{', '.join(rejected)}' is not in the allowed commands list: {allowed_list}. Not allowed."
-        )
+        for segment in segments:
+            try:
+                tokens = shlex.split(segment)
+            except ValueError:
+                tokens = segment.split()
+
+            if not tokens:
+                continue
+
+            idx = 0
+            while idx < len(tokens) and ENV_VAR_PATTERN.match(tokens[idx]):
+                idx += 1
+            if idx >= len(tokens):
+                continue
+
+            while idx < len(tokens) and _resolve_command_token(tokens[idx]) in TRANSPARENT_WRAPPERS:
+                idx += 1
+                idx = _skip_wrapper_args(tokens, idx)
+            if idx >= len(tokens):
+                continue
+
+            cmd_name = _resolve_command_token(tokens[idx])
+
+            # cd segments: validate the target path
+            if cmd_name == "cd":
+                args = tokens[idx + 1 :]
+                if args and args[0] != "-":
+                    path_error = await self._validate_path(args[0])
+                    if path_error:
+                        return f"Error: cd target path is not allowed. {path_error}"
+                continue
+
+            if cmd_name in SHELL_BUILTINS:
+                continue
+
+            # Check if this segment is prefix-allowed
+            effective: list[str] = []
+            for t in tokens[idx:]:
+                if effective:
+                    effective.append(t)
+                else:
+                    effective.append(_resolve_command_token(t))
+
+            matched = any(effective[: len(e.split())] == e.split() for e in self.allowed_commands)
+            if matched:
+                continue
+
+            # Prompt for this specific segment
+            if self.confirmation_callback is not None:
+                approved = await self.confirmation_callback(segment.strip())
+                if not approved:
+                    return f"Error: Command '{segment.strip()}' was rejected by the user. Try a different approach or use only allowed commands: {', '.join(self.allowed_commands)}."
+            else:
+                allowed_list = ", ".join(self.allowed_commands)
+                return f"Error: Command '{cmd_name}' is not in the allowed commands list: {allowed_list}. Not allowed."
+
+        return None
 
     async def _validate_command_arguments(self, command: str, was_auto_allowed: bool) -> str | None:
         """Validate path arguments and parameters for specific commands.
 
         Checks:
-        - cd, find: paths must be within allowed directories
+        - find: paths must be within allowed directories
         - python/python3: script paths must be within allowed directories;
           -c (inline code), stdin, and interactive mode require confirmation
           when the command was auto-allowed via allowlist
+
+        Note: cd path validation is handled by _check_command_allowed to
+        avoid double-prompting.
 
         Args:
             command: The full shell command string
@@ -1134,6 +1212,8 @@ class FilesystemTools:
         pairs = _extract_command_argument_paths(command)
 
         for cmd_name, path_or_marker in pairs:
+            if cmd_name == "cd":
+                continue
             if path_or_marker in ("<inline-code>", "<stdin>", "<interactive>"):
                 if not was_auto_allowed:
                     continue
@@ -1143,14 +1223,8 @@ class FilesystemTools:
                     if not approved:
                         return f"Error: {cmd_name} {path_or_marker} execution rejected by user."
                 elif path_or_marker == "<interactive>":
-                    # Interactive REPL (no args) is never allowed in task mode
-                    # as it would hang waiting for input.
                     return f"Error: {cmd_name} {path_or_marker} execution is not allowed in non-interactive mode."
                 elif cmd_name not in self.allowed_commands:
-                    # In non-interactive mode, only block inline-code/stdin if the
-                    # command is not in the user's explicit allowlist. If python3
-                    # is allowlisted, python3 -c should also be trusted (e.g.
-                    # for piped commands in scheduled tasks).
                     return f"Error: {cmd_name} {path_or_marker} execution is not allowed in non-interactive mode."
             else:
                 path_error = await self._validate_path(path_or_marker)

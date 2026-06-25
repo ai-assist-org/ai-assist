@@ -1,5 +1,5 @@
 expected_tools:
-  - "list_schedules"
+  - "list_actions"
 forbidden_tools:
   - "kg_"
   - "write_report"

@@ -384,6 +384,11 @@ def print_results(config, run_id, per_case, aggregated, judges, run_output):
 
 def run_pipeline(config_path, model, run_id=None, cases=None, parallelism=1, no_llm_judges=False):
     config = EvalConfig.from_yaml(config_path)
+
+    # Resolve {project_root} in runner command to the config file's parent directory
+    project_root = str(Path(config_path).resolve().parent.parent)
+    config.runner.command = [c.replace("{project_root}", project_root) for c in config.runner.command]
+
     if not run_id:
         run_id = f"{datetime.now().strftime('%Y-%m-%d')}-{model}"
 
