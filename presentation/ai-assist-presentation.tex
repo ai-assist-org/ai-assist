@@ -1364,14 +1364,14 @@ ai-assist /sandbox service pr-review logs -f
 \begin{column}{0.48\textwidth}
 \begin{lstlisting}[style=code,basicstyle=\ttfamily\fontsize{5.5}{7}\selectfont,language={}]
 @start
-@task find_handlers @no-kg model=claude-haiku-4-5
+@task find_handlers @no-kg model=haiku
 Goal: Find HTTP handlers.
 Expose: handlers
 @end
 
 @if len(handlers) > 0
 @loop handlers as h limit=5
-  @task inspect @no-history model=claude-sonnet-4-6
+  @task inspect @no-history model=sonnet
   Goal: What does ${h} do?
   Expose: summary
   @end

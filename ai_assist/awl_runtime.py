@@ -64,6 +64,35 @@ class RuntimeLimits:
     timeout: float = 300.0
 
 
+MODEL_ALIASES: dict[str, str] = {
+    "haiku": "claude-haiku-4-5",
+    "sonnet": "claude-sonnet-4-6",
+    "opus": "claude-opus-4-6",
+}
+
+
+def _resolve_model_aliases(workflow: WorkflowNode) -> None:
+    """Resolve short model aliases (haiku, sonnet, opus) to full names in-place."""
+
+    def _walk(nodes: list[ASTNode]):
+        for node in nodes:
+            if isinstance(node, TaskNode) and node.model:
+                resolved = MODEL_ALIASES.get(node.model)
+                if resolved:
+                    node.model = resolved
+            elif isinstance(node, IfNode):
+                _walk(node.then_body)
+                _walk(node.else_body)
+            elif isinstance(node, LoopNode):
+                _walk(node.body)
+            elif isinstance(node, WhileNode):
+                _walk(node.body)
+            elif isinstance(node, GoalNode):
+                _walk(node.body)
+
+    _walk(workflow.body)
+
+
 def _validate_workflow_models(workflow: WorkflowNode, known_prefixes: list[str]) -> list[str]:
     """Check that all model= overrides match a known model prefix."""
     errors: list[str] = []
@@ -302,7 +331,8 @@ class AWLRuntime:
             logger.warning("AWL validation: %s", w)
             print(f"  [!] {w}")
 
-        # Validate model= overrides against known models
+        # Resolve model aliases (haiku → claude-haiku-4-5, etc.) and validate
+        _resolve_model_aliases(workflow)
         model_prefixes = list(getattr(type(self._agent), "MODEL_CONTEXT_WINDOWS", {}).keys())
         if model_prefixes:
             model_errors = _validate_workflow_models(workflow, model_prefixes)

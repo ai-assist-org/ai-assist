@@ -23,6 +23,7 @@ from ai_assist.awl_runtime import (
     RuntimeLimits,
     _compute_input_variables,
     _extract_commands_from_workflow,
+    _resolve_model_aliases,
     _validate_workflow_models,
     validate_workflow_variables,
 )
@@ -1436,3 +1437,40 @@ async def test_task_model_validation_rejects_unknown(mock_agent):
 
     # Clean up class attribute
     del type(mock_agent).MODEL_CONTEXT_WINDOWS
+
+
+def test_resolve_model_aliases():
+    """Short aliases should be resolved to full model names."""
+    workflow = WorkflowNode(
+        body=[
+            TaskNode(task_id="t1", goal="Do.", model="haiku"),
+            TaskNode(task_id="t2", goal="Do.", model="sonnet"),
+            TaskNode(task_id="t3", goal="Do.", model="opus"),
+        ]
+    )
+    _resolve_model_aliases(workflow)
+    assert workflow.body[0].model == "claude-haiku-4-5"
+    assert workflow.body[1].model == "claude-sonnet-4-6"
+    assert workflow.body[2].model == "claude-opus-4-6"
+
+
+def test_resolve_model_aliases_leaves_full_names():
+    """Full model names should pass through unchanged."""
+    workflow = WorkflowNode(body=[TaskNode(task_id="t1", goal="Do.", model="claude-opus-4-6-20260205")])
+    _resolve_model_aliases(workflow)
+    assert workflow.body[0].model == "claude-opus-4-6-20260205"
+
+
+def test_resolve_model_aliases_nested():
+    """Aliases in nested structures should be resolved."""
+    workflow = WorkflowNode(
+        body=[
+            LoopNode(
+                collection="items",
+                item_var="item",
+                body=[TaskNode(task_id="t1", goal="Do.", model="haiku")],
+            )
+        ]
+    )
+    _resolve_model_aliases(workflow)
+    assert workflow.body[0].body[0].model == "claude-haiku-4-5"

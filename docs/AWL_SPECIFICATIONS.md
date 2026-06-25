@@ -155,17 +155,21 @@ Expose: jira_ticket
 more capable model (e.g., Opus for deep analysis) or a cheaper/faster model
 (e.g., Haiku for mechanical data gathering).
 
+Short aliases are supported: `haiku`, `sonnet`, `opus` (resolved to the latest
+version of each model family). Full model names (e.g., `claude-opus-4-6-20260205`)
+are also accepted.
+
 The model name is validated against known models at workflow load time. Unknown
 models cause the workflow to fail before any task executes.
 
 Example:
 
-@task search_jobs model=claude-haiku-4-5-20251001 @no-kg
+@task search_jobs model=haiku @no-kg
 Goal: Search DCI for failed jobs in the last 24 hours.
 Expose: failed_jobs
 @end
 
-@task root_cause model=claude-opus-4-6
+@task root_cause model=opus
 Goal: Perform root cause analysis on ${failed_jobs}.
 Expose: rca_result
 @end
