@@ -200,6 +200,10 @@ class AiAssistAgent:
         "claude-sonnet-4-5@20250929": 8192,
         "claude-sonnet-4-5-20250929": 8192,
         "claude-sonnet-4-5@default": 8192,  # Vertex AI default version
+        # Claude Haiku 4.5 series (Oct 2025)
+        "claude-haiku-4-5@20251001": 8192,
+        "claude-haiku-4-5-20251001": 8192,
+        "claude-haiku-4-5@default": 8192,  # Vertex AI default version
         # Claude 3.5 series
         "claude-3-5-sonnet-20241022": 8192,
         "claude-3-5-sonnet-20240620": 8192,
@@ -216,6 +220,7 @@ class AiAssistAgent:
         "claude-opus-4-7": 1000000,
         "claude-opus-4-6": 1000000,
         "claude-sonnet-4-6": 1000000,
+        "claude-haiku-4-5": 200000,
         "claude-opus-4-5": 200000,
         "claude-sonnet-4-5": 200000,
         "claude-3-5-sonnet": 200000,
@@ -390,7 +395,7 @@ class AiAssistAgent:
                 max_tokens = 64000  # Conservative default for Opus 4.x
             elif "sonnet-4-6" in model.lower():
                 max_tokens = 64000
-            elif "sonnet-4" in model.lower() or "3-5-" in model:
+            elif "sonnet-4" in model.lower() or "haiku-4" in model.lower() or "3-5-" in model:
                 max_tokens = 8192
             else:
                 # Conservative default for unknown models

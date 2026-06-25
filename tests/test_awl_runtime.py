@@ -23,6 +23,8 @@ from ai_assist.awl_runtime import (
     RuntimeLimits,
     _compute_input_variables,
     _extract_commands_from_workflow,
+    _resolve_model_aliases,
+    _validate_workflow_models,
     validate_workflow_variables,
 )
 
@@ -1337,3 +1339,138 @@ async def test_notify_interpolates_and_prints(mock_agent, runtime, capsys):
     await runtime.execute(workflow)
     captured = capsys.readouterr()
     assert "5 jobs still running" in captured.out
+
+
+# ── model= override tests ────────────────────────────────────────
+
+
+def test_validate_workflow_models_valid():
+    """Known model prefixes should pass validation."""
+    workflow = WorkflowNode(body=[TaskNode(task_id="t1", goal="Do.", model="claude-opus-4-6-20260205")])
+    errors = _validate_workflow_models(workflow, ["claude-opus-4-6", "claude-sonnet-4-6"])
+    assert errors == []
+
+
+def test_validate_workflow_models_invalid():
+    """Unknown model should produce an error."""
+    workflow = WorkflowNode(body=[TaskNode(task_id="t1", goal="Do.", model="gpt-4o")])
+    errors = _validate_workflow_models(workflow, ["claude-opus-4-6", "claude-sonnet-4-6"])
+    assert len(errors) == 1
+    assert "gpt-4o" in errors[0]
+    assert "t1" in errors[0]
+
+
+def test_validate_workflow_models_no_override():
+    """Tasks without model= should not produce errors."""
+    workflow = WorkflowNode(body=[TaskNode(task_id="t1", goal="Do.")])
+    errors = _validate_workflow_models(workflow, ["claude-opus-4-6"])
+    assert errors == []
+
+
+def test_validate_workflow_models_nested():
+    """Validation should walk into if/loop/while bodies."""
+    workflow = WorkflowNode(
+        body=[
+            IfNode(
+                expression="True",
+                then_body=[TaskNode(task_id="t1", goal="Do.", model="bad-model")],
+            )
+        ]
+    )
+    errors = _validate_workflow_models(workflow, ["claude-opus-4-6"])
+    assert len(errors) == 1
+    assert "bad-model" in errors[0]
+
+
+@pytest.mark.asyncio
+async def test_task_model_override(mock_agent):
+    """Task with model= should temporarily swap the agent's config.model."""
+    mock_agent.query.return_value = '{"result": "ok"}'
+    mock_agent.config.model = "claude-sonnet-4-6"
+
+    # Bypass model validation by not setting MODEL_CONTEXT_WINDOWS on the mock
+    runtime = AWLRuntime(mock_agent, limits=RuntimeLimits(max_tool_calls=100))
+    workflow = WorkflowNode(body=[TaskNode(task_id="t1", goal="Do.", model="claude-opus-4-6", expose=["result"])])
+    await runtime.execute(workflow)
+
+    # Model should be restored after task
+    assert mock_agent.config.model == "claude-sonnet-4-6"
+
+
+@pytest.mark.asyncio
+async def test_task_model_override_restored_on_failure(mock_agent):
+    """Model should be restored even when the task raises."""
+    mock_agent.query.side_effect = Exception("boom")
+    mock_agent.config.model = "claude-sonnet-4-6"
+
+    runtime = AWLRuntime(mock_agent, limits=RuntimeLimits(max_tool_calls=100))
+    workflow = WorkflowNode(
+        body=[
+            TaskNode(
+                task_id="t1",
+                goal="Do.",
+                model="claude-opus-4-6",
+                expose=["result"],
+                hints=["continue-on-failure"],
+            )
+        ]
+    )
+    await runtime.execute(workflow)
+    assert mock_agent.config.model == "claude-sonnet-4-6"
+
+
+@pytest.mark.asyncio
+async def test_task_model_validation_rejects_unknown(mock_agent):
+    """Workflow should fail before execution if a task has an unknown model."""
+    mock_agent.query.return_value = '{"result": "ok"}'
+    mock_agent.config.model = "claude-sonnet-4-6"
+    # Set MODEL_CONTEXT_WINDOWS on the mock's class to trigger validation
+    type(mock_agent).MODEL_CONTEXT_WINDOWS = {"claude-opus-4-6": 1000000, "claude-sonnet-4-6": 1000000}
+
+    runtime = AWLRuntime(mock_agent, limits=RuntimeLimits(max_tool_calls=100))
+    workflow = WorkflowNode(body=[TaskNode(task_id="t1", goal="Do.", model="bad-model", expose=["result"])])
+    with pytest.raises(AWLRuntimeError, match="Model validation failed"):
+        await runtime.execute(workflow)
+
+    # query should never have been called
+    mock_agent.query.assert_not_called()
+
+    # Clean up class attribute
+    del type(mock_agent).MODEL_CONTEXT_WINDOWS
+
+
+def test_resolve_model_aliases():
+    """Short aliases should be resolved to full model names."""
+    workflow = WorkflowNode(
+        body=[
+            TaskNode(task_id="t1", goal="Do.", model="haiku"),
+            TaskNode(task_id="t2", goal="Do.", model="sonnet"),
+            TaskNode(task_id="t3", goal="Do.", model="opus"),
+        ]
+    )
+    _resolve_model_aliases(workflow)
+    assert workflow.body[0].model == "claude-haiku-4-5"
+    assert workflow.body[1].model == "claude-sonnet-4-6"
+    assert workflow.body[2].model == "claude-opus-4-6"
+
+
+def test_resolve_model_aliases_leaves_full_names():
+    """Full model names should pass through unchanged."""
+    workflow = WorkflowNode(body=[TaskNode(task_id="t1", goal="Do.", model="claude-opus-4-6-20260205")])
+    _resolve_model_aliases(workflow)
+    assert workflow.body[0].model == "claude-opus-4-6-20260205"
+
+
+def test_resolve_model_aliases_nested():
+    """Aliases in nested structures should be resolved."""
+    workflow = WorkflowNode(
+        body=[
+            LoopNode(
+                collection="items",
+                item_var="item",
+                body=[TaskNode(task_id="t1", goal="Do.", model="haiku")],
+            )
+        ]
+    )
+    _resolve_model_aliases(workflow)
+    assert workflow.body[0].body[0].model == "claude-haiku-4-5"

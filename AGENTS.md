@@ -60,11 +60,11 @@ User → CLI (main.py) → AiAssistAgent (agent.py) → Claude API
 
 AWL scripts define intent-driven workflows where the agent autonomously selects tools to achieve goals. Key constructs:
 
-- `@task <name> @flags`: Defines a goal for the agent to achieve, exposing variables
+- `@task <name> [@hints] [max_tool_calls=N] [max_time=N] [model=<name>]`: Defines a goal for the agent to achieve, exposing variables. `model=` overrides the LLM for this task (e.g., use Haiku for cheap data gathering, Opus for deep analysis); validated at load time.
 - `@if <condition>`: Conditional execution with Python-like expressions
 - `@loop <var> as <item> limit=N collect=<var>`: Iteration with map-reduce pattern
 - `${var}`: Variable interpolation in goals and text
-- `@no-kg`, `@no-history`: Flags to suppress knowledge graph context or conversation history
+- `@no-kg`, `@no-history`, `@continue-on-failure`: Hints to suppress knowledge graph context, conversation history, or fail-fast behavior
 
 Files: `awl_parser.py` (parser), `awl_runtime.py` (executor), `awl_ast.py` (AST nodes), `awl_expressions.py` (variable interpolation and expression evaluation)
 

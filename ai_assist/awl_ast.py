@@ -15,6 +15,7 @@ class TaskNode:
     expose: list[str] = field(default_factory=list)
     max_tool_calls: int | None = None
     max_time: int | None = None
+    model: str | None = None
 
 
 @dataclass
