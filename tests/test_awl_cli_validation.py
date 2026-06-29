@@ -70,7 +70,7 @@ async def test_run_awl_script_passes_with_all_variables(tmp_path):
     agent = MagicMock()
 
     # Mock AWLRuntime to avoid actual execution
-    with patch("ai_assist.main.AWLRuntime") as mock_runtime:
+    with patch("ai_assist.awl_runtime.AWLRuntime") as mock_runtime:
         mock_instance = AsyncMock()
         mock_instance.execute = AsyncMock(return_value=MagicMock(success=True, return_value=None, task_outcomes=[]))
         mock_runtime.return_value = mock_instance
@@ -93,7 +93,7 @@ async def test_run_awl_script_no_variables_required(tmp_path):
 
     agent = MagicMock()
 
-    with patch("ai_assist.main.AWLRuntime") as mock_runtime:
+    with patch("ai_assist.awl_runtime.AWLRuntime") as mock_runtime:
         mock_instance = AsyncMock()
         mock_instance.execute = AsyncMock(return_value=MagicMock(success=True, return_value=None, task_outcomes=[]))
         mock_runtime.return_value = mock_instance
@@ -114,7 +114,7 @@ async def test_run_awl_script_extra_variables_allowed(tmp_path):
 
     agent = MagicMock()
 
-    with patch("ai_assist.main.AWLRuntime") as mock_runtime:
+    with patch("ai_assist.awl_runtime.AWLRuntime") as mock_runtime:
         mock_instance = AsyncMock()
         mock_instance.execute = AsyncMock(return_value=MagicMock(success=True, return_value=None, task_outcomes=[]))
         mock_runtime.return_value = mock_instance

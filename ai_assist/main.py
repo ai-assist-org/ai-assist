@@ -8,8 +8,6 @@ import sys
 from datetime import datetime
 
 from .agent import AiAssistAgent
-from .awl_parser import AWLParser
-from .awl_runtime import AWLRuntime
 from .commands import get_command_suggestion, is_valid_cli_command, is_valid_interactive_command
 from .config import get_config, get_config_dir
 from .identity import AssistantIdentity, Identity, UserIdentity, get_identity
@@ -410,43 +408,31 @@ async def monitoring_mode(agent: AiAssistAgent, config, state_manager: StateMana
 
 async def run_awl_script(agent: AiAssistAgent, script_path: str, variables: dict | None = None, verbose: bool = False):
     """Run an AWL workflow script"""
-    from pathlib import Path
+    from .awl_executor import get_missing_variables, load_awl_workflow
+    from .awl_executor import run_awl_script as _run_awl
+    from .awl_runtime import _compute_input_variables
 
-    from .introspection_tools import IntrospectionTools
-
-    path = Path(script_path).expanduser()
-    if not path.exists():
-        print(f"Error: File not found: {script_path}")
+    try:
+        workflow, awl_path = load_awl_workflow(script_path)
+    except FileNotFoundError as e:
+        print(f"Error: {e}")
         sys.exit(1)
 
-    source = path.read_text()
-    workflow = AWLParser(source).parse()
-
-    # Validate that all required input variables are provided
-    # Uses the same validation method as introspection__execute_awl_script
-    missing_vars = IntrospectionTools._get_missing_awl_variables(workflow, variables or {})
-
+    missing_vars = get_missing_variables(workflow, variables)
     if missing_vars:
-        required_vars = IntrospectionTools._awl_input_variables(workflow)
+        required_vars = _compute_input_variables(workflow)
         provided_vars = set(variables.keys()) if variables else set()
         print(f"Error: Missing required input variables: {sorted(missing_vars)}")
         print(f"\nRequired variables: {sorted(required_vars)}")
         print(f"Provided variables: {sorted(provided_vars)}")
-        print(f"\nUsage: ai-assist /run {path.name} {' '.join(f'{v}=<value>' for v in sorted(required_vars))}")
+        print(f"\nUsage: ai-assist /run {awl_path.name} {' '.join(f'{v}=<value>' for v in sorted(required_vars))}")
         sys.exit(1)
 
-    runtime = AWLRuntime(agent, verbose=verbose)
-    print(f"Running AWL workflow: {path.name}{' (verbose)' if verbose else ''}")
-    result = await runtime.execute(workflow, variables=variables)
-
-    for outcome in result.task_outcomes:
-        status_icon = "+" if outcome.status == "success" else "-"
-        print(f"  [{status_icon}] {outcome.status}: {outcome.summary[:100]}")
-
-    if result.return_value is not None:
-        print(f"\nResult: {result.return_value}")
-
-    if not result.success:
+    print(f"Running AWL workflow: {awl_path.name}{' (verbose)' if verbose else ''}")
+    try:
+        await _run_awl(script_path, agent, variables=variables, verbose=verbose)
+    except RuntimeError as e:
+        print(f"\n{e}")
         sys.exit(1)
 
 

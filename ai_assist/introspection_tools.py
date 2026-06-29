@@ -1180,35 +1180,28 @@ Do NOT compact if you still need the old tool results for your current task.
         ${variable} references, then subtracts variables that are defined
         within the script itself (Expose:, @set, @loop item_var).
         """
-        from pathlib import Path
-
-        from .awl_parser import AWLParser, ParseError
+        from .awl_executor import load_awl_workflow
+        from .awl_parser import ParseError
+        from .awl_runtime import _compute_input_variables, validate_workflow_variables
 
         script_path = arguments.get("script_path", "")
         if not script_path:
             return json.dumps({"error": "script_path is required"})
 
-        path_obj = Path(script_path).expanduser()
-        if not path_obj.is_absolute():
-            path_obj = Path.cwd() / script_path
-        if not path_obj.exists():
-            return json.dumps({"error": f"Script not found: {script_path}"})
-
         try:
-            source = path_obj.read_text()
-            workflow = AWLParser(source).parse()
+            workflow, awl_path = load_awl_workflow(script_path)
+        except FileNotFoundError:
+            return json.dumps({"error": f"Script not found: {script_path}"})
         except ParseError as e:
             return json.dumps({"error": f"Parse error: {e}"})
         except Exception as e:
             return json.dumps({"error": f"Error reading script: {e}"})
 
-        from .awl_runtime import _compute_input_variables, validate_workflow_variables
-
         input_var_set = _compute_input_variables(workflow)
         input_vars = sorted(input_var_set)
         var_warnings = validate_workflow_variables(workflow, input_var_set)
         result: dict[str, Any] = {
-            "script": path_obj.name,
+            "script": awl_path.name,
             "input_variables": input_vars,
             "next_step": (
                 "Resolve all input_variables from context (identity, user message), "
@@ -1218,54 +1211,6 @@ Do NOT compact if you still need the old tool results for your current task.
         if var_warnings:
             result["variable_warnings"] = var_warnings
         return json.dumps(result, indent=2)
-
-    @staticmethod
-    def _awl_input_variables(workflow) -> set[str]:
-        """Return the set of input variables an AWL workflow requires.
-
-        Input variables are those referenced via ${var} interpolation but never
-        produced within the script itself (Expose:, @set, @loop item_var/collect).
-        """
-        import re
-
-        from .awl_ast import IfNode, LoopNode, SetNode, TaskNode, WorkflowNode
-
-        interpolation_re = re.compile(r"\$\{(\w+)\}")
-
-        def collect_used(text: str | None, used: set[str]) -> None:
-            used.update(interpolation_re.findall(text or ""))
-
-        def walk(nodes: list, used: set[str], defined: set[str]) -> None:
-            for node in nodes:
-                if isinstance(node, TaskNode):
-                    for text in (node.goal, node.context, node.constraints, node.success):
-                        collect_used(text, used)
-                    defined.update(node.expose)
-                elif isinstance(node, SetNode):
-                    collect_used(node.value, used)
-                    defined.add(node.variable)
-                elif isinstance(node, LoopNode):
-                    used.add(node.collection)
-                    defined.add(node.item_var)
-                    if node.collect:
-                        defined.add(node.collect)
-                    walk(node.body, used, defined)
-                elif isinstance(node, IfNode):
-                    walk(node.then_body, used, defined)
-                    walk(node.else_body, used, defined)
-                elif isinstance(node, WorkflowNode):
-                    walk(node.body, used, defined)
-
-        used: set[str] = set()
-        defined: set[str] = set()
-        walk(workflow.body, used, defined)
-        return used - defined
-
-    @staticmethod
-    def _get_missing_awl_variables(workflow, variables: dict) -> set[str]:
-        """Return input variables required by the workflow but absent from variables dict."""
-        required = IntrospectionTools._awl_input_variables(workflow)
-        return {v for v in required if v not in variables}
 
     def _validate_awl_script(self, arguments: dict) -> str:
         """Parse an AWL script and report syntax and variable errors"""
@@ -1290,10 +1235,9 @@ Do NOT compact if you still need the old tool results for your current task.
 
     async def _execute_awl_script(self, arguments: dict) -> str:
         """Execute an AWL script with optional variable injection"""
-        from pathlib import Path
-
-        from .awl_parser import AWLParser, ParseError
-        from .awl_runtime import AWLRuntime, AWLRuntimeError
+        from .awl_executor import get_missing_variables, load_awl_workflow, run_awl_script
+        from .awl_parser import ParseError
+        from .awl_runtime import AWLRuntimeError, validate_workflow_variables
 
         if self.agent is None:
             return "Error: Agent not available for AWL execution"
@@ -1304,25 +1248,16 @@ Do NOT compact if you still need the old tool results for your current task.
         if not script_path.endswith(".awl"):
             return f"Error: Script must have .awl extension, got: {script_path}"
 
-        path_obj = Path(script_path).expanduser()
-
-        if not path_obj.is_absolute():
-            path_obj = Path.cwd() / script_path
-        if not path_obj.exists() or not path_obj.is_file():
-            return f"Error: AWL script not found: {script_path}"
-
         try:
-            source = path_obj.read_text()
-            workflow = AWLParser(source).parse()
+            workflow, awl_path = load_awl_workflow(script_path)
+        except FileNotFoundError:
+            return f"Error: AWL script not found: {script_path}"
         except ParseError as e:
-            return f"AWL Parse Error in {path_obj.name}:\n{e}"
+            return f"AWL Parse Error:\n{e}"
         except Exception as e:
             return f"Error reading script: {e}"
 
-        # Validate input variables and variable scoping
-        from .awl_runtime import validate_workflow_variables
-
-        missing = self._get_missing_awl_variables(workflow, variables)
+        missing = get_missing_variables(workflow, variables)
         var_warnings = validate_workflow_variables(workflow, set(variables.keys()) if variables else None)
         if missing or var_warnings:
             error: dict[str, Any] = {}
@@ -1345,8 +1280,7 @@ Do NOT compact if you still need the old tool results for your current task.
             return json.dumps(error, indent=2)
 
         try:
-            runtime = AWLRuntime(self.agent)
-            result = await runtime.execute(workflow, variables=variables or None)
+            output = await run_awl_script(script_path, self.agent, variables=variables or None)
         except AWLRuntimeError as e:
             return json.dumps(
                 {
@@ -1356,9 +1290,4 @@ Do NOT compact if you still need the old tool results for your current task.
                 indent=2,
             )
 
-        lines = [f"AWL Workflow: {path_obj.name}", f"Success: {result.success}"]
-        if result.return_value is not None:
-            lines.append(f"Return: {json.dumps(result.return_value)}")
-        for outcome in result.task_outcomes:
-            lines.append(f"  [{outcome.status}] {outcome.summary[:100]}")
-        return "\n".join(lines)
+        return output

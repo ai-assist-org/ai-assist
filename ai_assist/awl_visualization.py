@@ -22,7 +22,6 @@ from .awl_ast import (
 )
 from .awl_parser import AWLParser
 from .config import get_config_dir
-from .introspection_tools import IntrospectionTools
 
 NODE_STYLES = {
     "task": {"color": "#3498db", "bg": "#1a3a5c", "icon": "⚙", "label": "Task"},
@@ -542,7 +541,9 @@ def generate_awl_html(workflow: WorkflowNode, title: str = "AWL Workflow") -> st
         )
 
     task_count = _count_tasks(workflow.body)
-    input_vars = IntrospectionTools._awl_input_variables(workflow)
+    from .awl_runtime import _compute_input_variables
+
+    input_vars = _compute_input_variables(workflow)
     input_vars_str = ", ".join(sorted(input_vars)) if input_vars else "none"
     max_steps_str = str(workflow.max_steps) if workflow.max_steps else "default"
 
