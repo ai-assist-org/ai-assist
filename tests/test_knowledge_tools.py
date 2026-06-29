@@ -1,6 +1,7 @@
 """Tests for agent knowledge management tools"""
 
 import json
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -138,6 +139,48 @@ class TestSearchKnowledge:
         assert data["count"] == 0
         assert data["results"] == []
 
+    async def test_search_with_since(self, knowledge_tools, kg):
+        """Search with since only returns knowledge learned after that time"""
+        old_time = datetime.now() - timedelta(hours=2)
+        kg.insert_entity(
+            entity_type="lesson_learned",
+            entity_id="lesson_learned:old_lesson",
+            data={"key": "old_lesson", "content": "An old lesson", "metadata": {"tags": []}},
+            valid_from=old_time,
+            tx_from=old_time,
+        )
+        await knowledge_tools.save_knowledge("lesson_learned", "new_lesson", "A new lesson")
+
+        since = (datetime.now() - timedelta(hours=1)).isoformat()
+        result = await knowledge_tools.search_knowledge(entity_type="lesson_learned", since=since)
+        data = json.loads(result)
+
+        assert data["count"] == 1
+        assert data["results"][0]["key"] == "new_lesson"
+
+    async def test_search_with_since_no_matches(self, knowledge_tools, kg):
+        """Search with future since returns nothing"""
+        await knowledge_tools.save_knowledge("user_preference", "key1", "content1")
+
+        future = (datetime.now() + timedelta(hours=1)).isoformat()
+        result = await knowledge_tools.search_knowledge(since=future)
+        data = json.loads(result)
+
+        assert data["count"] == 0
+
+    async def test_search_records_access(self, knowledge_tools, kg):
+        """Search results are recorded in knowledge_access table"""
+        await knowledge_tools.save_knowledge("user_preference", "test_pref", "test content")
+
+        await knowledge_tools.search_knowledge(entity_type="user_preference")
+
+        cursor = kg.conn.execute(
+            "SELECT entity_id, query_context FROM knowledge_access WHERE query_context = 'agent_search'"
+        )
+        rows = cursor.fetchall()
+        assert len(rows) == 1
+        assert rows[0][0] == "user_preference:test_pref"
+
 
 class TestTriggerSynthesis:
     """Test synthesis trigger mechanism"""
@@ -206,3 +249,38 @@ class TestKnowledgeUpsert:
         assert entity is not None
         data = entity.data
         assert "fixtures" in data["content"]
+
+
+class TestExpireKnowledge:
+    """Test expiring knowledge entries"""
+
+    async def test_expire_no_longer_valid(self, knowledge_tools, kg):
+        """Expire a fact that stopped being true"""
+        await knowledge_tools.save_knowledge("user_preference", "editor", "Uses vim")
+
+        result = await knowledge_tools.expire_knowledge("user_preference:editor", "no_longer_valid")
+
+        assert "Expired" in result
+        assert "no_longer_valid" in result
+        entity = kg.get_entity("user_preference:editor")
+        assert entity is not None
+        assert entity.valid_to is not None
+
+    async def test_expire_retract(self, knowledge_tools, kg):
+        """Retract an incorrect belief"""
+        await knowledge_tools.save_knowledge("lesson_learned", "wrong", "Incorrect assumption")
+
+        result = await knowledge_tools.expire_knowledge("lesson_learned:wrong", "retract")
+
+        assert "Expired" in result
+        assert "retract" in result
+        entity = kg.get_entity("lesson_learned:wrong")
+        assert entity is not None
+        assert entity.tx_to is not None
+
+    async def test_expire_not_found(self, knowledge_tools):
+        """Expiring a non-existent entity returns error"""
+        result = await knowledge_tools.expire_knowledge("no_such:entity", "retract")
+        data = json.loads(result)
+
+        assert data["error"] == "not_found"

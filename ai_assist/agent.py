@@ -1296,6 +1296,7 @@ class AiAssistAgent:
             pref_lines = [f"- {p['key']}: {p['content'][:100]}" for p in preferences]
             parts.append("## User Preferences\n" + "\n".join(pref_lines))
             logging.debug("KG injection: %d user preferences injected", len(preferences))
+            self.knowledge_graph.record_access([p["entity_id"] for p in preferences], "system_prompt_preference")
 
         # Semantic search for relevant learnings
         if self._current_query_text:
@@ -1316,6 +1317,7 @@ class AiAssistAgent:
                     len(results),
                     ", ".join(scores),
                 )
+                self.knowledge_graph.record_access([r["entity_id"] for r in results], "system_prompt_learning")
             else:
                 logging.debug(
                     "KG learnings: query=%r → 0 results",
@@ -1326,7 +1328,11 @@ class AiAssistAgent:
             return ""
 
         section = "\n\n# What You Know From Previous Conversations\n\n"
-        section += "Apply these learnings:\n\n"
+        section += (
+            "You MUST proactively apply these learnings to your response. "
+            "Reference relevant preferences, lessons, and context without "
+            "being asked. Do not wait for the user to ask about them.\n\n"
+        )
         full_text = "\n\n".join(parts)
         if len(full_text) > 1500:
             full_text = full_text[:1500] + "\n[...truncated]"
@@ -1362,6 +1368,7 @@ class AiAssistAgent:
             len(context_entries),
             ", ".join(scores),
         )
+        self.knowledge_graph.record_access([r["entity_id"] for r in context_entries], "system_prompt_auto_context")
 
         section = "\n\n# Relevant Context From Knowledge Graph\n\n"
         section += "\n".join(context_lines)
@@ -2618,13 +2625,21 @@ class AiAssistAgent:
                     "get_action",
                     "get_action_status",
                 ]
-                knowledge_tools = ["save_knowledge", "search_knowledge", "trigger_synthesis", "run_kg_synthesis"]
+                knowledge_tools = [
+                    "save_knowledge",
+                    "search_knowledge",
+                    "trigger_synthesis",
+                    "run_kg_synthesis",
+                    "expire_knowledge",
+                ]
                 kg_query_tool_names = [
                     "kg_recent_changes",
                     "kg_late_discoveries",
                     "kg_discovery_lag_stats",
                     "kg_entity_context",
                     "kg_stats",
+                    "kg_snapshot",
+                    "kg_knowledge_health",
                 ]
 
                 if original_tool_name in filesystem_tools:
