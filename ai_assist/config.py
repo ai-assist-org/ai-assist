@@ -3,6 +3,7 @@
 import logging
 import logging.handlers
 import os
+import stat
 from pathlib import Path
 
 import yaml
@@ -14,6 +15,48 @@ if _project_env.exists():
     load_dotenv(_project_env)
 
 logger = logging.getLogger(__name__)
+
+
+class _WatchedTimedRotatingFileHandler(logging.handlers.TimedRotatingFileHandler):
+    """TimedRotatingFileHandler that reopens the file if it was renamed externally.
+
+    After doRollover() renames the log file, the stream's fd still points at the
+    renamed inode.  The base class opens a new file, but on some OS/Python
+    combinations the reopen silently fails or is skipped, leaving the handler
+    writing to the rotated file.  We store the dev/ino at open time and re-check
+    on every emit(); if they no longer match the base filename we reopen.
+    """
+
+    def __init__(self, *args, **kwargs):
+        self._dev = -1
+        self._ino = -1
+        super().__init__(*args, **kwargs)
+
+    def _stat_stream(self) -> None:
+        if self.stream and hasattr(self.stream, "fileno"):
+            sres = os.fstat(self.stream.fileno())
+            self._dev, self._ino = sres[stat.ST_DEV], sres[stat.ST_INO]
+
+    def _open(self):
+        stream = super()._open()
+        self.stream = stream
+        self._stat_stream()
+        return stream
+
+    def _reopen(self) -> None:
+        if self.stream is not None:
+            self.stream.flush()
+            self.stream.close()
+            self.stream = self._open()
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            sres = os.stat(self.baseFilename)
+            if sres[stat.ST_DEV] != self._dev or sres[stat.ST_INO] != self._ino:
+                self._reopen()
+        except FileNotFoundError:
+            self._reopen()
+        super().emit(record)
 
 
 def get_config_dir(override: str | None = None) -> Path:
@@ -98,7 +141,7 @@ def setup_logging(config_dir: Path | None = None) -> None:
     log_format = "%(asctime)s - %(process)d - %(name)s - %(levelname)s - %(message)s"
     formatter = logging.Formatter(log_format)
 
-    file_handler = logging.handlers.TimedRotatingFileHandler(
+    file_handler = _WatchedTimedRotatingFileHandler(
         log_file,
         when="midnight",
         backupCount=30,
