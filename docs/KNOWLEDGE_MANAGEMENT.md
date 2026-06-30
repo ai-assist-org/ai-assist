@@ -158,6 +158,22 @@ Two reasons:
 - **`no_longer_valid`**: The fact stopped being true (e.g., user changed preference)
 - **`retract`**: The belief was incorrect (e.g., wrong assumption)
 
+### Future Knowledge
+
+The agent can store facts that will become true in the future:
+
+```
+You: I'll be at a conference in Berlin on July 10
+Agent: [Calls internal__save_knowledge(..., valid_from="2026-07-10")]
+```
+
+Future-dated knowledge is excluded from normal searches and system prompt injection by default — it only surfaces when its `valid_from` date arrives. The agent can explicitly query future entries:
+
+```
+You: What do you know about my upcoming plans?
+Agent: [Calls internal__search_knowledge(include_future=true)]
+```
+
 ## Agent Tools (Internal)
 
 The agent has these internal tools (automatically used, not directly callable):

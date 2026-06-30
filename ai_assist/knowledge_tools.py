@@ -86,6 +86,10 @@ Returns:
                             "description": "Confidence level (0.0-1.0)",
                             "default": 1.0,
                         },
+                        "valid_from": {
+                            "type": "string",
+                            "description": "ISO datetime when this becomes true (e.g. '2026-07-10'). Defaults to now. Use a future date for planned events.",
+                        },
                     },
                     "required": ["entity_type", "key", "content"],
                 },
@@ -153,6 +157,11 @@ Example:
                         "since": {
                             "type": "string",
                             "description": "ISO datetime (e.g. '2026-06-27T00:00:00'). Only return knowledge learned after this time.",
+                        },
+                        "include_future": {
+                            "type": "boolean",
+                            "description": "Include knowledge with future valid_from dates (default: false). Use to find planned events.",
+                            "default": False,
                         },
                     },
                     "required": [],
@@ -267,6 +276,7 @@ Returns:
                 content=arguments["content"],
                 tags=arguments.get("tags", []),
                 confidence=arguments.get("confidence", 1.0),
+                valid_from=arguments.get("valid_from"),
             )
         elif tool_name == "search_knowledge":
             return await self.search_knowledge(
@@ -276,6 +286,7 @@ Returns:
                 tags=arguments.get("tags"),
                 limit=arguments.get("limit", 10),
                 since=arguments.get("since"),
+                include_future=arguments.get("include_future", False),
             )
         elif tool_name == "trigger_synthesis":
             return await self.trigger_synthesis(focus=arguments.get("focus", "all"))
@@ -296,8 +307,11 @@ Returns:
         content: str,
         tags: list[str] | None = None,
         confidence: float = 1.0,
+        valid_from: str | None = None,
     ) -> str:
         """Save a piece of knowledge to the graph"""
+        valid_from_dt = datetime.fromisoformat(valid_from) if valid_from else None
+
         metadata = {
             "tags": tags or [],
             "source": "agent_direct_save",
@@ -310,9 +324,11 @@ Returns:
             content=content,
             metadata=metadata,
             confidence=confidence,
+            valid_from=valid_from_dt,
         )
 
-        return f"✓ Saved {entity_type}: {key} (ID: {entity_id})"
+        suffix = f" (valid from {valid_from})" if valid_from else ""
+        return f"✓ Saved {entity_type}: {key} (ID: {entity_id}){suffix}"
 
     async def search_knowledge(
         self,
@@ -328,6 +344,7 @@ Returns:
         tags: list[str] | None = None,
         limit: int = 10,
         since: str | None = None,
+        include_future: bool = False,
     ) -> str:
         """Search stored knowledge"""
         type_filter = None if entity_type == "all" else entity_type
@@ -336,13 +353,20 @@ Returns:
         if semantic_query:
             entity_types: list[str] | None = [type_filter] if type_filter else None
             fetch_limit = limit * 5 if since_dt else limit
-            results = self.kg.semantic_search(semantic_query, limit=fetch_limit, entity_types=entity_types)
+            results = self.kg.semantic_search(
+                semantic_query, limit=fetch_limit, entity_types=entity_types, include_future=include_future
+            )
             if since_dt:
                 since_iso = since_dt.isoformat()
                 results = [r for r in results if r.get("learned_at") and r["learned_at"] >= since_iso][:limit]
         else:
             results = self.kg.search_knowledge(
-                entity_type=type_filter, key_pattern=query, tags=tags, since=since_dt, limit=limit
+                entity_type=type_filter,
+                key_pattern=query,
+                tags=tags,
+                since=since_dt,
+                limit=limit,
+                include_future=include_future,
             )
 
         if not results:

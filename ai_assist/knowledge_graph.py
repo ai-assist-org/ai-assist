@@ -768,6 +768,7 @@ class KnowledgeGraph:
         since: datetime | None = None,
         min_confidence: float = 0.0,
         limit: int = 20,
+        include_future: bool = False,
     ) -> list[dict]:
         """Search knowledge entities
 
@@ -789,6 +790,10 @@ class KnowledgeGraph:
         """
 
         params: list[str | int | float] = []
+
+        if not include_future:
+            query += " AND valid_from <= ?"
+            params.append(datetime.now().isoformat())
 
         if entity_type:
             query += " AND entity_type = ?"
@@ -1005,6 +1010,7 @@ class KnowledgeGraph:
         entity_types: list[str] | None = None,
         min_confidence: float = 0.0,
         min_score: float = 0.0,
+        include_future: bool = False,
     ) -> list[dict]:
         """Search entities by semantic similarity to query text."""
         from .embedding import EmbeddingModel
@@ -1025,17 +1031,32 @@ class KnowledgeGraph:
             return []
 
         over_fetch = limit * 3
-        rows = self.conn.execute(
-            """
-            SELECT v.entity_id, v.distance, e.entity_type, e.data, e.valid_from, e.tx_from
-            FROM vec_embeddings v
-            JOIN entities e ON v.entity_id = e.id
-            WHERE v.embedding MATCH ? AND k = ?
-            AND e.tx_to IS NULL
-            ORDER BY v.distance
-            """,
-            (query_vec, over_fetch),
-        ).fetchall()
+        if include_future:
+            rows = self.conn.execute(
+                """
+                SELECT v.entity_id, v.distance, e.entity_type, e.data, e.valid_from, e.tx_from
+                FROM vec_embeddings v
+                JOIN entities e ON v.entity_id = e.id
+                WHERE v.embedding MATCH ? AND k = ?
+                AND e.tx_to IS NULL
+                ORDER BY v.distance
+                """,
+                (query_vec, over_fetch),
+            ).fetchall()
+        else:
+            now = datetime.now().isoformat()
+            rows = self.conn.execute(
+                """
+                SELECT v.entity_id, v.distance, e.entity_type, e.data, e.valid_from, e.tx_from
+                FROM vec_embeddings v
+                JOIN entities e ON v.entity_id = e.id
+                WHERE v.embedding MATCH ? AND k = ?
+                AND e.tx_to IS NULL
+                AND e.valid_from <= ?
+                ORDER BY v.distance
+                """,
+                (query_vec, over_fetch, now),
+            ).fetchall()
 
         results: list[dict] = []
         skipped_type = 0

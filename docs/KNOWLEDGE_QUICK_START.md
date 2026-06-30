@@ -100,15 +100,19 @@ Project Context (2):
    - "What have you learned since Monday?"
    - "What was happening on June 15?"
 
-4. **Correct the agent**:
+4. **Store future plans**:
+   - "I'll be at a conference in Berlin on July 10" (stored with future valid_from)
+   - "What are my upcoming plans?" (agent searches with include_future=true)
+
+5. **Correct the agent**:
    - "That lesson about Friday failures was wrong" (agent will retract it)
    - "I no longer use vim" (agent will expire the preference)
 
-5. **Check periodically** what's stored:
+6. **Check periodically** what's stored:
    - "Show me all your stored knowledge"
    - Or run: `python examples/inspect_knowledge_base.py`
 
-6. **Backup** your knowledge base:
+7. **Backup** your knowledge base:
    ```bash
    cp ~/.ai-assist/knowledge_graph.db ~/backup-$(date +%Y%m%d).db
    ```

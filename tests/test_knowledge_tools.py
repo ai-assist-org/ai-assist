@@ -84,6 +84,22 @@ class TestSaveKnowledge:
         entities = kg.search_knowledge(entity_type="decision_rationale")
         assert len(entities) == 1
 
+    async def test_save_with_future_valid_from(self, knowledge_tools, kg):
+        """Save knowledge with a future valid_from date"""
+        future = (datetime.now() + timedelta(days=10)).isoformat()
+        result = await knowledge_tools.save_knowledge(
+            entity_type="project_context",
+            key="conference_berlin",
+            content="User will be at conference in Berlin",
+            valid_from=future,
+        )
+
+        assert "Saved" in result
+        assert "valid from" in result
+        entity = kg.get_entity("project_context:conference_berlin")
+        assert entity is not None
+        assert entity.valid_from > datetime.now()
+
 
 class TestSearchKnowledge:
     """Test searching knowledge"""
@@ -157,6 +173,32 @@ class TestSearchKnowledge:
 
         assert data["count"] == 1
         assert data["results"][0]["key"] == "new_lesson"
+
+    async def test_search_excludes_future_knowledge(self, knowledge_tools, kg):
+        """Future-dated knowledge should not appear in current searches"""
+        future = (datetime.now() + timedelta(days=10)).isoformat()
+        await knowledge_tools.save_knowledge("project_context", "future_event", "Future thing", valid_from=future)
+        await knowledge_tools.save_knowledge("project_context", "current_event", "Current thing")
+
+        result = await knowledge_tools.search_knowledge(entity_type="project_context")
+        data = json.loads(result)
+
+        keys = [r["key"] for r in data["results"]]
+        assert "current_event" in keys
+        assert "future_event" not in keys
+
+    async def test_search_include_future(self, knowledge_tools, kg):
+        """include_future=True surfaces future-dated knowledge"""
+        future = (datetime.now() + timedelta(days=10)).isoformat()
+        await knowledge_tools.save_knowledge("project_context", "future_event", "Future thing", valid_from=future)
+        await knowledge_tools.save_knowledge("project_context", "current_event", "Current thing")
+
+        result = await knowledge_tools.search_knowledge(entity_type="project_context", include_future=True)
+        data = json.loads(result)
+
+        keys = [r["key"] for r in data["results"]]
+        assert "current_event" in keys
+        assert "future_event" in keys
 
     async def test_search_with_since_no_matches(self, knowledge_tools, kg):
         """Search with future since returns nothing"""
