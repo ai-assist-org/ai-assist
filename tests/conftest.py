@@ -16,6 +16,15 @@ def isolate_config_dir(tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def isolate_reports_dir(tmp_path, monkeypatch):
+    """Prevent tests from writing to ~/ai-assist/reports by redirecting via env var."""
+    test_reports_dir = tmp_path / "reports"
+    test_reports_dir.mkdir(exist_ok=True)
+    monkeypatch.setenv("AI_ASSIST_REPORTS_DIR", str(test_reports_dir))
+    yield test_reports_dir
+
+
+@pytest.fixture(autouse=True)
 def no_desktop_notifications():
     """Prevent tests from sending real desktop notifications via notify-send."""
     with patch(
