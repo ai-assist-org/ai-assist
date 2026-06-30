@@ -184,6 +184,9 @@ class MCPServerConfig(BaseModel):
     args: list[str] = Field(default_factory=list)
     env: dict[str, str] = Field(default_factory=dict)
     url: str | None = None
+    transport: str | None = Field(
+        default=None, description="Transport: sse, streamablehttp, or stdio (auto-detected if None)"
+    )
     enabled: bool = True
     pagination: PaginationConfig | None = None
 

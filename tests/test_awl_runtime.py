@@ -1451,7 +1451,7 @@ def test_resolve_model_aliases():
     _resolve_model_aliases(workflow)
     assert workflow.body[0].model == "claude-haiku-4-5"
     assert workflow.body[1].model == "claude-sonnet-4-6"
-    assert workflow.body[2].model == "claude-opus-4-6"
+    assert workflow.body[2].model == "claude-opus-4-8"
 
 
 def test_resolve_model_aliases_leaves_full_names():
