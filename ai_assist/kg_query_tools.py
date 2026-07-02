@@ -1,6 +1,7 @@
 """Agent tools for querying the knowledge graph"""
 
 import json
+from datetime import datetime
 from typing import Any
 
 from .kg_queries import KnowledgeGraphQueries
@@ -125,6 +126,73 @@ class KGQueryTools:
                 "_server": "internal",
                 "_original_name": "kg_stats",
             },
+            {
+                "name": "internal__kg_snapshot",
+                "description": (
+                    "AGENT-ONLY: Query the knowledge graph at a point in time. "
+                    "Mode 'known_at': what the agent believed at that moment (transaction time). "
+                    "Mode 'valid_at': what was true in reality at that moment (valid time)."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "time": {
+                            "type": "string",
+                            "description": "ISO datetime for the snapshot (e.g. '2026-06-28T15:00:00')",
+                        },
+                        "mode": {
+                            "type": "string",
+                            "enum": ["known_at", "valid_at"],
+                            "description": "known_at: what the agent believed. valid_at: what was true in reality.",
+                            "default": "known_at",
+                        },
+                        "entity_type": {
+                            "type": "string",
+                            "description": "Optional filter by entity type",
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Max results (default: 50)",
+                            "default": 50,
+                            "minimum": 1,
+                            "maximum": 200,
+                        },
+                    },
+                    "required": ["time"],
+                },
+                "_server": "internal",
+                "_original_name": "kg_snapshot",
+            },
+            {
+                "name": "internal__kg_knowledge_health",
+                "description": (
+                    "AGENT-ONLY: Report knowledge graph health metrics. "
+                    "Shows most-accessed entries, never-accessed entries, "
+                    "and stale entries not accessed recently. "
+                    "Helps identify valuable knowledge and what can be pruned."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "top_n": {
+                            "type": "integer",
+                            "description": "Number of top-accessed entries to show (default: 10)",
+                            "default": 10,
+                            "minimum": 1,
+                            "maximum": 50,
+                        },
+                        "stale_days": {
+                            "type": "integer",
+                            "description": "Days without access to consider stale (default: 7)",
+                            "default": 7,
+                            "minimum": 1,
+                        },
+                    },
+                    "required": [],
+                },
+                "_server": "internal",
+                "_original_name": "kg_knowledge_health",
+            },
         ]
 
     async def execute_tool(self, tool_name: str, arguments: dict[str, Any]) -> str:
@@ -139,6 +207,10 @@ class KGQueryTools:
             return self._entity_context(arguments)
         elif tool_name == "kg_stats":
             return self._stats()
+        elif tool_name == "kg_snapshot":
+            return self._snapshot(arguments)
+        elif tool_name == "kg_knowledge_health":
+            return self._knowledge_health(arguments)
         else:
             raise ValueError(f"Unknown KG query tool: {tool_name}")
 
@@ -173,4 +245,47 @@ class KGQueryTools:
 
     def _stats(self) -> str:
         result = self.kg.get_stats()
+        return json.dumps(result, indent=2, default=str)
+
+    def _snapshot(self, arguments: dict[str, Any]) -> str:
+        time = datetime.fromisoformat(arguments["time"])
+        mode = arguments.get("mode", "known_at")
+        entity_type = arguments.get("entity_type")
+        limit = arguments.get("limit", 50)
+
+        if mode == "known_at":
+            entities = self.queries.what_did_we_know_at(time, entity_type=entity_type)
+            return json.dumps(
+                {
+                    "mode": "known_at",
+                    "time": time.isoformat(),
+                    "count": len(entities[:limit]),
+                    "entities": entities[:limit],
+                },
+                indent=2,
+                default=str,
+            )
+        else:
+            raw_entities = self.kg.query_valid_at(time, entity_type=entity_type, limit=limit)
+            entities = [
+                {
+                    "id": e.id,
+                    "type": e.entity_type,
+                    "data": e.data,
+                    "valid_from": e.valid_from.isoformat(),
+                    "valid_to": e.valid_to.isoformat() if e.valid_to else None,
+                    "known_since": e.tx_from.isoformat(),
+                }
+                for e in raw_entities
+            ]
+            return json.dumps(
+                {"mode": "valid_at", "time": time.isoformat(), "count": len(entities), "entities": entities},
+                indent=2,
+                default=str,
+            )
+
+    def _knowledge_health(self, arguments: dict[str, Any]) -> str:
+        top_n = arguments.get("top_n", 10)
+        stale_days = arguments.get("stale_days", 7)
+        result = self.kg.get_access_stats(top_n=top_n, stale_days=stale_days)
         return json.dumps(result, indent=2, default=str)

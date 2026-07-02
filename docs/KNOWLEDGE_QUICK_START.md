@@ -57,7 +57,7 @@ SQLite database with bi-temporal tracking (when learned, when valid).
 A: Yes. All conversation exchanges are stored in the Knowledge Graph as they happen. A KG synthesis task then reviews the day's conversations and extracts structured knowledge (preferences, lessons, context, decisions).
 
 **Q: Can I delete stored knowledge?**
-A: Yes, manually edit the SQLite database or delete entries.
+A: Yes, ask the agent to expire it ("that preference is outdated") or manually edit the SQLite database. The agent uses `internal__expire_knowledge` to mark entries as no longer valid or retract incorrect beliefs.
 
 **Q: How much does it store?**
 A: Only what you explicitly state or the agent learns from conversation. Typical: 10-50 entries.
@@ -88,18 +88,31 @@ Project Context (2):
 ### Tips
 
 1. **Be explicit** when stating preferences:
-   - ✅ "I prefer pytest over unittest"
-   - ❌ "I like pytest" (less clear)
+   - "I prefer pytest over unittest"
+   - "I switched to neovim" (agent will expire old preference and save the new one)
 
 2. **Ask the agent** to recall:
    - "What testing framework do I prefer?"
    - "What have you learned about DCI?"
 
-3. **Check periodically** what's stored:
+3. **Query by time**:
+   - "What did you know yesterday at 3pm?"
+   - "What have you learned since Monday?"
+   - "What was happening on June 15?"
+
+4. **Store future plans**:
+   - "I'll be at a conference in Berlin on July 10" (stored with future valid_from)
+   - "What are my upcoming plans?" (agent searches with include_future=true)
+
+5. **Correct the agent**:
+   - "That lesson about Friday failures was wrong" (agent will retract it)
+   - "I no longer use vim" (agent will expire the preference)
+
+6. **Check periodically** what's stored:
    - "Show me all your stored knowledge"
    - Or run: `python examples/inspect_knowledge_base.py`
 
-4. **Backup** your knowledge base:
+7. **Backup** your knowledge base:
    ```bash
    cp ~/.ai-assist/knowledge_graph.db ~/backup-$(date +%Y%m%d).db
    ```

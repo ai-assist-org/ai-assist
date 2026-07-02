@@ -586,10 +586,10 @@ Skills are \alert{untrusted code} --- defense in depth:
 \begin{column}{0.32\textwidth}
 \textbf{\color{rhgreen}Knowledge Graph}
 \begin{itemize}\scriptsize\setlength{\itemsep}{0pt}
-  \item Save / search knowledge
-  \item Recent changes
-  \item Late discoveries
-  \item Entity with context
+  \item Save / search / expire knowledge
+  \item Point-in-time snapshots
+  \item Knowledge health metrics
+  \item Access tracking
   \item Trigger synthesis
 \end{itemize}
 
@@ -811,12 +811,12 @@ pagination:
   \item \texttt{contradicts}, \texttt{supports}, \texttt{part\_of}
 \end{itemize}
 \smallskip
-\textbf{Queries}
+\textbf{Agent Temporal Tools}
 \begin{itemize}\scriptsize
-  \item \texttt{query\_as\_of(tx\_time)} --- ``What did we know?''
-  \item \texttt{query\_valid\_at(time)} --- ``What was true?''
-  \item \texttt{semantic\_search(text)} --- vector similarity
-  \item \texttt{search\_knowledge(type, query)}
+  \item \texttt{kg\_snapshot(time, mode)} --- point-in-time queries
+  \item \texttt{search\_knowledge(since=...)} --- time-filtered search
+  \item \texttt{save\_knowledge(valid\_from=...)} --- future knowledge
+  \item \texttt{expire\_knowledge(id, reason)} --- expire / retract
 \end{itemize}
 \end{column}
 \end{columns}

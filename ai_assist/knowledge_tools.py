@@ -26,11 +26,21 @@ class KnowledgeTools:
 Use this for immediate, explicit saves (not synthesis).
 For broader reflection, use internal__trigger_synthesis instead.
 
-Call this when you notice:
+SAVE when you notice:
 - User stated a preference about workflows/tools/style
-- You learned a pattern or best practice
-- User provided project context or goals
+- User corrected you (save the correction as a lesson)
+- You learned a pattern or best practice from discussion
+- User provided project context, goals, or team info
 - A decision was made with clear rationale
+
+DO NOT SAVE:
+- Transient task details (current debugging steps, temporary state)
+- Information already in the codebase (code patterns, file structure)
+- Raw data from tool results (these are auto-captured separately)
+- Anything you're not confident about (use confidence < 0.5 if uncertain)
+
+PREFER updating existing entries over creating duplicates — use the same key
+to upsert. Check with internal__search_knowledge first if unsure.
 
 Args:
     entity_type: Type of knowledge (user_preference, lesson_learned, project_context, decision_rationale)
@@ -41,15 +51,6 @@ Args:
 
 Returns:
     Confirmation with entity ID
-
-Example:
-    save_knowledge(
-        "user_preference",
-        "python_test_framework",
-        "User prefers pytest over unittest for all Python testing",
-        tags=["python", "testing"],
-        confidence=1.0
-    )
 """,
                 "input_schema": {
                     "type": "object",
@@ -84,6 +85,10 @@ Example:
                             "maximum": 1.0,
                             "description": "Confidence level (0.0-1.0)",
                             "default": 1.0,
+                        },
+                        "valid_from": {
+                            "type": "string",
+                            "description": "ISO datetime when this becomes true (e.g. '2026-07-10'). Defaults to now. Use a future date for planned events.",
                         },
                     },
                     "required": ["entity_type", "key", "content"],
@@ -148,6 +153,15 @@ Example:
                             "default": 10,
                             "minimum": 1,
                             "maximum": 100,
+                        },
+                        "since": {
+                            "type": "string",
+                            "description": "ISO datetime (e.g. '2026-06-27T00:00:00'). Only return knowledge learned after this time.",
+                        },
+                        "include_future": {
+                            "type": "boolean",
+                            "description": "Include knowledge with future valid_from dates (default: false). Use to find planned events.",
+                            "default": False,
                         },
                     },
                     "required": [],
@@ -226,6 +240,31 @@ Returns:
                 "_server": "internal",
                 "_original_name": "run_kg_synthesis",
             },
+            {
+                "name": "internal__expire_knowledge",
+                "description": (
+                    "AGENT-ONLY: Mark a knowledge entry as no longer valid or retract an incorrect belief. "
+                    "Use 'no_longer_valid' when the fact stopped being true (e.g. user changed preference). "
+                    "Use 'retract' when the knowledge was wrong (e.g. incorrect assumption)."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "entity_id": {
+                            "type": "string",
+                            "description": "Entity ID to expire (e.g. 'user_preference:python_test_framework')",
+                        },
+                        "reason": {
+                            "type": "string",
+                            "enum": ["no_longer_valid", "retract"],
+                            "description": "no_longer_valid: fact stopped being true. retract: belief was incorrect.",
+                        },
+                    },
+                    "required": ["entity_id", "reason"],
+                },
+                "_server": "internal",
+                "_original_name": "expire_knowledge",
+            },
         ]
 
     async def execute_tool(self, tool_name: str, arguments: dict) -> str:
@@ -237,6 +276,7 @@ Returns:
                 content=arguments["content"],
                 tags=arguments.get("tags", []),
                 confidence=arguments.get("confidence", 1.0),
+                valid_from=arguments.get("valid_from"),
             )
         elif tool_name == "search_knowledge":
             return await self.search_knowledge(
@@ -245,11 +285,18 @@ Returns:
                 query=arguments.get("query"),
                 tags=arguments.get("tags"),
                 limit=arguments.get("limit", 10),
+                since=arguments.get("since"),
+                include_future=arguments.get("include_future", False),
             )
         elif tool_name == "trigger_synthesis":
             return await self.trigger_synthesis(focus=arguments.get("focus", "all"))
         elif tool_name == "run_kg_synthesis":
             return await self.run_kg_synthesis(hours=arguments.get("hours", 24))
+        elif tool_name == "expire_knowledge":
+            return await self.expire_knowledge(
+                entity_id=arguments["entity_id"],
+                reason=arguments["reason"],
+            )
         else:
             raise ValueError(f"Unknown knowledge tool: {tool_name}")
 
@@ -260,8 +307,11 @@ Returns:
         content: str,
         tags: list[str] | None = None,
         confidence: float = 1.0,
+        valid_from: str | None = None,
     ) -> str:
         """Save a piece of knowledge to the graph"""
+        valid_from_dt = datetime.fromisoformat(valid_from) if valid_from else None
+
         metadata = {
             "tags": tags or [],
             "source": "agent_direct_save",
@@ -274,9 +324,11 @@ Returns:
             content=content,
             metadata=metadata,
             confidence=confidence,
+            valid_from=valid_from_dt,
         )
 
-        return f"✓ Saved {entity_type}: {key} (ID: {entity_id})"
+        suffix = f" (valid from {valid_from})" if valid_from else ""
+        return f"✓ Saved {entity_type}: {key} (ID: {entity_id}){suffix}"
 
     async def search_knowledge(
         self,
@@ -291,18 +343,36 @@ Returns:
         query: str | None = None,
         tags: list[str] | None = None,
         limit: int = 10,
+        since: str | None = None,
+        include_future: bool = False,
     ) -> str:
         """Search stored knowledge"""
         type_filter = None if entity_type == "all" else entity_type
+        since_dt = datetime.fromisoformat(since) if since else None
 
         if semantic_query:
             entity_types: list[str] | None = [type_filter] if type_filter else None
-            results = self.kg.semantic_search(semantic_query, limit=limit, entity_types=entity_types)
+            fetch_limit = limit * 5 if since_dt else limit
+            results = self.kg.semantic_search(
+                semantic_query, limit=fetch_limit, entity_types=entity_types, include_future=include_future
+            )
+            if since_dt:
+                since_iso = since_dt.isoformat()
+                results = [r for r in results if r.get("learned_at") and r["learned_at"] >= since_iso][:limit]
         else:
-            results = self.kg.search_knowledge(entity_type=type_filter, key_pattern=query, tags=tags, limit=limit)
+            results = self.kg.search_knowledge(
+                entity_type=type_filter,
+                key_pattern=query,
+                tags=tags,
+                since=since_dt,
+                limit=limit,
+                include_future=include_future,
+            )
 
         if not results:
             return json.dumps({"results": [], "count": 0})
+
+        self.kg.record_access([r["entity_id"] for r in results], "agent_search")
 
         return json.dumps(
             {
@@ -337,3 +407,20 @@ Returns:
             return "Error: Agent not set on KnowledgeTools"
 
         return await self.agent._run_synthesis_from_kg(hours=hours)
+
+    async def expire_knowledge(
+        self,
+        entity_id: str,
+        reason: Literal["no_longer_valid", "retract"],
+    ) -> str:
+        """Mark a knowledge entry as expired or retracted"""
+        now = datetime.now()
+        if reason == "no_longer_valid":
+            updated = self.kg.update_entity(entity_id, valid_to=now)
+        else:
+            updated = self.kg.update_entity(entity_id, tx_to=now)
+
+        if updated is None:
+            return json.dumps({"error": "not_found", "entity_id": entity_id})
+
+        return f"Expired {updated.entity_type}: {entity_id} (reason: {reason})"

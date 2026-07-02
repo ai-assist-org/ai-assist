@@ -222,6 +222,127 @@ async def test_kg_stats(kg, tools):
 
 
 @pytest.mark.asyncio
+async def test_kg_snapshot_known_at(kg, tools):
+    """Snapshot known_at returns entities known at that time"""
+    t1 = datetime(2026, 6, 15, 10, 0)
+    t2 = datetime(2026, 6, 20, 10, 0)
+
+    kg.insert_entity(
+        entity_type="event",
+        entity_id="event-early",
+        valid_from=t1,
+        tx_from=t1,
+        data={"name": "early"},
+    )
+    kg.insert_entity(
+        entity_type="event",
+        entity_id="event-late",
+        valid_from=t2,
+        tx_from=t2,
+        data={"name": "late"},
+    )
+
+    result = await tools.execute_tool("kg_snapshot", {"time": "2026-06-17T00:00:00", "mode": "known_at"})
+    data = json.loads(result)
+    assert data["mode"] == "known_at"
+    assert data["count"] == 1
+    assert data["entities"][0]["id"] == "event-early"
+
+
+@pytest.mark.asyncio
+async def test_kg_snapshot_valid_at(kg, tools):
+    """Snapshot valid_at returns entities valid at that time"""
+    kg.insert_entity(
+        entity_type="event",
+        entity_id="event-a",
+        valid_from=datetime(2026, 6, 1),
+        tx_from=datetime(2026, 6, 1),
+        data={"name": "a"},
+    )
+    kg.insert_entity(
+        entity_type="event",
+        entity_id="event-b",
+        valid_from=datetime(2026, 6, 10),
+        tx_from=datetime(2026, 6, 10),
+        data={"name": "b"},
+    )
+
+    result = await tools.execute_tool("kg_snapshot", {"time": "2026-06-05T00:00:00", "mode": "valid_at"})
+    data = json.loads(result)
+    assert data["mode"] == "valid_at"
+    assert data["count"] == 1
+    assert data["entities"][0]["id"] == "event-a"
+
+
+@pytest.mark.asyncio
+async def test_kg_snapshot_default_mode(kg, tools):
+    """Snapshot defaults to known_at mode"""
+    kg.insert_entity(
+        entity_type="task",
+        entity_id="task-1",
+        valid_from=datetime(2026, 6, 1),
+        tx_from=datetime(2026, 6, 1),
+        data={"status": "done"},
+    )
+
+    result = await tools.execute_tool("kg_snapshot", {"time": "2026-06-02T00:00:00"})
+    data = json.loads(result)
+    assert data["mode"] == "known_at"
+
+
+@pytest.mark.asyncio
+async def test_kg_snapshot_with_entity_type_filter(kg, tools):
+    """Snapshot filters by entity type"""
+    kg.insert_entity(
+        entity_type="task",
+        entity_id="task-1",
+        valid_from=datetime(2026, 6, 1),
+        tx_from=datetime(2026, 6, 1),
+        data={"status": "done"},
+    )
+    kg.insert_entity(
+        entity_type="event",
+        entity_id="event-1",
+        valid_from=datetime(2026, 6, 1),
+        tx_from=datetime(2026, 6, 1),
+        data={"name": "x"},
+    )
+
+    result = await tools.execute_tool(
+        "kg_snapshot", {"time": "2026-06-02T00:00:00", "mode": "known_at", "entity_type": "task"}
+    )
+    data = json.loads(result)
+    assert data["count"] == 1
+    assert data["entities"][0]["type"] == "task"
+
+
+@pytest.mark.asyncio
+async def test_kg_knowledge_health_empty(tools):
+    """Knowledge health on empty KG returns zero counts"""
+    result = await tools.execute_tool("kg_knowledge_health", {})
+    data = json.loads(result)
+    assert data["total_accesses"] == 0
+    assert data["most_accessed"] == []
+
+
+@pytest.mark.asyncio
+async def test_kg_knowledge_health_with_data(kg, tools):
+    """Knowledge health reports access statistics"""
+    kg.insert_knowledge("user_preference", "pref1", "content", metadata={"tags": []})
+    kg.insert_knowledge("lesson_learned", "lesson1", "content", metadata={"tags": []})
+    kg.record_access(["user_preference:pref1"], "test")
+    kg.record_access(["user_preference:pref1"], "test")
+
+    result = await tools.execute_tool("kg_knowledge_health", {"top_n": 5, "stale_days": 7})
+    data = json.loads(result)
+    assert data["total_accesses"] == 2
+    assert len(data["most_accessed"]) == 1
+    assert data["most_accessed"][0]["access_count"] == 2
+    never_ids = [e["entity_id"] for e in data["never_accessed"]]
+    assert "lesson_learned:lesson1" in never_ids
+
+
+@pytest.mark.asyncio
 async def test_execute_tool_unknown(tools):
     """Unknown tool name raises ValueError"""
     with pytest.raises(ValueError, match="Unknown KG query tool"):

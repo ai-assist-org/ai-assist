@@ -72,11 +72,13 @@ See `docs/AWL_SPECIFICATIONS.md` for complete syntax.
 
 ### Knowledge Graph
 
-Temporal database tracking:
-- Entities (DCI jobs, Jira tickets, conversations)
+Bi-temporal database tracking:
+- Entities (DCI jobs, Jira tickets, conversations, knowledge)
 - Relationships between entities
-- Change history (created_at vs discovered_at for lag detection)
+- Valid time (when facts are true in reality) and transaction time (when the agent learned about them)
 - Vector embeddings for semantic search (`embedding.py`, `context.py`)
+
+**Temporal Tools**: Point-in-time snapshots (`kg_snapshot`), time-filtered search (`search_knowledge` with `since`), and knowledge expiry (`expire_knowledge`) let the agent query and manage knowledge across time.
 
 **KG Synthesis**: Nightly task extracts structured knowledge (preferences, lessons, context) from conversations and injects relevant context into future queries via semantic similarity.
 

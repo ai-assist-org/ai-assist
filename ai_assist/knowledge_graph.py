@@ -5,7 +5,7 @@ import logging
 import sqlite3
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Literal
 from uuid import uuid4
 
@@ -229,6 +229,22 @@ class KnowledgeGraph:
                 entity_id TEXT PRIMARY KEY,
                 embedding float[384]
             )
+        """)
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS knowledge_access (
+                entity_id TEXT NOT NULL,
+                accessed_at TIMESTAMP NOT NULL,
+                query_context TEXT
+            )
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_knowledge_access_entity
+            ON knowledge_access(entity_id)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_knowledge_access_time
+            ON knowledge_access(accessed_at)
         """)
 
         self.conn.commit()
@@ -752,6 +768,7 @@ class KnowledgeGraph:
         since: datetime | None = None,
         min_confidence: float = 0.0,
         limit: int = 20,
+        include_future: bool = False,
     ) -> list[dict]:
         """Search knowledge entities
 
@@ -773,6 +790,10 @@ class KnowledgeGraph:
         """
 
         params: list[str | int | float] = []
+
+        if not include_future:
+            query += " AND valid_from <= ?"
+            params.append(datetime.now().isoformat())
 
         if entity_type:
             query += " AND entity_type = ?"
@@ -881,6 +902,78 @@ class KnowledgeGraph:
         cursor.execute("SELECT * FROM relationships WHERE tx_to IS NULL")
         return [Relationship.from_row(row) for row in cursor.fetchall()]
 
+    def record_access(self, entity_ids: list[str], query_context: str) -> None:
+        """Record that entities were accessed/recalled."""
+        if not entity_ids:
+            return
+        now = datetime.now().isoformat()
+        self.conn.executemany(
+            "INSERT INTO knowledge_access (entity_id, accessed_at, query_context) VALUES (?, ?, ?)",
+            [(eid, now, query_context) for eid in entity_ids],
+        )
+        self._maybe_commit()
+
+    def get_access_stats(self, top_n: int = 10, stale_days: int = 7) -> dict[str, Any]:
+        """Get knowledge access statistics for health reporting."""
+        cursor = self.conn.cursor()
+
+        cursor.execute("SELECT COUNT(*) FROM knowledge_access")
+        total_accesses = cursor.fetchone()[0]
+
+        cursor.execute(
+            """
+            SELECT ka.entity_id, e.entity_type, COUNT(*) as cnt, MAX(ka.accessed_at) as last_access
+            FROM knowledge_access ka
+            JOIN entities e ON e.id = ka.entity_id AND e.tx_to IS NULL
+            GROUP BY ka.entity_id
+            ORDER BY cnt DESC
+            LIMIT ?
+            """,
+            (top_n,),
+        )
+        most_accessed = [
+            {"entity_id": r[0], "entity_type": r[1], "access_count": r[2], "last_accessed": r[3]}
+            for r in cursor.fetchall()
+        ]
+
+        knowledge_types = ("user_preference", "lesson_learned", "project_context", "decision_rationale")
+        cursor.execute(
+            """
+            SELECT e.id, e.entity_type
+            FROM entities e
+            WHERE e.tx_to IS NULL AND e.entity_type IN (?,?,?,?)
+            AND e.id NOT IN (SELECT DISTINCT entity_id FROM knowledge_access)
+            LIMIT 20
+            """,
+            knowledge_types,
+        )
+        never_accessed = [{"entity_id": r[0], "entity_type": r[1]} for r in cursor.fetchall()]
+
+        cutoff = (datetime.now() - timedelta(days=stale_days)).isoformat()
+        cursor.execute(
+            """
+            SELECT e.id, e.entity_type, MAX(ka.accessed_at) as last_access
+            FROM entities e
+            JOIN knowledge_access ka ON ka.entity_id = e.id
+            WHERE e.tx_to IS NULL AND e.entity_type IN (?,?,?,?)
+            GROUP BY e.id
+            HAVING MAX(ka.accessed_at) < ?
+            LIMIT 20
+            """,
+            (*knowledge_types, cutoff),
+        )
+        stale_entries = [{"entity_id": r[0], "entity_type": r[1], "last_accessed": r[2]} for r in cursor.fetchall()]
+
+        return {
+            "total_accesses": total_accesses,
+            "most_accessed": most_accessed,
+            "never_accessed": never_accessed,
+            "never_accessed_count": len(never_accessed),
+            "stale_entries": stale_entries,
+            "stale_entries_count": len(stale_entries),
+            "stale_threshold_days": stale_days,
+        }
+
     @staticmethod
     def _entity_text_repr(entity_type: str, data: dict[str, Any]) -> str:
         """Build text representation of an entity for embedding."""
@@ -917,6 +1010,7 @@ class KnowledgeGraph:
         entity_types: list[str] | None = None,
         min_confidence: float = 0.0,
         min_score: float = 0.0,
+        include_future: bool = False,
     ) -> list[dict]:
         """Search entities by semantic similarity to query text."""
         from .embedding import EmbeddingModel
@@ -937,17 +1031,32 @@ class KnowledgeGraph:
             return []
 
         over_fetch = limit * 3
-        rows = self.conn.execute(
-            """
-            SELECT v.entity_id, v.distance, e.entity_type, e.data, e.valid_from, e.tx_from
-            FROM vec_embeddings v
-            JOIN entities e ON v.entity_id = e.id
-            WHERE v.embedding MATCH ? AND k = ?
-            AND e.tx_to IS NULL
-            ORDER BY v.distance
-            """,
-            (query_vec, over_fetch),
-        ).fetchall()
+        if include_future:
+            rows = self.conn.execute(
+                """
+                SELECT v.entity_id, v.distance, e.entity_type, e.data, e.valid_from, e.tx_from
+                FROM vec_embeddings v
+                JOIN entities e ON v.entity_id = e.id
+                WHERE v.embedding MATCH ? AND k = ?
+                AND e.tx_to IS NULL
+                ORDER BY v.distance
+                """,
+                (query_vec, over_fetch),
+            ).fetchall()
+        else:
+            now = datetime.now().isoformat()
+            rows = self.conn.execute(
+                """
+                SELECT v.entity_id, v.distance, e.entity_type, e.data, e.valid_from, e.tx_from
+                FROM vec_embeddings v
+                JOIN entities e ON v.entity_id = e.id
+                WHERE v.embedding MATCH ? AND k = ?
+                AND e.tx_to IS NULL
+                AND e.valid_from <= ?
+                ORDER BY v.distance
+                """,
+                (query_vec, over_fetch, now),
+            ).fetchall()
 
         results: list[dict] = []
         skipped_type = 0

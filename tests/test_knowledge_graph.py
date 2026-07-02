@@ -1,6 +1,6 @@
 """Tests for bi-temporal knowledge graph"""
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -732,3 +732,86 @@ def test_init_raises_on_missing_extension_support():
     with patch("sqlite3.connect", return_value=mock_conn):
         with pytest.raises(RuntimeError, match="extension loading support"):
             KnowledgeGraph(db_path=":memory:")
+
+
+# === Access Tracking ===
+
+
+def test_record_access_single(kg):
+    """Record a single entity access"""
+    kg.insert_entity(entity_type="task", entity_id="t1", valid_from=datetime.now(), data={"x": 1})
+    kg.record_access(["t1"], "test_context")
+
+    cursor = kg.conn.execute("SELECT entity_id, query_context FROM knowledge_access")
+    rows = cursor.fetchall()
+    assert len(rows) == 1
+    assert rows[0][0] == "t1"
+    assert rows[0][1] == "test_context"
+
+
+def test_record_access_batch(kg):
+    """Record access for multiple entities at once"""
+    for i in range(3):
+        kg.insert_entity(entity_type="task", entity_id=f"t{i}", valid_from=datetime.now(), data={"x": i})
+    kg.record_access(["t0", "t1", "t2"], "batch_test")
+
+    cursor = kg.conn.execute("SELECT COUNT(*) FROM knowledge_access")
+    assert cursor.fetchone()[0] == 3
+
+
+def test_record_access_empty_list(kg):
+    """Empty entity list is a no-op"""
+    kg.record_access([], "should_not_insert")
+    cursor = kg.conn.execute("SELECT COUNT(*) FROM knowledge_access")
+    assert cursor.fetchone()[0] == 0
+
+
+def test_get_access_stats_empty(kg):
+    """Access stats on empty KG returns zeroes"""
+    stats = kg.get_access_stats()
+    assert stats["total_accesses"] == 0
+    assert stats["most_accessed"] == []
+    assert stats["never_accessed"] == []
+
+
+def test_get_access_stats_most_accessed(kg):
+    """Most accessed entities appear in order"""
+    kg.insert_knowledge("user_preference", "pref1", "content1", metadata={"tags": []})
+    kg.insert_knowledge("user_preference", "pref2", "content2", metadata={"tags": []})
+
+    kg.record_access(["user_preference:pref1"], "test")
+    kg.record_access(["user_preference:pref1"], "test")
+    kg.record_access(["user_preference:pref2"], "test")
+
+    stats = kg.get_access_stats()
+    assert stats["total_accesses"] == 3
+    assert len(stats["most_accessed"]) == 2
+    assert stats["most_accessed"][0]["entity_id"] == "user_preference:pref1"
+    assert stats["most_accessed"][0]["access_count"] == 2
+
+
+def test_get_access_stats_never_accessed(kg):
+    """Knowledge entries with no access appear in never_accessed"""
+    kg.insert_knowledge("lesson_learned", "lesson1", "content", metadata={"tags": []})
+    kg.insert_knowledge("lesson_learned", "lesson2", "content", metadata={"tags": []})
+    kg.record_access(["lesson_learned:lesson1"], "test")
+
+    stats = kg.get_access_stats()
+    never_ids = [e["entity_id"] for e in stats["never_accessed"]]
+    assert "lesson_learned:lesson2" in never_ids
+    assert "lesson_learned:lesson1" not in never_ids
+
+
+def test_get_access_stats_stale(kg):
+    """Entries accessed long ago appear as stale"""
+    kg.insert_knowledge("user_preference", "old_pref", "old content", metadata={"tags": []})
+    old_time = (datetime.now() - timedelta(days=30)).isoformat()
+    kg.conn.execute(
+        "INSERT INTO knowledge_access (entity_id, accessed_at, query_context) VALUES (?, ?, ?)",
+        ("user_preference:old_pref", old_time, "old_test"),
+    )
+    kg.conn.commit()
+
+    stats = kg.get_access_stats(stale_days=7)
+    stale_ids = [e["entity_id"] for e in stats["stale_entries"]]
+    assert "user_preference:old_pref" in stale_ids
