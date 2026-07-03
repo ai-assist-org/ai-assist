@@ -636,6 +636,18 @@ async def tui_interactive_mode(agent: AiAssistAgent, state_manager: StateManager
     notification_watcher = NotificationWatcher(console)
     await notification_watcher.start()
 
+    # Initialize background task manager for in-session background tasks
+    from .background_task_tools import BackgroundTaskTools
+    from .background_tasks import BackgroundTaskManager
+
+    bg_manager = BackgroundTaskManager(
+        agent=agent,
+        console=console,
+        notifications_file=notification_watcher.notification_log,
+    )
+    agent.background_task_tools = BackgroundTaskTools(bg_manager)
+    agent.available_tools.extend(agent.background_task_tools.get_tool_definitions())
+
     # Inner execution uses the agent's renderer (set by query_with_feedback)
     agent.on_inner_execution = agent.renderer.on_inner_execution
 
@@ -759,6 +771,9 @@ async def tui_interactive_mode(agent: AiAssistAgent, state_manager: StateManager
 
     async def command_confirmation_callback(command: str) -> bool:
         """Prompt user to approve non-allowlisted commands or destructive actions"""
+        if agent._background_task_count > 0:
+            logger.info("Security: auto-denied command in background task: %s", command[:200])
+            return False
         logger.info("Security prompt: command approval requested: %s", command[:200])
         choice = await _prompt_user_approval("Security: The agent wants to run:", command)
         if choice in ("c", "cancel"):
@@ -781,6 +796,9 @@ async def tui_interactive_mode(agent: AiAssistAgent, state_manager: StateManager
 
     async def path_confirmation_callback(description: str) -> bool:
         """Prompt user to approve access to a path outside allowed directories"""
+        if agent._background_task_count > 0:
+            logger.info("Security: auto-denied path access in background task: %s", description[:200])
+            return False
         logger.info("Security prompt: path approval requested: %s", description[:200])
         choice = await _prompt_user_approval("Security: The agent wants to access:", description)
         if choice in ("c", "cancel"):
@@ -993,6 +1011,10 @@ async def tui_interactive_mode(agent: AiAssistAgent, state_manager: StateManager
                     await handle_clear_cache_command(state_manager, console)
                     continue
 
+                if user_input.lower() == "/bg" or user_input.lower().startswith("/bg "):
+                    await handle_bg_command(user_input, bg_manager, console)
+                    continue
+
                 if user_input.lower() == "/help":
                     await handle_help_command(console)
                     continue
@@ -1111,6 +1133,11 @@ async def tui_interactive_mode(agent: AiAssistAgent, state_manager: StateManager
             except Exception as e:
                 console.print(f"[red]Error: {e}[/red]\n")
     finally:
+        # Cancel background tasks on exit
+        cancelled = await bg_manager.cancel_all()
+        if cancelled > 0:
+            console.print(f"[yellow]Cancelled {cancelled} background task(s)[/yellow]")
+
         # Stop watchers on exit
         await config_watcher.stop()
         await notification_watcher.stop()
@@ -1124,6 +1151,41 @@ async def tui_interactive_mode(agent: AiAssistAgent, state_manager: StateManager
             except ImportError, termios.error, OSError:
                 pass
         reset_terminal_title()
+
+
+async def handle_bg_command(user_input: str, bg_manager, console: Console):
+    """Handle /bg commands for background task management"""
+    parts = user_input.split()
+
+    if len(parts) == 1:
+        tasks = bg_manager.list_tasks()
+        if not tasks:
+            console.print("[yellow]No background tasks.[/yellow]")
+            return
+        for t in tasks:
+            color = {"running": "cyan", "completed": "green", "failed": "red", "pending": "white"}.get(
+                t.status, "white"
+            )
+            console.print(f"  [{color}][{t.status}][/{color}] {t.id}: {t.description}")
+        return
+
+    if parts[1].lower() == "cancel":
+        if len(parts) == 3:
+            cancelled = await bg_manager.cancel_task(parts[2])
+            if cancelled:
+                console.print(f"[yellow]Task {parts[2]} cancelled.[/yellow]")
+            else:
+                console.print(f"[red]Task not found or already completed: {parts[2]}[/red]")
+        else:
+            n = await bg_manager.cancel_all()
+            console.print(f"[yellow]Cancelled {n} background task(s).[/yellow]")
+        return
+
+    task = bg_manager.get_task(parts[1])
+    if task is None:
+        console.print(f"[red]Task not found: {parts[1]}[/red]")
+        return
+    console.print_json(task.model_dump_json(indent=2))
 
 
 async def handle_status_command(state_manager: StateManager, console: Console):
@@ -1365,6 +1427,9 @@ async def handle_help_command(console: Console):
 - `/skill/add_env <skill> <VAR>` - Allow an env var for a skill's scripts
 - `/skill/remove_env <skill> <VAR>` - Remove an allowed env var
 - `/skill/list_env [skill]` - Show allowed env vars for skills
+- `/bg` - List background tasks
+- `/bg <id>` - Show details of a background task
+- `/bg cancel [id]` - Cancel a background task (or all if no id)
 - `/eval-stats` - Show evaluation metrics from query traces
 - `/mcp/restart <server>` - Restart an MCP server (picks up binary updates)
 - `/exit` or `/quit` - Exit interactive mode
