@@ -26,6 +26,7 @@ class ActionTools:
         return [
             {
                 "name": "internal__create_action",
+                "_readonly": False,
                 "description": (
                     "Create an event-driven action with an advanced trigger (mqtt, dbus, interval_range). "
                     "For simple daily/hourly recurring monitors, prefer internal__create_monitor. "
@@ -56,6 +57,7 @@ class ActionTools:
             },
             {
                 "name": "internal__list_actions",
+                "_readonly": True,
                 "description": "List all configured actions with their triggers and status.",
                 "input_schema": {
                     "type": "object",
@@ -70,6 +72,7 @@ class ActionTools:
             },
             {
                 "name": "internal__update_action",
+                "_readonly": False,
                 "description": "Update an existing action's properties.",
                 "input_schema": {
                     "type": "object",
@@ -88,6 +91,7 @@ class ActionTools:
             },
             {
                 "name": "internal__delete_action",
+                "_readonly": False,
                 "description": "Delete an action by name.",
                 "input_schema": {
                     "type": "object",
@@ -100,6 +104,7 @@ class ActionTools:
             },
             {
                 "name": "internal__enable_action",
+                "_readonly": False,
                 "description": "Enable or disable an action.",
                 "input_schema": {
                     "type": "object",
@@ -113,6 +118,7 @@ class ActionTools:
             },
             {
                 "name": "internal__get_action",
+                "_readonly": True,
                 "description": "Get full details of an action including prompt, trigger, conditions, and notification settings.",
                 "input_schema": {
                     "type": "object",
@@ -125,6 +131,7 @@ class ActionTools:
             },
             {
                 "name": "internal__get_action_status",
+                "_readonly": True,
                 "description": "Get execution history and current state of an action.",
                 "input_schema": {
                     "type": "object",

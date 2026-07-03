@@ -1054,6 +1054,16 @@ async def tui_interactive_mode(agent: AiAssistAgent, state_manager: StateManager
                     await handle_eval_stats_command(console)
                     continue
 
+                if user_input.lower().startswith("/plan "):
+                    task = user_input[6:].strip()
+                    if not task:
+                        console.print("\n[red]Usage: /plan <task description>[/red]\n")
+                        continue
+                    await handle_plan_command(
+                        task, agent, console, conversation_memory=conversation_memory, kg_context=kg_context
+                    )
+                    continue
+
                 # Validate command before sending to agent
                 if not is_valid_interactive_command(user_input):
                     error_msg = get_command_suggestion(user_input, is_interactive=True)
@@ -1404,6 +1414,70 @@ async def handle_awl_viz_command(user_input: str, console: Console):
         console.print("[dim]Cancelled[/dim]\n")
 
 
+async def handle_plan_command(
+    task: str,
+    agent: AiAssistAgent,
+    console: Console,
+    conversation_memory: ConversationMemory | None = None,
+    kg_context: KnowledgeGraphContext | None = None,
+) -> None:
+    """Handle /plan command — explore then execute with user approval."""
+    from prompt_toolkit import PromptSession as PlanPromptSession
+
+    from ai_assist.plan_mode import get_execution_prompt, get_plan_system_prompt
+
+    revision_feedback: str | None = None
+
+    while True:
+        planning_prompt = get_plan_system_prompt(task, revision_feedback=revision_feedback)
+
+        console.print("\n[bold cyan]Planning...[/bold cyan] (read-only exploration)\n")
+        agent.plan_mode = True
+        try:
+            plan_text = await query_with_feedback(
+                agent, planning_prompt, console, conversation_memory=conversation_memory, kg_context=kg_context
+            )
+        finally:
+            agent.plan_mode = False
+
+        if not plan_text:
+            console.print("\n[yellow]No plan was generated.[/yellow]\n")
+            return
+
+        if conversation_memory:
+            conversation_memory.add_exchange(f"/plan {task}", plan_text)
+
+        console.print("\n[bold green]--- Plan Ready ---[/bold green]")
+        console.print(
+            "[dim]Type [bold]a[/bold] to approve, [bold]r[/bold] to reject, or provide feedback to revise:[/dim]"
+        )
+
+        plan_session: Any = PlanPromptSession()
+        try:
+            choice = await plan_session.prompt_async("plan> ")
+        except EOFError, KeyboardInterrupt:
+            console.print("[dim]Plan cancelled[/dim]\n")
+            return
+
+        choice = choice.strip()
+        if not choice or choice.lower() in ("r", "reject", "n", "no"):
+            console.print("[dim]Plan rejected[/dim]\n")
+            return
+
+        if choice.lower() in ("a", "approve", "y", "yes"):
+            console.print("\n[bold cyan]Executing approved plan...[/bold cyan]\n")
+            execution_prompt = get_execution_prompt(plan_text)
+            response = await query_with_feedback(
+                agent, execution_prompt, console, conversation_memory=conversation_memory, kg_context=kg_context
+            )
+            if response and conversation_memory:
+                conversation_memory.add_exchange("(plan execution)", response)
+            console.print()
+            return
+
+        revision_feedback = choice
+
+
 async def handle_help_command(console: Console):
     """Handle /help command"""
     help_text = """
@@ -1430,6 +1504,7 @@ async def handle_help_command(console: Console):
 - `/bg` - List background tasks
 - `/bg <id>` - Show details of a background task
 - `/bg cancel [id]` - Cancel a background task (or all if no id)
+- `/plan <task>` - Plan a task before executing (explore → approve → execute)
 - `/eval-stats` - Show evaluation metrics from query traces
 - `/mcp/restart <server>` - Restart an MCP server (picks up binary updates)
 - `/exit` or `/quit` - Exit interactive mode

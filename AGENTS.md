@@ -42,6 +42,7 @@ The system has five major subsystems:
 
 Key interaction modes:
 - **Interactive** (`tui_interactive.py`): Rich TUI with streaming responses, history, tab completion
+- **Plan Mode** (`plan_mode.py`): `/plan <task>` in interactive mode — agent explores with read-only tools, proposes a plan, user approves/rejects/revises, then agent executes with full tools
 - **Monitor** (`monitors.py`, `task_runner.py`): Periodic scheduled tasks with hot-reload
 - **Query** (`main.py`): One-off queries
 - **AWL** (`awl_runtime.py`): Multi-step workflow execution with conditionals and loops
@@ -701,6 +702,7 @@ ai_assist/
 ├── knowledge_graph.py         # Temporal KG database
 ├── embedding.py, context.py   # Vector embeddings and semantic search
 ├── skills_*.py                # Agent Skills loader and manager
+├── plan_mode.py               # Plan mode (explore → approve → execute)
 ├── tui*.py                    # Terminal UI components
 ├── monitors.py, tasks.py      # Monitoring and task execution
 ├── action_model.py            # Unified action model (trigger + prompt)
@@ -761,7 +763,7 @@ Also see:
 4. **Iterate**: Enhance incrementally while keeping tests green
 5. **Refactor**: Apply DRY principle to eliminate duplication
 6. **Document**: Update README.md and AGENTS.md
-7. **Presentation**: Update `presentation/ai-assist-presentation.tex` to reflect the new feature and verify it builds with `make -C presentation`
+7. **Presentation**: Update `presentation/ai-assist-presentation.tex` to reflect the new feature, update `\date{...}` to the current month and year, and verify it builds with `make -C presentation`
 8. **Verify**: Run `pre-commit run -a` and ensure all checks pass before declaring the feature complete
 
 ### Adding a New Tool

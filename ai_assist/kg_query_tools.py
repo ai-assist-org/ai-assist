@@ -42,6 +42,7 @@ class KGQueryTools:
                 },
                 "_server": "internal",
                 "_original_name": "kg_recent_changes",
+                "_readonly": True,
             },
             {
                 "name": "internal__kg_late_discoveries",
@@ -67,6 +68,7 @@ class KGQueryTools:
                 },
                 "_server": "internal",
                 "_original_name": "kg_late_discoveries",
+                "_readonly": True,
             },
             {
                 "name": "internal__kg_discovery_lag_stats",
@@ -92,6 +94,7 @@ class KGQueryTools:
                 },
                 "_server": "internal",
                 "_original_name": "kg_discovery_lag_stats",
+                "_readonly": True,
             },
             {
                 "name": "internal__kg_entity_context",
@@ -111,6 +114,7 @@ class KGQueryTools:
                 },
                 "_server": "internal",
                 "_original_name": "kg_entity_context",
+                "_readonly": True,
             },
             {
                 "name": "internal__kg_stats",
@@ -125,6 +129,7 @@ class KGQueryTools:
                 },
                 "_server": "internal",
                 "_original_name": "kg_stats",
+                "_readonly": True,
             },
             {
                 "name": "internal__kg_snapshot",
@@ -162,6 +167,7 @@ class KGQueryTools:
                 },
                 "_server": "internal",
                 "_original_name": "kg_snapshot",
+                "_readonly": True,
             },
             {
                 "name": "internal__kg_knowledge_health",
@@ -192,6 +198,7 @@ class KGQueryTools:
                 },
                 "_server": "internal",
                 "_original_name": "kg_knowledge_health",
+                "_readonly": True,
             },
         ]
 

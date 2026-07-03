@@ -14,6 +14,7 @@ INTERACTIVE_COMMANDS = [
     "/awl-viz",
     "/eval-stats",
     "/bg",
+    "/plan",
 ]
 
 # Valid commands at CLI level

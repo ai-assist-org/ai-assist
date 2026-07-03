@@ -189,6 +189,7 @@ class MCPServerConfig(BaseModel):
     )
     enabled: bool = True
     pagination: PaginationConfig | None = None
+    readonly_tools: list[str] = Field(default_factory=list)
 
 
 class AiAssistConfig(BaseModel):
@@ -355,6 +356,7 @@ def load_mcp_servers_from_yaml(path: Path) -> dict[str, MCPServerConfig]:
                 url=config.get("url"),
                 enabled=config.get("enabled", True),
                 pagination=pagination,
+                readonly_tools=config.get("readonly_tools", []),
             )
 
         return servers

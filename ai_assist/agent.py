@@ -246,6 +246,7 @@ class AiAssistAgent:
         self._no_history = False  # Per-query flag: @no-history prefix strips conversation history
         self._query_depth = 0  # Track nesting depth for _no_kg reset
         self.interactive_mode = False
+        self.plan_mode = False
 
         # Load identity for personalized interactions
         self.identity = get_identity()
@@ -572,7 +573,7 @@ class AiAssistAgent:
                     for tool in tools_list.tools:
                         desc = tool.description or ""
                         full_name = f"{name}__{tool.name}"
-                        tool_def = {
+                        tool_def: dict = {
                             "name": full_name,
                             "description": desc,
                             "_full_description": desc,
@@ -580,6 +581,12 @@ class AiAssistAgent:
                             "_server": name,
                             "_original_name": tool.name,
                         }
+                        if config.readonly_tools:
+                            import fnmatch
+
+                            tool_def["_readonly"] = any(
+                                fnmatch.fnmatch(tool.name, pat) for pat in config.readonly_tools
+                            )
                         # Validate tool description for poisoning
                         desc_warnings = validate_tool_description(full_name, desc)
                         if desc_warnings:
@@ -829,8 +836,14 @@ class AiAssistAgent:
         Returns:
             List of tool dicts with name, description, input_schema
         """
+        source_tools = self.available_tools
+        if self.plan_mode:
+            from .plan_mode import get_planning_tools
+
+            source_tools = get_planning_tools(self.available_tools)
+
         api_tools = []
-        for tool in self.available_tools:
+        for tool in source_tools:
             desc = tool["description"]
             full_desc = tool.get("_full_description")
 

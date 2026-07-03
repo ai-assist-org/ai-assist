@@ -20,6 +20,7 @@ class ScheduleActionTools:
         return [
             {
                 "name": "internal__schedule_action",
+                "_readonly": False,
                 "description": (
                     "Schedule a one-time action to execute at a future time. "
                     "You decide whether the action needs to execute a query or is just a simple reminder. "

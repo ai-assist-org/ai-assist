@@ -143,6 +143,7 @@ uv run ai-assist
 - `/skill/add_env <skill> <VAR>` - Allow an environment variable for a skill's scripts
 - `/skill/remove_env <skill> <VAR>` - Remove an allowed env var from a skill
 - `/skill/list_env [skill]` - Show allowed env vars for skills
+- `/plan <task>` - Plan a task before executing (explore → approve → execute)
 - `/mcp/restart <server>` - Restart an MCP server (picks up binary updates)
 - `/help` - Show help
 - `/exit` or `/quit` - Exit
