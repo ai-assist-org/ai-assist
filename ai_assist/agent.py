@@ -182,6 +182,10 @@ class AiAssistAgent:
     # Model-specific max output tokens
     # Source: https://docs.anthropic.com/en/docs/about-claude/models
     MODEL_MAX_TOKENS = {
+        # Claude Fable 5 (no dated variants — alias only)
+        "claude-fable-5": 128000,
+        # Claude Opus 4.8 (no dated variants — alias only)
+        "claude-opus-4-8": 128000,
         # Claude 4.7 series
         "claude-opus-4-7@20260505": 128000,  # 128K output tokens!
         "claude-opus-4-7-20260505": 128000,
@@ -217,6 +221,8 @@ class AiAssistAgent:
     # Model-specific context window sizes (input tokens)
     # Claude 4.6+ models have native 1M context windows
     MODEL_CONTEXT_WINDOWS = {
+        "claude-fable-5": 1000000,
+        "claude-opus-4-8": 1000000,
         "claude-opus-4-7": 1000000,
         "claude-opus-4-6": 1000000,
         "claude-sonnet-4-6": 1000000,
@@ -387,7 +393,9 @@ class AiAssistAgent:
 
         if max_tokens is None:
             # Unknown model - try to infer from name patterns
-            if "opus-4-6" in model.lower() or "opus-4.6" in model.lower():
+            if "fable-5" in model.lower() or "opus-4-8" in model.lower():
+                max_tokens = 128000  # Fable 5 / Opus 4.8
+            elif "opus-4-6" in model.lower() or "opus-4.6" in model.lower():
                 max_tokens = 128000  # Opus 4.6 and later
             elif "opus-4-5" in model.lower() or "opus-4.5" in model.lower():
                 max_tokens = 64000  # Opus 4.5
@@ -514,7 +522,16 @@ class AiAssistAgent:
 
     def _transport(self, config: MCPServerConfig):
         """Return the appropriate MCP transport context manager for this server config."""
-        if config.url:
+        transport = config.transport
+        if config.url and not transport:
+            transport = "sse"
+        if transport == "streamablehttp":
+            assert config.url is not None
+            from mcp.client.streamable_http import streamablehttp_client
+
+            return streamablehttp_client(config.url)
+        if transport == "sse":
+            assert config.url is not None
             from mcp.client.sse import sse_client
 
             return sse_client(config.url, sse_read_timeout=3600)
@@ -1655,6 +1672,10 @@ class AiAssistAgent:
             # Track token usage
             self._track_token_usage(response, turn)
 
+            if getattr(response, "stop_reason", None) == "refusal":
+                self._last_turn_count = turn + 1
+                return "The model declined this request for safety reasons."
+
             messages.append({"role": "assistant", "content": _serialize_content(response.content)})
 
             tool_results, loop_detected = await self._execute_tools_concurrently(
@@ -1906,6 +1927,11 @@ class AiAssistAgent:
 
                         # Track token usage
                         self._track_token_usage(final_message, turn)
+
+                        if getattr(final_message, "stop_reason", None) == "refusal":
+                            self._last_turn_count = turn + 1
+                            yield {"type": "error", "message": "The model declined this request for safety reasons."}
+                            return
 
                         messages.append({"role": "assistant", "content": _serialize_content(final_message.content)})
 
