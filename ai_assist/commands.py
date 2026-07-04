@@ -13,6 +13,7 @@ INTERACTIVE_COMMANDS = [
     "/kg-viz",
     "/awl-viz",
     "/eval-stats",
+    "/bg",
 ]
 
 # Valid commands at CLI level

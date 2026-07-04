@@ -46,6 +46,11 @@ def mock_agent():
     agent.filesystem_tools = MagicMock()
     agent.filesystem_tools.confirmation_callback = None
 
+    # Mock background task support
+    agent.background_task_tools = None
+    agent._background_task_count = 0
+    agent.available_tools = []
+
     # Mock adaptive truncation limits
     agent.get_truncation_limits = MagicMock(
         return_value={
@@ -189,6 +194,9 @@ async def test_multiline_input_handling(mock_state_manager):
     agent.skills_manager.installed_skills = []
     agent.filesystem_tools = MagicMock()
     agent.filesystem_tools.confirmation_callback = None
+    agent.background_task_tools = None
+    agent._background_task_count = 0
+    agent.available_tools = []
     agent.renderer = PlainRenderer()
     agent.on_inner_execution = agent.renderer.on_inner_execution
 
@@ -237,6 +245,9 @@ async def test_conversation_tracking(mock_state_manager):
     agent.skills_manager.installed_skills = []
     agent.filesystem_tools = MagicMock()
     agent.filesystem_tools.confirmation_callback = None
+    agent.background_task_tools = None
+    agent._background_task_count = 0
+    agent.available_tools = []
     agent.get_truncation_limits = MagicMock(
         return_value={
             "max_message_chars": 40000,
@@ -357,6 +368,9 @@ async def test_feedback_with_tool_calls(mock_state_manager):
     agent.skills_manager.installed_skills = []
     agent.filesystem_tools = MagicMock()
     agent.filesystem_tools.confirmation_callback = None
+    agent.background_task_tools = None
+    agent._background_task_count = 0
+    agent.available_tools = []
     agent.get_truncation_limits = MagicMock(
         return_value={
             "max_message_chars": 40000,

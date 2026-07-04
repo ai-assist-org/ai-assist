@@ -281,6 +281,10 @@ class AiAssistAgent:
 
         self.goal_tools = GoalTools(self)
 
+        # Background task tools (initialized by TUI when BackgroundTaskManager is created)
+        self.background_task_tools: Any = None
+        self._background_task_count = 0
+
         # Initialize skills system
         self.skills_loader = SkillsLoader()
         self.skills_manager = SkillsManager(self.skills_loader)
@@ -488,6 +492,13 @@ class AiAssistAgent:
         if goal_tool_defs:
             self.available_tools.extend(goal_tool_defs)
             print(f"✓ Added {len(goal_tool_defs)} goal tools")
+
+        # Add background task tools (if manager was set by TUI)
+        if self.background_task_tools:
+            bg_tool_defs = self.background_task_tools.get_tool_definitions()
+            if bg_tool_defs:
+                self.available_tools.extend(bg_tool_defs)
+                print(f"✓ Added {len(bg_tool_defs)} background task tools")
 
         # Add script execution tools if enabled
         script_tool_defs = self.script_execution_tools.get_tool_definitions()
@@ -1116,6 +1127,14 @@ class AiAssistAgent:
         prompt += "\n\n# Action Management\n\n"
         prompt += "Use the action tools (internal__create_action, internal__list_actions, internal__update_action, internal__delete_action, internal__enable_action) to manage scheduled and event-driven actions. "
         prompt += "NEVER read or edit `event-schedules.json` directly — always use these tools.\n"
+
+        # Add background task guidance (only when tools are available)
+        if self.background_task_tools:
+            prompt += "\n\n# Background Tasks\n\n"
+            prompt += "Use internal__run_background to spawn long-running work in the background. The user can continue chatting while it runs. "
+            prompt += "Use internal__list_background_tasks to check status. Results are delivered via notification when complete.\n"
+            prompt += "ONLY use background tasks when the user explicitly asks to run something in the background, or when the user asks for multiple independent tasks at once and would benefit from parallel execution. "
+            prompt += "Never autonomously decide to background a task — always run it in the foreground unless the user says otherwise.\n"
 
         # Add MCP tools guidance
         mcp_servers = list(self.sessions.keys())
@@ -2700,6 +2719,16 @@ class AiAssistAgent:
                         result_text = "Error: KG query tools not available (knowledge graph disabled)"
                 elif original_tool_name in action_tools:
                     result_text = await self.action_tools.execute_tool(f"internal__{original_tool_name}", arguments)
+                elif original_tool_name in (
+                    "run_background",
+                    "list_background_tasks",
+                    "get_background_task",
+                    "cancel_background_task",
+                ):
+                    if self.background_task_tools:
+                        result_text = await self.background_task_tools.execute_tool(original_tool_name, arguments)
+                    else:
+                        result_text = "Error: Background tasks not available (only in interactive mode)"
                 else:
                     # Default to report tools
                     result_text = await self.report_tools.execute_tool(original_tool_name, arguments)

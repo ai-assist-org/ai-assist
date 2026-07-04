@@ -1097,6 +1097,41 @@ KG sections are capped at 1500 chars}
 \end{columns}
 \end{frame}
 
+% ── Slide: Background Tasks ──────────────────────────────────────
+\begin{frame}[fragile]{Background Tasks: Non-Blocking Interactive}
+
+\textbf{Spawn long-running work while you keep chatting}
+
+\begin{columns}[T]
+\begin{column}{0.5\textwidth}
+\begin{itemize}
+  \item Agent spawns \texttt{asyncio} tasks in the same event loop
+  \item Context isolation via \texttt{@no-kg @no-history}
+  \item Shared MCP sessions (no new connections)
+  \item Notifications on completion/failure
+  \item Security: confirmation prompts auto-denied in background
+\end{itemize}
+\end{column}
+\begin{column}{0.48\textwidth}
+\textbf{Agent Tools:}
+\begin{lstlisting}[style=json,basicstyle=\tiny\ttfamily]
+internal__run_background
+  prompt: "Generate weekly report"
+  description: "Weekly DCI report"
+  save_to_report: "weekly-report"
+
+internal__list_background_tasks
+
+internal__get_background_task
+  task_id: "a1b2c3d4"
+
+internal__cancel_background_task
+  task_id: "a1b2c3d4"
+\end{lstlisting}
+\end{column}
+\end{columns}
+\end{frame}
+
 % ══════════════════════════════════════════════════════════════════
 \section{Security}
 % ══════════════════════════════════════════════════════════════════

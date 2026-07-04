@@ -224,6 +224,17 @@ D-Bus triggers support per-trigger `bus` field (`system` or `session`) — one D
 
 Files: `action_model.py`, `action_engine.py`, `action_scheduler.py`, `action_loader.py`, `action_tools.py`, `event_sources.py`, `event_source_mqtt.py`, `event_source_dbus.py`
 
+### Background Tasks (Interactive Mode)
+
+The interactive agent can spawn long-running queries as background `asyncio` tasks within the same event loop. The user continues chatting while background tasks run, and gets notified on completion via the existing `NotificationWatcher`.
+
+- **BackgroundTaskManager** (`background_tasks.py`): spawns, tracks, and cancels background tasks. In-memory tracking only.
+- **BackgroundTaskTools** (`background_task_tools.py`): agent tools for spawning (`internal__run_background`), listing (`internal__list_background_tasks`), inspecting (`internal__get_background_task`), and cancelling (`internal__cancel_background_task`) tasks.
+- **Context isolation**: Background prompts are prefixed with `@no-kg @no-history` for clean context. Shared MCP sessions are reused.
+- **Security**: The `_in_background_task` flag on the agent auto-denies filesystem confirmation prompts from background tasks.
+
+Files: `background_tasks.py`, `background_task_tools.py`
+
 ### Configuration & State
 
 **Configuration sources** (precedence order):
@@ -701,6 +712,8 @@ ai_assist/
 ├── event_sources.py           # Pluggable event source system (ABC, manager)
 ├── event_source_mqtt.py       # MQTT event source (optional: aiomqtt)
 ├── event_source_dbus.py       # D-Bus event source (optional: dbus-next)
+├── background_tasks.py        # Background task manager (interactive mode)
+├── background_task_tools.py   # Agent tools for background tasks
 ├── *_tools.py                 # Tool implementations (report, schedule, KG, filesystem, etc.)
 ├── scheduled_actions.py       # One-time future actions (legacy)
 ├── notification_*.py          # Notification channels and dispatcher
