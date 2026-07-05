@@ -179,8 +179,6 @@ class _DebounceHandler(FileSystemEventHandler):
             return
         self._last_mtime = current_mtime
 
-        print(f"Detected change in {self.target_file.name}", flush=True)
-        # Trigger debounced callback
         self._trigger_debounced()
 
     def on_created(self, event: FileSystemEvent) -> None:
@@ -200,7 +198,6 @@ class _DebounceHandler(FileSystemEventHandler):
             target_path = self.target_file.resolve()
 
             if dest_path == target_path:
-                print(f"Detected change in {self.target_file.name}", flush=True)
                 self._trigger_debounced()
 
     def _trigger_debounced(self) -> None:

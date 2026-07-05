@@ -56,6 +56,16 @@ class TestActionDefinition:
         assert action.trigger_type == "dbus"
         assert action.is_event_based is True
 
+    def test_construction_file(self):
+        action = _make_action(trigger={"type": "file", "path": "/tmp/watch.txt"})
+        assert action.trigger_type == "file"
+        assert action.is_event_based is True
+
+    def test_construction_file_glob(self):
+        action = _make_action(trigger={"type": "file", "path": "~/Downloads/*.pdf"})
+        assert action.trigger_type == "file"
+        assert action.is_event_based is True
+
     def test_construction_once(self):
         action = _make_action(trigger={"type": "once", "at": "2026-05-07T14:00:00"})
         assert action.trigger_type == "once"
@@ -109,6 +119,15 @@ class TestActionDefinition:
             trigger={"type": "dbus", "interface": "org.freedesktop.UDisks2", "signal": "InterfacesAdded"}
         )
         action.validate_definition()
+
+    def test_validate_file(self):
+        action = _make_action(trigger={"type": "file", "path": "/tmp/watch.txt"})
+        action.validate_definition()
+
+    def test_validate_file_missing_path(self):
+        with pytest.raises(ValueError, match="path"):
+            action = _make_action(trigger={"type": "file"})
+            action.validate_definition()
 
     def test_validate_once(self):
         action = _make_action(trigger={"type": "once", "at": "2026-05-07T14:00:00"})
@@ -312,6 +331,36 @@ class TestTriggerMatcher:
         matcher = TriggerMatcher()
         event = _make_event(payload="all clear")
         trigger = {"type": "mqtt", "topic": "alerts/cpu", "payload_regex": r"ERROR.*"}
+        assert matcher.matches(event, trigger) is False
+
+    def test_file_match_exact(self):
+        matcher = TriggerMatcher()
+        event = _make_event(source_type="file", metadata={"path": "/tmp/config.json"})
+        trigger = {"type": "file", "path": "/tmp/config.json"}
+        assert matcher.matches(event, trigger) is True
+
+    def test_file_no_match(self):
+        matcher = TriggerMatcher()
+        event = _make_event(source_type="file", metadata={"path": "/tmp/other.json"})
+        trigger = {"type": "file", "path": "/tmp/config.json"}
+        assert matcher.matches(event, trigger) is False
+
+    def test_file_glob_match(self):
+        matcher = TriggerMatcher()
+        event = _make_event(source_type="file", metadata={"path": "/tmp/report.pdf"})
+        trigger = {"type": "file", "path": "/tmp/*.pdf"}
+        assert matcher.matches(event, trigger) is True
+
+    def test_file_glob_no_match(self):
+        matcher = TriggerMatcher()
+        event = _make_event(source_type="file", metadata={"path": "/tmp/report.txt"})
+        trigger = {"type": "file", "path": "/tmp/*.pdf"}
+        assert matcher.matches(event, trigger) is False
+
+    def test_file_source_mismatch(self):
+        matcher = TriggerMatcher()
+        event = _make_event(source_type="mqtt", metadata={"topic": "alerts/cpu"})
+        trigger = {"type": "file", "path": "/tmp/config.json"}
         assert matcher.matches(event, trigger) is False
 
     def test_time_trigger_never_matches_events(self):

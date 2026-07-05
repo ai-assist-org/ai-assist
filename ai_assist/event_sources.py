@@ -74,10 +74,12 @@ class EventSourceManager:
             if importlib.util.find_spec("aiomqtt") is not None:
                 from .event_source_mqtt import MqttEventSource
 
-                self.register_source("mqtt", MqttEventSource(configs["mqtt"]))
+                mqtt_source = MqttEventSource(configs["mqtt"])
+                self.register_source("mqtt", mqtt_source)
+                print(f"Event source enabled: MQTT (broker: {mqtt_source.broker}:{mqtt_source.port})")
             else:
-                logger.warning(
-                    "MQTT event source configured but aiomqtt not installed. "
+                print(
+                    "WARNING: MQTT event source configured but aiomqtt not installed. "
                     "Install with: pip install ai-assist[mqtt]"
                 )
 
@@ -85,12 +87,21 @@ class EventSourceManager:
             if importlib.util.find_spec("dbus_next") is not None:
                 from .event_source_dbus import DbusEventSource
 
-                self.register_source("dbus", DbusEventSource(configs["dbus"]))
+                dbus_source = DbusEventSource(configs["dbus"])
+                self.register_source("dbus", dbus_source)
+                print(f"Event source enabled: D-Bus ({dbus_source.default_bus_type} bus)")
             else:
-                logger.warning(
-                    "D-Bus event source configured but dbus-next not installed. "
+                print(
+                    "WARNING: D-Bus event source configured but dbus-next not installed. "
                     "Install with: pip install ai-assist[dbus]"
                 )
+
+        if "file" in configs:
+            from .event_source_file import FileEventSource
+
+            file_source = FileEventSource(configs["file"])
+            self.register_source("file", file_source)
+            print("Event source enabled: File watcher")
 
     def configure(self, triggered_tasks: list[tuple[str, dict[str, Any], Any]]) -> None:
         for task_name, trigger_config, runner in triggered_tasks:

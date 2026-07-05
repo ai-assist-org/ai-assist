@@ -337,7 +337,7 @@ When `notify` is true, you'll receive notifications on task completion via:
 
 ### Event-Driven Actions
 
-React to external events via MQTT or D-Bus. Actions in `~/.ai-assist/event-event-schedules.json` use a unified **trigger + prompt** model. D-Bus triggers support per-trigger bus selection (`system` or `session`).
+React to external events via MQTT, D-Bus, or filesystem changes. Actions in `~/.ai-assist/event-event-schedules.json` use a unified **trigger + prompt** model. D-Bus triggers support per-trigger bus selection (`system` or `session`).
 
 **Example: USB device monitoring**
 
@@ -395,11 +395,30 @@ React to external events via MQTT or D-Bus. Actions in `~/.ai-assist/event-event
 }
 ```
 
-**Trigger types**: `interval`, `schedule`, `interval_range`, `once`, `mqtt`, `dbus`
+**Example: React to new files in a directory**
+
+```json
+{
+  "event_sources": { "file": {} },
+  "actions": [
+    {
+      "name": "New PDF downloaded",
+      "trigger": { "type": "file", "path": "~/Downloads/*.pdf" },
+      "prompt": "A PDF was just downloaded. Summarize it.",
+      "notify": true,
+      "notification_channels": ["desktop", "console"]
+    }
+  ]
+}
+```
+
+File triggers support exact paths (`/etc/app/config.json`), directories (`~/Downloads` — any file change), and glob patterns (`~/Downloads/*.pdf`).
+
+**Trigger types**: `interval`, `schedule`, `interval_range`, `once`, `mqtt`, `dbus`, `file`
 
 **Event filtering**: `payload_contains` and `payload_regex` filter events before execution. Burst signals are debounced (3s window).
 
-**Optional dependencies**: `pip install ai-assist[mqtt]` for MQTT, `pip install ai-assist[dbus]` for D-Bus.
+**Optional dependencies**: `pip install ai-assist[mqtt]` for MQTT, `pip install ai-assist[dbus]` for D-Bus. File watching uses the `watchdog` library (included by default).
 
 The agent can also create/update/delete actions at runtime via built-in tools (`internal__create_action`, `internal__list_actions`, etc.).
 

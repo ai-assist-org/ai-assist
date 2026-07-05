@@ -73,9 +73,9 @@ class NotificationWatcher:
 
     def __init__(self, console: Console):
         self.console = console
-        from .config import get_reports_dir
+        from .config import get_config_dir
 
-        self.notification_log = get_reports_dir() / "notifications.jsonl"
+        self.notification_log = get_config_dir() / "notifications.jsonl"
         self.watchdog: FileWatchdog | None = None
         self.last_position = 0
 

@@ -39,6 +39,7 @@ class ActionScheduler:
         self._debounce_tasks: dict[str, asyncio.Task[None]] = {}
         self._debounce_events: dict[str, list[EventContext]] = {}
         self._executing: set[str] = set()
+        self._last_completed: dict[str, float] = {}
         self._self_write_time: float = 0.0
         self._resume_event = asyncio.Event()
 
@@ -129,10 +130,8 @@ class ActionScheduler:
         if not event_actions:
             return
         if not event_configs:
-            logger.warning(
-                "%d event action(s) configured but no event_sources in %s",
-                len(event_actions),
-                self.schedule_file,
+            print(
+                f"WARNING: {len(event_actions)} event action(s) configured but no event_sources in {self.schedule_file}"
             )
             return
 
@@ -155,10 +154,18 @@ class ActionScheduler:
             self.event_source_manager = None
 
     async def _handle_event(self, event: EventContext) -> None:
+        import time
+
         debounce_seconds = 3.0
+        cooldown_seconds = 10.0
 
         for action in self.actions:
             if not action.enabled or not action.is_event_based:
+                continue
+            if action.name in self._executing:
+                continue
+            last_done = self._last_completed.get(action.name, 0.0)
+            if time.monotonic() - last_done < cooldown_seconds:
                 continue
             if self.matcher.matches(event, action.trigger):
                 self._debounce_events.setdefault(action.name, []).append(event)
@@ -171,6 +178,8 @@ class ActionScheduler:
                 )
 
     async def _debounced_execute(self, action: ActionDefinition, delay: float) -> None:
+        import time
+
         await asyncio.sleep(delay)
         events = self._debounce_events.pop(action.name, [])
         self._debounce_tasks.pop(action.name, None)
@@ -191,6 +200,7 @@ class ActionScheduler:
         print(
             f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Event matched: {action.name} ({len(events)} signal(s))"
         )
+        self._executing.add(action.name)
         try:
             result = await self.engine.execute_action(action, event_context=combined)
             if result.success:
@@ -199,6 +209,9 @@ class ActionScheduler:
                 print(f"{action.name}: failed - {result.output[:200]}")
         except Exception:
             logger.exception("Error executing event action '%s'", action.name)
+        finally:
+            self._executing.discard(action.name)
+            self._last_completed[action.name] = time.monotonic()
 
     def notify_resume(self) -> None:
         """Signal timer tasks to re-check wall-clock time after system resume."""

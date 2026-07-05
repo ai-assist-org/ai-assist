@@ -38,7 +38,7 @@ The system has five major subsystems:
 2. **AWL Runtime** (`awl_parser.py`, `awl_runtime.py`, `awl_ast.py`, `awl_expressions.py`): Agent Workflow Language interpreter for multi-step workflows
 3. **Knowledge Graph** (`knowledge_graph.py`): Temporal SQLite database with vector embeddings for entity tracking, change detection, and conversation memory
 4. **Agent Skills** (`skills_loader.py`, `skills_manager.py`): Loads agentskills.io-compliant skills with optional sandboxed script execution
-5. **Event Sources** (`event_sources.py`, `event_source_mqtt.py`, `event_source_dbus.py`): Pluggable event system for reactive task triggering via MQTT, D-Bus, etc.
+5. **Event Sources** (`event_sources.py`, `event_source_mqtt.py`, `event_source_dbus.py`, `event_source_file.py`): Pluggable event system for reactive task triggering via MQTT, D-Bus, filesystem changes, etc.
 
 Key interaction modes:
 - **Interactive** (`tui_interactive.py`): Rich TUI with streaming responses, history, tab completion
@@ -139,7 +139,7 @@ DCI MCP server image: built from upstream `Containerfile.sse`
 
 ### Event-Driven Actions
 
-Unified action system where everything is a **trigger + prompt**. Actions are stored in `~/.ai-assist/event-schedules.json` and managed via agent tools. Trigger types include time-based (interval, schedule, once) and event-based (MQTT, D-Bus).
+Unified action system where everything is a **trigger + prompt**. Actions are stored in `~/.ai-assist/event-schedules.json` and managed via agent tools. Trigger types include time-based (interval, schedule, once) and event-based (MQTT, D-Bus, file).
 
 - **ActionDefinition** (`action_model.py`): unified model replacing `TaskDefinition` + `ScheduledAction`
 - **TriggerMatcher** (`action_model.py`): matches incoming events against event-based trigger configs
@@ -147,9 +147,10 @@ Unified action system where everything is a **trigger + prompt**. Actions are st
 - **ActionScheduler** (`action_scheduler.py`): unified scheduler for timer and event actions
 - **ActionLoader** (`action_loader.py`): load/save `event-schedules.json`, auto-migration from old format
 - **ActionTools** (`action_tools.py`): agent CRUD tools for actions
-- **EventSource** ABC (`event_sources.py`): pluggable event sources (MQTT, D-Bus)
+- **EventSource** ABC (`event_sources.py`): pluggable event sources (MQTT, D-Bus, file)
 - **MQTT** (`event_source_mqtt.py`): optional dep `aiomqtt` — `pip install ai-assist[mqtt]`
 - **D-Bus** (`event_source_dbus.py`): optional dep `dbus-next` — `pip install ai-assist[dbus]`
+- **File** (`event_source_file.py`): watches files, directories, or glob patterns for changes (no extra deps)
 
 Configuration in `event-schedules.json`:
 ```json
@@ -219,11 +220,28 @@ React to USB filesystem mount/unmount events on Linux:
 }
 ```
 
+**Example: Watch a directory for new files**
+```json
+{
+  "event_sources": { "file": {} },
+  "actions": [
+    {
+      "name": "New PDF downloaded",
+      "trigger": { "type": "file", "path": "~/Downloads/*.pdf" },
+      "prompt": "A PDF was just downloaded. Summarize it.",
+      "notify": true, "notification_channels": ["desktop", "console"]
+    }
+  ]
+}
+```
+
+File triggers support exact paths (`/etc/app/config.json`), directories (`~/Downloads` — any file change), and glob patterns (`~/Downloads/*.pdf` — matching files only). The `payload_contains` and `payload_regex` filters work on file events too.
+
 D-Bus triggers support per-trigger `bus` field (`system` or `session`) — one D-Bus source connects to both buses as needed. Event-based actions support debouncing (3s window) to collapse burst signals. The `payload_contains` and `payload_regex` fields filter events by their content before execution.
 
 **Context injection**: recent notifications from `/monitor` are automatically injected into the interactive agent's system prompt (last 15 minutes), so the user can ask follow-up questions about events.
 
-Files: `action_model.py`, `action_engine.py`, `action_scheduler.py`, `action_loader.py`, `action_tools.py`, `event_sources.py`, `event_source_mqtt.py`, `event_source_dbus.py`
+Files: `action_model.py`, `action_engine.py`, `action_scheduler.py`, `action_loader.py`, `action_tools.py`, `event_sources.py`, `event_source_mqtt.py`, `event_source_dbus.py`, `event_source_file.py`
 
 ### Background Tasks (Interactive Mode)
 
@@ -714,6 +732,7 @@ ai_assist/
 ├── event_sources.py           # Pluggable event source system (ABC, manager)
 ├── event_source_mqtt.py       # MQTT event source (optional: aiomqtt)
 ├── event_source_dbus.py       # D-Bus event source (optional: dbus-next)
+├── event_source_file.py       # File/directory event source (watchdog)
 ├── background_tasks.py        # Background task manager (interactive mode)
 ├── background_task_tools.py   # Agent tools for background tasks
 ├── *_tools.py                 # Tool implementations (report, schedule, KG, filesystem, etc.)
