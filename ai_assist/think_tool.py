@@ -34,6 +34,7 @@ class ThinkTool:
                 },
                 "_server": "internal",
                 "_original_name": "think",
+                "_readonly": True,
             },
         ]
 

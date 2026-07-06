@@ -625,6 +625,7 @@ class FilesystemTools:
         return [
             {
                 "name": "internal__read_file",
+                "_readonly": True,
                 "description": "Read the contents of a file from the filesystem. Can read the entire file or specific line ranges. For large files, use line_start and line_end to read only relevant sections. Use search_in_file first to find line numbers of interest.",
                 "input_schema": {
                     "type": "object",
@@ -656,6 +657,7 @@ class FilesystemTools:
             },
             {
                 "name": "internal__search_in_file",
+                "_readonly": True,
                 "description": "Search for a regex pattern in a file. Returns matching lines with line numbers. Use this to find specific patterns, errors, or keywords in log files. Supports line ranges to search only a portion of the file (e.g., last 100 lines with line_start=-100).",
                 "input_schema": {
                     "type": "object",
@@ -686,6 +688,7 @@ class FilesystemTools:
             },
             {
                 "name": "internal__create_directory",
+                "_readonly": False,
                 "description": "Create a directory (and parent directories if needed). Use this to create directories for storing reports, logs, or downloaded files.",
                 "input_schema": {
                     "type": "object",
@@ -702,6 +705,7 @@ class FilesystemTools:
             },
             {
                 "name": "internal__list_directory",
+                "_readonly": True,
                 "description": "List files and directories in a directory with type and size details. Always prefer this over execute_command for listing directory contents.",
                 "input_schema": {
                     "type": "object",
@@ -723,6 +727,7 @@ class FilesystemTools:
             },
             {
                 "name": "internal__write_file",
+                "_readonly": False,
                 "description": "Write content to a file. Creates the file if it doesn't exist, or replaces its content if it does. Parent directories are created automatically.",
                 "input_schema": {
                     "type": "object",
@@ -743,6 +748,7 @@ class FilesystemTools:
             },
             {
                 "name": "internal__edit_file",
+                "_readonly": False,
                 "description": "Edit a file by replacing an exact string match with new content. The old_string must appear exactly once in the file (for safety). Read the file first to get the exact text to replace. Works with multi-line strings.",
                 "input_schema": {
                     "type": "object",
@@ -767,6 +773,7 @@ class FilesystemTools:
             },
             {
                 "name": "internal__execute_command",
+                "_readonly": False,
                 "description": "Execute a shell command and return the output. Only use for commands that have no dedicated tool (prefer internal__read_file, internal__list_directory, internal__search_in_file for filesystem operations). Commands are checked against an allowlist.",
                 "input_schema": {
                     "type": "object",

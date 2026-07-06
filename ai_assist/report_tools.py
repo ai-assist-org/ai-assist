@@ -32,6 +32,7 @@ class ReportTools:
         return [
             {
                 "name": "internal__write_report",
+                "_readonly": False,
                 "description": (
                     "Create or completely replace a report file. "
                     "Supports md (markdown), jsonl, csv, and tsv formats."
@@ -59,6 +60,7 @@ class ReportTools:
             },
             {
                 "name": "internal__append_to_report",
+                "_readonly": False,
                 "description": (
                     "Add content to the end of a report (creates file if needed). "
                     "For jsonl: content must be valid JSON (one object per line). "
@@ -87,6 +89,7 @@ class ReportTools:
             },
             {
                 "name": "internal__read_report",
+                "_readonly": True,
                 "description": "Read a report's current content. Auto-detects format if not specified.",
                 "input_schema": {
                     "type": "object",
@@ -103,12 +106,14 @@ class ReportTools:
             },
             {
                 "name": "internal__list_reports",
+                "_readonly": True,
                 "description": "List all available reports with metadata",
                 "input_schema": {"type": "object", "properties": {}},
                 "_server": "internal",
             },
             {
                 "name": "internal__delete_report",
+                "_readonly": False,
                 "description": "Delete a report file. Auto-detects format if not specified.",
                 "input_schema": {
                     "type": "object",

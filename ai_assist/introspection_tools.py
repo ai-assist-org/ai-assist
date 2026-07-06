@@ -49,6 +49,7 @@ class IntrospectionTools:
                 [
                     {
                         "name": "introspection__search_knowledge_graph",
+                        "_readonly": True,
                         "description": """Search the knowledge graph for entities and historical data.
 
 Use this tool when you need to:
@@ -93,6 +94,7 @@ The tool will return entities from the knowledge graph with their data and times
                     },
                     {
                         "name": "introspection__get_kg_entity",
+                        "_readonly": True,
                         "description": """Get detailed information about a specific entity from the knowledge graph.
 
 Use this tool when:
@@ -118,6 +120,7 @@ Example: Get details about Jira ticket CILAB-123 from the knowledge graph.
                     },
                     {
                         "name": "introspection__get_kg_stats",
+                        "_readonly": True,
                         "description": """Get statistics about what's in the knowledge graph.
 
 Use this to understand:
@@ -140,6 +143,7 @@ This helps you decide whether to search the KG or call external APIs.
         tools.append(
             {
                 "name": "introspection__inspect_mcp_prompt",
+                "_readonly": True,
                 "description": """Get detailed information about an MCP prompt including its arguments.
 
 Use this tool BEFORE executing or scheduling an MCP prompt to discover:
@@ -185,6 +189,7 @@ Example: User says "schedule /tpci/weekly_report for Semih"
             tools.append(
                 {
                     "name": "introspection__execute_awl_script",
+                    "_readonly": False,
                     "description": """Execute an AWL (Agent Workflow Language) script from the filesystem.
 
 Use this tool when:
@@ -228,6 +233,7 @@ Returns task outcomes, return value, and final variables.
             tools.append(
                 {
                     "name": "introspection__execute_mcp_prompt",
+                    "_readonly": False,
                     "description": """Execute an MCP prompt directly and return its result.
 
 Use this tool when:
@@ -275,6 +281,7 @@ Example: User says "run /tpci/weekly_report for Peri now"
             tools.append(
                 {
                     "name": "introspection__search_conversation_history",
+                    "_readonly": True,
                     "description": """Search recent conversation history for context.
 
 Use this tool when:
@@ -305,6 +312,7 @@ Example: Search for previous mentions of "DCI failures" in conversation.
         tools.append(
             {
                 "name": "introspection__validate_awl_script",
+                "_readonly": True,
                 "description": """Validate an AWL (Agent Workflow Language) script for syntax errors.
 
 Use this tool when:
@@ -446,6 +454,7 @@ After the loop, `results` is a list of dicts from each successful iteration.
         tools.append(
             {
                 "name": "introspection__get_tool_help",
+                "_readonly": True,
                 "description": "Get full documentation for a tool including query syntax, available fields, and examples.",
                 "input_schema": {
                     "type": "object",
@@ -465,6 +474,7 @@ After the loop, `results` is a list of dicts from each successful iteration.
         tools.append(
             {
                 "name": "introspection__get_skill_help",
+                "_readonly": True,
                 "description": (
                     "Get full instructions for an installed skill including its SKILL.md body "
                     "and skill directory path."
@@ -487,6 +497,7 @@ After the loop, `results` is a list of dicts from each successful iteration.
         tools.append(
             {
                 "name": "introspection__inspect_awl_script",
+                "_readonly": True,
                 "description": """Inspect an AWL script and return the input variables it requires.
 
 Use this tool BEFORE executing an AWL script to discover which variables must be
@@ -517,6 +528,7 @@ yourself between these two steps.
             [
                 {
                     "name": "introspection__get_context_usage",
+                    "_readonly": True,
                     "description": """Check current context window usage and statistics.
 
 Use this tool to:
@@ -539,6 +551,7 @@ getting long.
                 },
                 {
                     "name": "introspection__compact_conversation",
+                    "_readonly": False,
                     "description": """Manually compact the conversation by masking old tool results.
 
 Replaces old tool results with "[Result already retrieved]" placeholder.
@@ -571,6 +584,7 @@ Do NOT compact if you still need the old tool results for your current task.
             [
                 {
                     "name": "introspection__list_mcp_resources",
+                    "_readonly": True,
                     "description": "List available MCP resources and resource templates from connected servers.",
                     "input_schema": {
                         "type": "object",
@@ -586,6 +600,7 @@ Do NOT compact if you still need the old tool results for your current task.
                 },
                 {
                     "name": "introspection__read_mcp_resource",
+                    "_readonly": True,
                     "description": "Read the contents of an MCP resource by server name and URI.",
                     "input_schema": {
                         "type": "object",

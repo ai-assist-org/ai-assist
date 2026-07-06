@@ -58,6 +58,7 @@ class JsonTools:
                 },
                 "_server": "internal",
                 "_original_name": "json_query",
+                "_readonly": True,
             },
         ]
 

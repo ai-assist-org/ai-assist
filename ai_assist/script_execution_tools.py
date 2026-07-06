@@ -67,6 +67,7 @@ class ScriptExecutionTools:
                 },
                 "_server": "internal",
                 "_original_name": "execute_skill_script",
+                "_readonly": False,
             }
         ]
 

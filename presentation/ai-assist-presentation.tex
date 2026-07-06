@@ -69,7 +69,7 @@
 \title{ai-assist}
 \subtitle{An AI-Powered Assistant for Engineering Teams}
 \author{Fr\'ed\'eric Lepied\\{\small Senior Manager -- Telco Partner CI}}
-\date{March 2026}
+\date{July 2026}
 \institute{Red Hat}
 
 % ══════════════════════════════════════════════════════════════════
@@ -231,7 +231,7 @@
   \item Tab completion, history
   \item Markdown rendering
   \item Multi-turn conversations
-  \item Knowledge recall
+  \item \alert{Plan mode} (explore → approve → execute)
 \end{itemize}
 \smallskip
 \texttt{\scriptsize ai-assist}
@@ -551,6 +551,7 @@ Skills are \alert{untrusted code} --- defense in depth:
   \item \texttt{/history} --- recent monitoring history
   \item \texttt{/prompts} --- list MCP prompts
   \item \texttt{/skill/install}, \texttt{/skill/list}
+  \item \texttt{/plan <task>} --- plan before acting
   \item \texttt{/clear-cache} --- reset cached data
   \item \texttt{/clear}, \texttt{/help}, \texttt{/exit}
 \end{itemize}

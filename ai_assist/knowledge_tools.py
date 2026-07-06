@@ -21,6 +21,7 @@ class KnowledgeTools:
         return [
             {
                 "name": "internal__save_knowledge",
+                "_readonly": False,
                 "description": """AGENT-ONLY: Directly save a specific piece of knowledge.
 
 Use this for immediate, explicit saves (not synthesis).
@@ -98,6 +99,7 @@ Returns:
             },
             {
                 "name": "internal__search_knowledge",
+                "_readonly": True,
                 "description": """Search stored knowledge before making decisions.
 
 Use this to check:
@@ -171,6 +173,7 @@ Example:
             },
             {
                 "name": "internal__trigger_synthesis",
+                "_readonly": False,
                 "description": """AGENT-ONLY: Trigger synthesis of conversation learnings.
 
 Call this when you notice:
@@ -212,6 +215,7 @@ Example:
             },
             {
                 "name": "internal__run_kg_synthesis",
+                "_readonly": False,
                 "description": """Run knowledge graph synthesis now.
 
 Processes recent conversations stored in the knowledge graph and extracts
@@ -242,6 +246,7 @@ Returns:
             },
             {
                 "name": "internal__expire_knowledge",
+                "_readonly": False,
                 "description": (
                     "AGENT-ONLY: Mark a knowledge entry as no longer valid or retract an incorrect belief. "
                     "Use 'no_longer_valid' when the fact stopped being true (e.g. user changed preference). "

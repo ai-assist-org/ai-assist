@@ -30,6 +30,7 @@ class GoalTools:
         return [
             {
                 "name": "goal__create",
+                "_readonly": False,
                 "description": (
                     "Create a new autonomous goal as an AWL script (.awl file). "
                     "The generated file uses the @goal directive with a @task inside. "
@@ -63,6 +64,7 @@ class GoalTools:
             },
             {
                 "name": "goal__list",
+                "_readonly": True,
                 "description": "List all goals with their current status",
                 "input_schema": {
                     "type": "object",
@@ -77,6 +79,7 @@ class GoalTools:
             },
             {
                 "name": "goal__update",
+                "_readonly": False,
                 "description": ("Update a goal's status. Use this to pause, resume, or cancel a goal."),
                 "input_schema": {
                     "type": "object",
