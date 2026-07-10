@@ -525,6 +525,41 @@ class AiAssistAgent:
             print(f"✓ Loaded {len(self.skills_manager.installed_skills)} installed Agent Skills")
             self._allow_local_skill_paths()
 
+        # Show event source status
+        self._print_event_source_status()
+
+    def _print_event_source_status(self):
+        """Print event source configuration status during startup."""
+        import importlib.util
+
+        from .action_loader import ActionLoader
+
+        loader = ActionLoader(self.action_tools.schedules_file)
+        configs = loader.load_event_source_configs()
+        actions = loader.load_actions()
+        event_actions = [a for a in actions if a.is_event_based and a.enabled]
+
+        if not event_actions:
+            return
+
+        dep_checks = {
+            "mqtt": ("aiomqtt", "aiomqtt"),
+            "dbus": ("dbus_next", "dbus-next"),
+        }
+
+        for source_type in ("mqtt", "dbus", "file"):
+            type_actions = [a for a in event_actions if a.trigger_type == source_type]
+            if not type_actions:
+                continue
+            if source_type not in configs:
+                print(f"⚠ {len(type_actions)} {source_type} action(s) configured but no {source_type} in event_sources")
+            elif source_type in dep_checks and importlib.util.find_spec(dep_checks[source_type][0]) is None:
+                print(
+                    f"⚠ {len(type_actions)} {source_type} action(s) configured but {dep_checks[source_type][1]} not installed"
+                )
+            else:
+                print(f"✓ {len(type_actions)} {source_type} event action(s) ready")
+
     def _allow_local_skill_paths(self):
         """Auto-allow skill directories for filesystem access"""
         for skill in self.skills_manager.installed_skills:
@@ -1059,9 +1094,9 @@ class AiAssistAgent:
         import json as json_module
         from datetime import datetime, timedelta
 
-        from .config import get_reports_dir
+        from .config import get_config_dir
 
-        log_file = get_reports_dir() / "notifications.jsonl"
+        log_file = get_config_dir() / "notifications.jsonl"
         if not log_file.exists():
             return ""
 

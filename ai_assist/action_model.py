@@ -2,6 +2,7 @@
 
 import re
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -10,7 +11,7 @@ from .event_sources import EventContext
 from .tasks import TaskLoader
 
 TRIGGER_TYPES_TIME = {"interval", "schedule", "interval_range", "once"}
-TRIGGER_TYPES_EVENT = {"mqtt", "dbus"}
+TRIGGER_TYPES_EVENT = {"mqtt", "dbus", "file"}
 TRIGGER_TYPES_ALL = TRIGGER_TYPES_TIME | TRIGGER_TYPES_EVENT
 
 
@@ -107,6 +108,10 @@ class ActionDefinition(BaseModel):
             if "signal" not in self.trigger:
                 raise ValueError("D-Bus trigger requires 'signal' field")
 
+        elif trigger_type == "file":
+            if "path" not in self.trigger:
+                raise ValueError("File trigger requires 'path' field")
+
         if self.is_mcp_prompt:
             try:
                 self.parse_mcp_prompt()
@@ -168,15 +173,15 @@ class TriggerMatcher:
         if trigger_type not in TRIGGER_TYPES_EVENT:
             return False
 
-        if trigger_type == "mqtt" and event.source_type != "mqtt":
-            return False
-        if trigger_type == "dbus" and event.source_type != "dbus":
+        if trigger_type != event.source_type:
             return False
 
         if trigger_type == "mqtt":
             return self._match_mqtt(event, trigger)
         if trigger_type == "dbus":
             return self._match_dbus(event, trigger)
+        if trigger_type == "file":
+            return self._match_file(event, trigger)
 
         return False
 
@@ -197,6 +202,15 @@ class TriggerMatcher:
         if "path" in trigger and event.metadata.get("path") != trigger["path"]:
             return False
 
+        return self._match_payload_filters(event, trigger)
+
+    def _match_file(self, event: EventContext, trigger: dict[str, Any]) -> bool:
+        from .event_source_file import _path_matches_pattern
+
+        event_path = event.metadata.get("path", "")
+        trigger_path = str(Path(trigger.get("path", "")).expanduser())
+        if not _path_matches_pattern(event_path, trigger_path):
+            return False
         return self._match_payload_filters(event, trigger)
 
     @staticmethod
