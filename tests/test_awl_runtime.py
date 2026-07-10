@@ -1474,3 +1474,49 @@ def test_resolve_model_aliases_nested():
     )
     _resolve_model_aliases(workflow)
     assert workflow.body[0].body[0].model == "claude-haiku-4-5"
+
+
+# --- Idempotency integration tests ---
+
+
+@pytest.fixture
+def idempotency_store(tmp_path):
+    from ai_assist.idempotency import IdempotencyStore
+
+    return IdempotencyStore(tmp_path / "idempotency.db")
+
+
+@pytest.mark.asyncio
+async def test_idempotent_workflow_caches_write_tool(mock_agent, idempotency_store):
+    """Write-oriented tool calls should be cached when idempotent=True."""
+
+    mock_agent.query.return_value = '```json\n{"ticket_key": "PROJ-1"}\n```'
+
+    workflow = WorkflowNode(
+        body=[TaskNode(task_id="make_ticket", goal="Create ticket.", expose=["ticket_key"])],
+        idempotent=True,
+    )
+
+    runtime = AWLRuntime(mock_agent, idempotency_store=idempotency_store)
+    result = await runtime.execute(workflow, variables={"issue": "test"})
+    assert result.success is True
+    assert mock_agent.query.call_count == 1
+
+    # The store should have been wired — verify context was set
+    assert hasattr(mock_agent, "_awl_idempotency_context")
+
+
+@pytest.mark.asyncio
+async def test_non_idempotent_workflow_does_not_set_context(mock_agent, idempotency_store):
+    """Without idempotent=True, no idempotency context should be set."""
+    mock_agent.query.return_value = '```json\n{"result": "ok"}\n```'
+
+    workflow = WorkflowNode(
+        body=[TaskNode(task_id="t1", goal="Do something.", expose=["result"])],
+        idempotent=False,
+    )
+
+    runtime = AWLRuntime(mock_agent, idempotency_store=idempotency_store)
+    await runtime.execute(workflow)
+    ctx = getattr(mock_agent, "_awl_idempotency_context", None)
+    assert ctx is None

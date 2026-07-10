@@ -58,9 +58,11 @@ async def run_awl_script(
     if has_goal:
         from .goal_runner import GoalRunner
         from .goal_state import GoalStateManager
+        from .idempotency import IdempotencyStore
 
         state_manager = GoalStateManager(get_config_dir() / "state")
-        runner = GoalRunner(_awl_path, agent, state_manager)
+        idem_store = IdempotencyStore(get_config_dir() / "state" / "idempotency.db")
+        runner = GoalRunner(_awl_path, agent, state_manager, idempotency_store=idem_store)
         runner.load()
         await runner.run_cycle()
 
@@ -72,8 +74,11 @@ async def run_awl_script(
         return "\n".join(lines)
 
     from .awl_runtime import AWLRuntime
+    from .idempotency import IdempotencyStore
 
-    runtime = AWLRuntime(agent, verbose=verbose)
+    idem_store = IdempotencyStore(get_config_dir() / "state" / "idempotency.db")
+    runtime = AWLRuntime(agent, verbose=verbose, idempotency_store=idem_store)
+    runtime._script_path = str(_awl_path)
     result = await runtime.execute(workflow, variables=variables)
     if not result.success:
         raise RuntimeError(

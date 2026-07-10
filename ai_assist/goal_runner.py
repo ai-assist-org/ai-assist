@@ -16,10 +16,11 @@ logger = logging.getLogger(__name__)
 class GoalRunner:
     """Run a @goal AWL script with persisted state between cycles."""
 
-    def __init__(self, awl_path: Path, agent, state_manager: GoalStateManager):
+    def __init__(self, awl_path: Path, agent, state_manager: GoalStateManager, idempotency_store=None):
         self.awl_path = awl_path
         self.agent = agent
         self.state_manager = state_manager
+        self._idempotency_store = idempotency_store
         self._workflow: WorkflowNode | None = None
         self._goal_node: GoalNode | None = None
 
@@ -57,7 +58,11 @@ class GoalRunner:
         runtime = AWLRuntime(
             self.agent,
             limits=RuntimeLimits(max_tool_calls=self._goal_node.max_actions),
+            idempotency_store=self._idempotency_store,
         )
+        # Goals always use idempotency with per-cycle run IDs
+        runtime._script_path = str(self.awl_path)
+        self._workflow.idempotent = True
         result = await runtime.execute(self._workflow, variables=variables)
 
         # Check if success was met

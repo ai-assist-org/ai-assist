@@ -310,7 +310,13 @@ def validate_workflow_variables(workflow: WorkflowNode, initial_variables: set[s
 
 
 class AWLRuntime:
-    def __init__(self, agent: Any, limits: RuntimeLimits | None = None, verbose: bool = False):
+    def __init__(
+        self,
+        agent: Any,
+        limits: RuntimeLimits | None = None,
+        verbose: bool = False,
+        idempotency_store: Any | None = None,
+    ):
         self._agent = agent
         self._limits = limits or RuntimeLimits()
         self._variables: dict[str, Any] = {}
@@ -319,6 +325,9 @@ class AWLRuntime:
         self._loop_depth = 0
         self._task_outcomes: list[TaskOutcome] = []
         self._verbose = verbose
+        self._idempotency_store = idempotency_store
+        self._workflow_run_id: str | None = None
+        self._script_path: str = ""
 
     async def execute(self, workflow: WorkflowNode, variables: dict[str, Any] | None = None) -> WorkflowResult:
         self._variables = dict(variables) if variables else {}
@@ -342,6 +351,15 @@ class AWLRuntime:
 
         if workflow.max_steps is not None:
             self._limits.max_steps = workflow.max_steps
+
+        # Set up idempotency context if enabled
+        if workflow.idempotent and self._idempotency_store:
+            from .idempotency import compute_workflow_run_id
+
+            self._workflow_run_id = compute_workflow_run_id(
+                self._script_path,
+                self._variables,
+            )
 
         # Auto-authorize commands explicitly mentioned in the AWL script
         awl_commands = _extract_commands_from_workflow(workflow)
@@ -419,6 +437,14 @@ class AWLRuntime:
 
         if "no-kg" in task.hints:
             prompt = "@no-kg " + prompt
+
+        # Set idempotency context for this task
+        if self._workflow_run_id and self._idempotency_store:
+            self._agent._awl_idempotency_context = {
+                "store": self._idempotency_store,
+                "run_id": self._workflow_run_id,
+                "task_id": task.task_id,
+            }
 
         logger.info("AWL task '%s' starting", task.task_id)
         model_info = f" (model={task.model})" if task.model else ""
@@ -531,6 +557,8 @@ class AWLRuntime:
             print(f"    [-] failed: {e}")
             if self._loop_depth == 0 and "continue-on-failure" not in task.hints:
                 raise _TaskFailedError(f"Task '{task.task_id}' failed: {e}") from e
+        finally:
+            self._agent._awl_idempotency_context = None
 
     async def _retry_expose_extraction(
         self,

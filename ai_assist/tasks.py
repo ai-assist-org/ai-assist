@@ -2,8 +2,7 @@
 
 import re
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
-from datetime import time as dt_time
+from datetime import datetime, time, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -179,7 +178,7 @@ class TaskLoader:
             hour, minute = map(int, time_str.split(":"))
             if not (0 <= hour < 24 and 0 <= minute < 60):
                 raise ValueError("Time out of range")
-            schedule_time = dt_time(hour, minute)
+            schedule_time = time(hour, minute)
         except (ValueError, AttributeError) as e:
             raise ValueError(
                 f"Invalid time format: '{time_part}'. "
@@ -293,7 +292,7 @@ class TaskLoader:
             sh, sm = map(int, start_str.split(":"))
             if not (0 <= sh < 24 and 0 <= sm < 60):
                 raise ValueError("Start time out of range")
-            start_time = dt_time(sh, sm)
+            start_time = time(sh, sm)
         except (ValueError, AttributeError) as e:
             raise ValueError(f"Invalid start time: '{start_str}'") from e
 
@@ -302,7 +301,7 @@ class TaskLoader:
             eh, em = map(int, end_str.split(":"))
             if not (0 <= eh < 24 and 0 <= em < 60):
                 raise ValueError("End time out of range")
-            end_time = dt_time(eh, em)
+            end_time = time(eh, em)
         except (ValueError, AttributeError) as e:
             raise ValueError(f"Invalid end time: '{end_str}'") from e
 

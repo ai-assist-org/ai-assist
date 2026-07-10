@@ -53,6 +53,10 @@ Although the agent reasons dynamically, the workflow structure is deterministic 
 
 An AWL script begins with `@start` and ends with `@end`.
 
+Optional flags on `@start`:
+- `max_steps=N` — limit total top-level task executions
+- `idempotent` — enable idempotency for write-oriented tool calls. When a workflow is re-run with the same inputs, tools like `create_jira_ticket` or `add_jira_comment` return their cached result instead of executing again. Read-only tools (search, get, list) always execute fresh. Failed tool calls are not cached.
+
 Example:
 
 @start

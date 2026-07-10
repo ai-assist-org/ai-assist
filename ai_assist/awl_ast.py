@@ -50,6 +50,7 @@ class LoopNode:
 class WorkflowNode:
     body: list[Any] = field(default_factory=list)
     max_steps: int | None = None
+    idempotent: bool = False
 
 
 @dataclass

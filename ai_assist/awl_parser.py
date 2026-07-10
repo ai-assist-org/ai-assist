@@ -44,13 +44,14 @@ class AWLParser:
         max_steps_match = re.search(r"max_steps=(\d+)", line)
         if max_steps_match:
             max_steps = int(max_steps_match.group(1))
+        idempotent = "idempotent" in line
         self._advance()
         body = self._parse_body()
         self._expect("@end")
         trailing = self._current_line()
         if trailing is not None:
             raise ParseError(self._pos + 1, f"Unexpected content after final @end: '{trailing}'")
-        return WorkflowNode(body=body, max_steps=max_steps)
+        return WorkflowNode(body=body, max_steps=max_steps, idempotent=idempotent)
 
     def _current_line(self) -> str | None:
         while self._pos < len(self._lines):

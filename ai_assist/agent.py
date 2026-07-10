@@ -2357,8 +2357,40 @@ class AiAssistAgent:
             if sig in self._tool_result_cache:
                 self._duplicate_tool_call_count += 1
                 return self._tool_result_cache[sig]
+
+            # Cross-query idempotency for AWL workflows
+            idem_ctx = getattr(self, "_awl_idempotency_context", None)
+            if idem_ctx:
+                from .idempotency import compute_idempotency_key, is_write_tool
+
+                if is_write_tool(block.name):
+                    idem_key = compute_idempotency_key(idem_ctx["run_id"], idem_ctx["task_id"], block.name, block.input)
+                    cached = idem_ctx["store"].get(idem_key)
+                    if cached is not None:
+                        logger.info("Idempotency cache hit: %s (key=%s)", block.name, idem_key[:40])
+                        self._tool_result_cache[sig] = cached
+                        return cached
+
             result = await self._execute_tool(block.name, block.input)
             self._tool_result_cache[sig] = result
+
+            # Store write tool results for future idempotency
+            if idem_ctx:
+                from .idempotency import compute_idempotency_key, is_write_tool
+
+                if is_write_tool(block.name):
+                    is_error = isinstance(result, str) and result.startswith("Error:")
+                    idem_key = compute_idempotency_key(idem_ctx["run_id"], idem_ctx["task_id"], block.name, block.input)
+                    idem_ctx["store"].put(
+                        idem_key,
+                        block.name,
+                        block.input,
+                        result,
+                        is_error=is_error,
+                        workflow_run_id=idem_ctx["run_id"],
+                        task_id=idem_ctx["task_id"],
+                    )
+
             return result
 
         if progress_callback:
