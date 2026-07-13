@@ -403,7 +403,7 @@ async def monitoring_mode(agent: AiAssistAgent, config, state_manager: StateMana
         await scheduler.start()
     except KeyboardInterrupt:
         print("\nStopping monitoring...")
-        scheduler.stop()
+        await scheduler.stop()
 
 
 async def run_awl_script(agent: AiAssistAgent, script_path: str, variables: dict | None = None, verbose: bool = False):

@@ -182,6 +182,8 @@ class AiAssistAgent:
     # Model-specific max output tokens
     # Source: https://docs.anthropic.com/en/docs/about-claude/models
     MODEL_MAX_TOKENS = {
+        # Claude Sonnet 5 (no dated variants — alias only)
+        "claude-sonnet-5": 128000,
         # Claude Fable 5 (no dated variants — alias only)
         "claude-fable-5": 128000,
         # Claude Opus 4.8 (no dated variants — alias only)
@@ -221,6 +223,7 @@ class AiAssistAgent:
     # Model-specific context window sizes (input tokens)
     # Claude 4.6+ models have native 1M context windows
     MODEL_CONTEXT_WINDOWS = {
+        "claude-sonnet-5": 1000000,
         "claude-fable-5": 1000000,
         "claude-opus-4-8": 1000000,
         "claude-opus-4-7": 1000000,

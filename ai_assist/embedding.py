@@ -1,10 +1,13 @@
 """Embedding model wrapper for semantic search in the knowledge graph"""
 
 import logging
+import os
 import threading
 from typing import Any
 
 import numpy as np
+
+DEFAULT_EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
 
 class EmbeddingModel:
@@ -13,6 +16,8 @@ class EmbeddingModel:
 
     def __init__(self) -> None:
         self._model: Any = None
+        self._dimensions: int | None = None
+        self._model_name = os.getenv("AI_ASSIST_EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL)
 
     @classmethod
     def get(cls) -> EmbeddingModel:
@@ -33,8 +38,9 @@ class EmbeddingModel:
             return
         from fastembed import TextEmbedding
 
-        self._model = TextEmbedding("sentence-transformers/all-MiniLM-L6-v2")
-        logging.info("Embedding model loaded (all-MiniLM-L6-v2, %d dims)", self.dimensions)
+        self._model = TextEmbedding(self._model_name)
+        self._dimensions = self._model.embedding_size
+        logging.info("Embedding model loaded (%s, %d dims)", self._model_name, self._dimensions)
 
     def encode(self, texts: list[str]) -> np.ndarray:
         self._load()
@@ -47,4 +53,8 @@ class EmbeddingModel:
 
     @property
     def dimensions(self) -> int:
-        return 384
+        if self._dimensions is not None:
+            return self._dimensions
+        self._load()
+        assert self._dimensions is not None
+        return self._dimensions

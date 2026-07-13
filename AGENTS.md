@@ -570,6 +570,28 @@ except Exception as e:
     sys.exit(1)
 ```
 
+#### Dependency Pinning — Use SHA/Digest, Not Tags
+
+All external dependencies in CI, pre-commit hooks, and container images must be pinned by immutable SHA or digest rather than mutable tags. Tags can be reassigned to different commits (supply-chain attack vector).
+
+**GitHub Actions** — pin to commit SHA with a `# vX.Y.Z` comment:
+```yaml
+- uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+```
+
+**Pre-commit hooks** — pin to commit SHA with a `# vX.Y.Z` comment:
+```yaml
+- repo: https://github.com/psf/black
+  rev: 87928e6d6761a4a6d22250e1fee5601b3998086e  # 26.5.1
+```
+
+**Container images** — pin to image digest:
+```dockerfile
+FROM fedora:44@sha256:6c75d5bf57cb0fa5aa4b92c6a83c86c791644496d9ac230de7711f5b8ec3b898
+```
+
+When updating versions, always look up the new commit SHA or image digest and update both the hash and the comment together.
+
 #### Path Handling — Always Expand `~`
 
 Any string that could contain a `~` (user input, config files, CLI arguments, tool parameters) **must** have `.expanduser()` called when wrapping it in `Path()`. Without this, `~` is treated as a literal directory name.
