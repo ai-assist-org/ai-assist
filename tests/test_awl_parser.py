@@ -744,3 +744,30 @@ def test_parse_goal_with_set_before():
     assert len(result.body) == 2
     assert isinstance(result.body[0], SetNode)
     assert isinstance(result.body[1], GoalNode)
+
+
+def test_parse_start_idempotent():
+    script = "@start idempotent\n@end"
+    result = AWLParser(script).parse()
+    assert result.idempotent is True
+    assert result.body == []
+
+
+def test_parse_start_without_idempotent():
+    script = "@start\n@end"
+    result = AWLParser(script).parse()
+    assert result.idempotent is False
+
+
+def test_parse_start_idempotent_with_max_steps():
+    script = "@start idempotent max_steps=50\n@end"
+    result = AWLParser(script).parse()
+    assert result.idempotent is True
+    assert result.max_steps == 50
+
+
+def test_parse_start_max_steps_with_idempotent():
+    script = "@start max_steps=10 idempotent\n@end"
+    result = AWLParser(script).parse()
+    assert result.idempotent is True
+    assert result.max_steps == 10

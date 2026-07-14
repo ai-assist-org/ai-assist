@@ -1,7 +1,6 @@
 """Tests for time-based task scheduling"""
 
-from datetime import datetime, timedelta
-from datetime import time as dt_time
+from datetime import datetime, time, timedelta
 
 import pytest
 
@@ -12,7 +11,7 @@ def test_parse_morning_on_weekdays():
     """Test parsing 'morning on weekdays'"""
     schedule = TaskLoader.parse_time_schedule("morning on weekdays")
 
-    assert schedule["time"] == dt_time(9, 0)
+    assert schedule["time"] == time(9, 0)
     assert schedule["days"] == [0, 1, 2, 3, 4]  # Monday-Friday
 
 
@@ -20,7 +19,7 @@ def test_parse_afternoon_on_weekends():
     """Test parsing 'afternoon on weekends'"""
     schedule = TaskLoader.parse_time_schedule("afternoon on weekends")
 
-    assert schedule["time"] == dt_time(14, 0)
+    assert schedule["time"] == time(14, 0)
     assert schedule["days"] == [5, 6]  # Saturday-Sunday
 
 
@@ -28,7 +27,7 @@ def test_parse_specific_time_on_weekdays():
     """Test parsing '9:30 on weekdays'"""
     schedule = TaskLoader.parse_time_schedule("9:30 on weekdays")
 
-    assert schedule["time"] == dt_time(9, 30)
+    assert schedule["time"] == time(9, 30)
     assert schedule["days"] == [0, 1, 2, 3, 4]
 
 
@@ -36,7 +35,7 @@ def test_parse_specific_days():
     """Test parsing '14:00 on monday,wednesday,friday'"""
     schedule = TaskLoader.parse_time_schedule("14:00 on monday,wednesday,friday")
 
-    assert schedule["time"] == dt_time(14, 0)
+    assert schedule["time"] == time(14, 0)
     assert schedule["days"] == [0, 2, 4]  # Mon, Wed, Fri
 
 
@@ -44,7 +43,7 @@ def test_parse_short_day_names():
     """Test parsing with short day names"""
     schedule = TaskLoader.parse_time_schedule("10:00 on mon,wed,fri")
 
-    assert schedule["time"] == dt_time(10, 0)
+    assert schedule["time"] == time(10, 0)
     assert schedule["days"] == [0, 2, 4]
 
 
@@ -52,7 +51,7 @@ def test_parse_case_insensitive():
     """Test that parsing is case insensitive"""
     schedule = TaskLoader.parse_time_schedule("MORNING ON WEEKDAYS")
 
-    assert schedule["time"] == dt_time(9, 0)
+    assert schedule["time"] == time(9, 0)
     assert schedule["days"] == [0, 1, 2, 3, 4]
 
 
@@ -79,7 +78,7 @@ def test_parse_missing_on():
 
 def test_calculate_next_run_same_day():
     """Test next run calculation when time hasn't passed today"""
-    schedule = {"time": dt_time(15, 0), "days": [0, 1, 2, 3, 4]}  # Weekdays at 3 PM
+    schedule = {"time": time(15, 0), "days": [0, 1, 2, 3, 4]}  # Weekdays at 3 PM
 
     # Monday at 10 AM
     from_time = datetime(2024, 1, 1, 10, 0)  # Monday
@@ -87,12 +86,12 @@ def test_calculate_next_run_same_day():
 
     # Should be today at 3 PM
     assert next_run.date() == from_time.date()
-    assert next_run.time() == dt_time(15, 0)
+    assert next_run.time() == time(15, 0)
 
 
 def test_calculate_next_run_next_day():
     """Test next run calculation when time has passed today"""
-    schedule = {"time": dt_time(9, 0), "days": [0, 1, 2, 3, 4]}  # Weekdays at 9 AM
+    schedule = {"time": time(9, 0), "days": [0, 1, 2, 3, 4]}  # Weekdays at 9 AM
 
     # Monday at 10 AM (time has passed)
     from_time = datetime(2024, 1, 1, 10, 0)  # Monday
@@ -100,12 +99,12 @@ def test_calculate_next_run_next_day():
 
     # Should be tomorrow (Tuesday) at 9 AM
     assert next_run.date() == (from_time + timedelta(days=1)).date()
-    assert next_run.time() == dt_time(9, 0)
+    assert next_run.time() == time(9, 0)
 
 
 def test_calculate_next_run_skip_weekend():
     """Test next run calculation skipping weekend"""
-    schedule = {"time": dt_time(9, 0), "days": [0, 1, 2, 3, 4]}  # Weekdays only
+    schedule = {"time": time(9, 0), "days": [0, 1, 2, 3, 4]}  # Weekdays only
 
     # Friday at 10 AM (time has passed)
     from_time = datetime(2024, 1, 5, 10, 0)  # Friday
@@ -113,12 +112,12 @@ def test_calculate_next_run_skip_weekend():
 
     # Should be Monday at 9 AM (skip weekend)
     assert next_run.weekday() == 0  # Monday
-    assert next_run.time() == dt_time(9, 0)
+    assert next_run.time() == time(9, 0)
 
 
 def test_calculate_next_run_weekend_only():
     """Test next run for weekend-only schedule"""
-    schedule = {"time": dt_time(10, 0), "days": [5, 6]}  # Weekends only
+    schedule = {"time": time(10, 0), "days": [5, 6]}  # Weekends only
 
     # Monday
     from_time = datetime(2024, 1, 1, 12, 0)  # Monday
@@ -126,7 +125,7 @@ def test_calculate_next_run_weekend_only():
 
     # Should be Saturday at 10 AM
     assert next_run.weekday() == 5  # Saturday
-    assert next_run.time() == dt_time(10, 0)
+    assert next_run.time() == time(10, 0)
 
 
 def test_task_definition_is_time_based():
@@ -154,10 +153,10 @@ def test_task_definition_validates_time_schedule():
 def test_time_presets():
     """Test all time presets"""
     presets = {
-        "morning": dt_time(9, 0),
-        "afternoon": dt_time(14, 0),
-        "evening": dt_time(18, 0),
-        "night": dt_time(22, 0),
+        "morning": time(9, 0),
+        "afternoon": time(14, 0),
+        "evening": time(18, 0),
+        "night": time(22, 0),
     }
 
     for preset, expected_time in presets.items():
@@ -189,8 +188,8 @@ def test_parse_interval_with_range():
     schedule = TaskLoader.parse_interval_with_range("1h between 9:00 and 23:00")
 
     assert schedule["interval_seconds"] == 3600
-    assert schedule["start"] == dt_time(9, 0)
-    assert schedule["end"] == dt_time(23, 0)
+    assert schedule["start"] == time(9, 0)
+    assert schedule["end"] == time(23, 0)
     assert schedule["days"] is None
 
 
@@ -199,8 +198,8 @@ def test_parse_interval_with_range_and_days():
     schedule = TaskLoader.parse_interval_with_range("1h between 9:00 and 17:00 on weekdays")
 
     assert schedule["interval_seconds"] == 3600
-    assert schedule["start"] == dt_time(9, 0)
-    assert schedule["end"] == dt_time(17, 0)
+    assert schedule["start"] == time(9, 0)
+    assert schedule["end"] == time(17, 0)
     assert schedule["days"] == [0, 1, 2, 3, 4]
 
 
@@ -232,8 +231,8 @@ def test_calculate_next_interval_run_within_range():
     """Test next run when current time is within the range"""
     schedule = {
         "interval_seconds": 3600,
-        "start": dt_time(9, 0),
-        "end": dt_time(23, 0),
+        "start": time(9, 0),
+        "end": time(23, 0),
         "days": None,
     }
 
@@ -248,8 +247,8 @@ def test_calculate_next_interval_run_outside_range_before():
     """Test next run when current time is before the range"""
     schedule = {
         "interval_seconds": 3600,
-        "start": dt_time(9, 0),
-        "end": dt_time(23, 0),
+        "start": time(9, 0),
+        "end": time(23, 0),
         "days": None,
     }
 
@@ -264,8 +263,8 @@ def test_calculate_next_interval_run_outside_range_after():
     """Test next run when current time is after the range"""
     schedule = {
         "interval_seconds": 3600,
-        "start": dt_time(9, 0),
-        "end": dt_time(23, 0),
+        "start": time(9, 0),
+        "end": time(23, 0),
         "days": None,
     }
 
@@ -280,8 +279,8 @@ def test_calculate_next_interval_run_would_exceed_range():
     """Test next run when interval would push past end of range"""
     schedule = {
         "interval_seconds": 3600,
-        "start": dt_time(9, 0),
-        "end": dt_time(23, 0),
+        "start": time(9, 0),
+        "end": time(23, 0),
         "days": None,
     }
 
@@ -297,8 +296,8 @@ def test_calculate_next_interval_run_with_days_skip_weekend():
     """Test next run skips weekend days when 'on weekdays' is set"""
     schedule = {
         "interval_seconds": 3600,
-        "start": dt_time(9, 0),
-        "end": dt_time(23, 0),
+        "start": time(9, 0),
+        "end": time(23, 0),
         "days": [0, 1, 2, 3, 4],  # weekdays
     }
 

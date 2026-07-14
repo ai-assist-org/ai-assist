@@ -139,7 +139,7 @@ addopts = [
     "--tb=short",
     "-n", "auto",
     "-m", "not integration",
-    "--max-warnings=20",
+    "-W", "default::pytest.PytestWarning",
 ]
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
