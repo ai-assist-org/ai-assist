@@ -1,0 +1,38 @@
+name: Pre-commit autoupdate
+
+on:
+  schedule:
+    - cron: "37 8 * * 1"  # Monday 8:37 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  autoupdate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
+        with:
+          python-version: "3.14"
+
+      - name: Install pre-commit
+        run: pip install pre-commit
+
+      - name: Run autoupdate
+        run: pre-commit autoupdate --freeze
+
+      - name: Create pull request
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1  # v8.1.1
+        with:
+          branch: deps/pre-commit-autoupdate
+          title: "deps: update pre-commit hooks"
+          body: |
+            Automated pre-commit hook update via `pre-commit autoupdate --freeze`.
+
+            Revs are pinned to commit SHAs for supply-chain security.
+          commit-message: "deps: update pre-commit hooks"
+          labels: dependencies
