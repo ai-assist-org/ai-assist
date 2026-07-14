@@ -276,3 +276,125 @@ async def test_restart_mcp_server_unknown():
 
     with pytest.raises(ValueError, match="Unknown MCP server: nonexistent"):
         await agent.restart_mcp_server("nonexistent")
+
+
+@pytest.mark.asyncio
+async def test_run_server_retries_on_failure():
+    """Test that _run_server retries with backoff after connection failure"""
+    from ai_assist.agent import AiAssistAgent
+    from ai_assist.config import AiAssistConfig, MCPServerConfig
+
+    config = AiAssistConfig(
+        mcp_servers={
+            "test-server": MCPServerConfig(command="echo", args=["hello"], enabled=True),
+        }
+    )
+    with patch("ai_assist.agent.Anthropic"):
+        agent = AiAssistAgent(config)
+
+    call_count = 0
+
+    class FakeTransport:
+        """Context manager that fails on first call, succeeds on second"""
+
+        def __init__(self, fail):
+            self.fail = fail
+
+        async def __aenter__(self):
+            if self.fail:
+                raise ConnectionError("server down")
+            return (MagicMock(), MagicMock())
+
+        async def __aexit__(self, *args):
+            pass
+
+    def mock_transport(cfg):
+        nonlocal call_count
+        call_count += 1
+        return FakeTransport(fail=(call_count == 1))
+
+    agent._transport = mock_transport
+
+    # Mock ClientSession to register the session and then wait
+    async def fake_init():
+        pass
+
+    async def fake_list_tools():
+        return MagicMock(tools=[])
+
+    async def fake_list_prompts():
+        return MagicMock(prompts=[])
+
+    async def fake_list_resources():
+        return MagicMock(resources=[])
+
+    async def fake_list_resource_templates():
+        return MagicMock(resourceTemplates=[])
+
+    mock_session = MagicMock()
+    mock_session.initialize = fake_init
+    mock_session.list_tools = fake_list_tools
+    mock_session.list_prompts = fake_list_prompts
+    mock_session.list_resources = fake_list_resources
+    mock_session.list_resource_templates = fake_list_resource_templates
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__ = AsyncMock(return_value=False)
+
+    sleep_calls = []
+    original_sleep = asyncio.sleep
+
+    async def mock_sleep(delay):
+        sleep_calls.append(delay)
+        # On backoff sleep, just continue immediately
+        if delay >= 5:
+            return
+        await original_sleep(delay)
+
+    with patch("ai_assist.agent.ClientSession", return_value=mock_session):
+        with patch("asyncio.sleep", side_effect=mock_sleep):
+            with patch("asyncio.Event") as mock_event:
+                # Make Event().wait() raise CancelledError to exit after successful connect
+                mock_event_instance = MagicMock()
+                mock_event_instance.wait = AsyncMock(side_effect=asyncio.CancelledError)
+                mock_event.return_value = mock_event_instance
+
+                task = asyncio.create_task(agent._run_server("test-server", config.mcp_servers["test-server"]))
+                await task
+
+    assert call_count == 2
+    assert 5 in sleep_calls
+    assert "test-server" in agent.sessions
+
+
+@pytest.mark.asyncio
+async def test_run_server_stops_retry_on_cancel():
+    """Test that _run_server stops retrying when cancelled during backoff"""
+    from ai_assist.agent import AiAssistAgent
+    from ai_assist.config import AiAssistConfig, MCPServerConfig
+
+    config = AiAssistConfig(
+        mcp_servers={
+            "test-server": MCPServerConfig(command="echo", args=["hello"], enabled=True),
+        }
+    )
+    with patch("ai_assist.agent.Anthropic"):
+        agent = AiAssistAgent(config)
+
+    class FailTransport:
+        async def __aenter__(self):
+            raise ConnectionError("server down")
+
+        async def __aexit__(self, *args):
+            pass
+
+    agent._transport = lambda cfg: FailTransport()
+
+    async def cancel_on_sleep(delay):
+        if delay >= 5:
+            raise asyncio.CancelledError
+
+    with patch("asyncio.sleep", side_effect=cancel_on_sleep):
+        task = asyncio.create_task(agent._run_server("test-server", config.mcp_servers["test-server"]))
+        await task
+
+    assert "test-server" not in agent.sessions

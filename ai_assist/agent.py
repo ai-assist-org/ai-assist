@@ -593,110 +593,122 @@ class AiAssistAgent:
         return stdio_client_fixed(server_params)
 
     async def _run_server(self, name: str, config: MCPServerConfig):
-        """Run an MCP server connection (as a background task)"""
-        try:
-            async with self._transport(config) as (read_stream, write_stream):
-                async with ClientSession(read_stream, write_stream) as session:
-                    try:
-                        await asyncio.wait_for(session.initialize(), timeout=60.0)
-                    except TimeoutError:
-                        logger.warning("%s timed out during initialization", name)
-                        raise
-                    except Exception as e:
-                        logger.exception("Error connecting to %s: %s", name, e)
-                        raise
-                    self.sessions[name] = session
+        """Run an MCP server connection with automatic retry on failure"""
+        backoff = 5
+        while True:
+            try:
+                async with self._transport(config) as (read_stream, write_stream):
+                    async with ClientSession(read_stream, write_stream) as session:
+                        try:
+                            await asyncio.wait_for(session.initialize(), timeout=60.0)
+                        except TimeoutError:
+                            logger.warning("%s timed out during initialization", name)
+                            raise
+                        except Exception as e:
+                            logger.exception("Error connecting to %s: %s", name, e)
+                            raise
+                        self.sessions[name] = session
 
-                    tools_list = await session.list_tools()
-                    for tool in tools_list.tools:
-                        desc = tool.description or ""
-                        full_name = f"{name}__{tool.name}"
-                        tool_def: dict = {
-                            "name": full_name,
-                            "description": desc,
-                            "_full_description": desc,
-                            "input_schema": tool.inputSchema,
-                            "_server": name,
-                            "_original_name": tool.name,
-                        }
-                        if config.readonly_tools:
-                            import fnmatch
+                        tools_list = await session.list_tools()
+                        for tool in tools_list.tools:
+                            desc = tool.description or ""
+                            full_name = f"{name}__{tool.name}"
+                            tool_def: dict = {
+                                "name": full_name,
+                                "description": desc,
+                                "_full_description": desc,
+                                "input_schema": tool.inputSchema,
+                                "_server": name,
+                                "_original_name": tool.name,
+                            }
+                            if config.readonly_tools:
+                                import fnmatch
 
-                            tool_def["_readonly"] = any(
-                                fnmatch.fnmatch(tool.name, pat) for pat in config.readonly_tools
-                            )
-                        # Validate tool description for poisoning
-                        desc_warnings = validate_tool_description(full_name, desc)
-                        if desc_warnings:
-                            for w in desc_warnings:
-                                logger.warning("Tool description warning for %s: %s", full_name, w)
-                        self.available_tools.append(tool_def)
+                                tool_def["_readonly"] = any(
+                                    fnmatch.fnmatch(tool.name, pat) for pat in config.readonly_tools
+                                )
+                            # Validate tool description for poisoning
+                            desc_warnings = validate_tool_description(full_name, desc)
+                            if desc_warnings:
+                                for w in desc_warnings:
+                                    logger.warning("Tool description warning for %s: %s", full_name, w)
+                            self.available_tools.append(tool_def)
 
-                    # Register tool fingerprints for rug-pull detection
-                    server_tools = [t for t in self.available_tools if t.get("_server") == name]
-                    self._tool_registry.register_tools(server_tools)
+                        # Register tool fingerprints for rug-pull detection
+                        server_tools = [t for t in self.available_tools if t.get("_server") == name]
+                        self._tool_registry.register_tools(server_tools)
 
-                    # Discover prompts from this server
-                    try:
-                        prompts_result = await session.list_prompts()
-                        if prompts_result.prompts:
-                            self.available_prompts[name] = {prompt.name: prompt for prompt in prompts_result.prompts}
-                            # Validate prompt descriptions for poisoning
-                            for prompt in prompts_result.prompts:
-                                if prompt.description:
-                                    prompt_warnings = validate_tool_description(
-                                        f"prompt:{name}/{prompt.name}", prompt.description
-                                    )
-                                    if prompt_warnings:
-                                        for w in prompt_warnings:
-                                            logger.warning(
-                                                "Prompt description warning for %s/%s: %s",
-                                                name,
-                                                prompt.name,
-                                                w,
-                                            )
-                    except Exception:
-                        # Prompts are optional - silently skip if not supported
-                        pass
+                        # Discover prompts from this server
+                        try:
+                            prompts_result = await session.list_prompts()
+                            if prompts_result.prompts:
+                                self.available_prompts[name] = {
+                                    prompt.name: prompt for prompt in prompts_result.prompts
+                                }
+                                # Validate prompt descriptions for poisoning
+                                for prompt in prompts_result.prompts:
+                                    if prompt.description:
+                                        prompt_warnings = validate_tool_description(
+                                            f"prompt:{name}/{prompt.name}", prompt.description
+                                        )
+                                        if prompt_warnings:
+                                            for w in prompt_warnings:
+                                                logger.warning(
+                                                    "Prompt description warning for %s/%s: %s",
+                                                    name,
+                                                    prompt.name,
+                                                    w,
+                                                )
+                        except Exception:
+                            pass
 
-                    # Discover resources from this server
-                    try:
-                        resources_result = await session.list_resources()
-                        if resources_result.resources:
-                            self.available_resources[name] = resources_result.resources
-                            for res in resources_result.resources:
-                                if res.description:
-                                    res_warnings = validate_tool_description(
-                                        f"resource:{name}/{res.uri}", res.description
-                                    )
-                                    if res_warnings:
-                                        for w in res_warnings:
-                                            logger.warning(
-                                                "Resource description warning for %s/%s: %s",
-                                                name,
-                                                res.uri,
-                                                w,
-                                            )
-                    except Exception:
-                        pass
+                        # Discover resources from this server
+                        try:
+                            resources_result = await session.list_resources()
+                            if resources_result.resources:
+                                self.available_resources[name] = resources_result.resources
+                                for res in resources_result.resources:
+                                    if res.description:
+                                        res_warnings = validate_tool_description(
+                                            f"resource:{name}/{res.uri}", res.description
+                                        )
+                                        if res_warnings:
+                                            for w in res_warnings:
+                                                logger.warning(
+                                                    "Resource description warning for %s/%s: %s",
+                                                    name,
+                                                    res.uri,
+                                                    w,
+                                                )
+                        except Exception:
+                            pass
 
-                    try:
-                        templates_result = await session.list_resource_templates()
-                        if templates_result.resourceTemplates:
-                            self.available_resource_templates[name] = templates_result.resourceTemplates
-                    except Exception:
-                        pass
+                        try:
+                            templates_result = await session.list_resource_templates()
+                            if templates_result.resourceTemplates:
+                                self.available_resource_templates[name] = templates_result.resourceTemplates
+                        except Exception:
+                            pass
 
-                    # Keep the connection alive by waiting indefinitely
-                    try:
+                        backoff = 5
+                        # Keep the connection alive by waiting indefinitely
                         await asyncio.Event().wait()
-                    except asyncio.CancelledError:
-                        print(f"[{name}] Connection cancelled, shutting down", flush=True)
-        except Exception as e:
-            print(f"[{name}] ERROR in _run_server: {e}", flush=True)
-            import traceback
 
-            traceback.print_exc()
+            except asyncio.CancelledError:
+                print(f"[{name}] Connection cancelled, shutting down", flush=True)
+                break
+            except Exception:
+                logger.exception("[%s] MCP connection error, reconnecting in %ds", name, backoff)
+                self.sessions.pop(name, None)
+                self.available_tools = [t for t in self.available_tools if t.get("_server") != name]
+                self.available_prompts.pop(name, None)
+                self.available_resources.pop(name, None)
+                self.available_resource_templates.pop(name, None)
+                try:
+                    await asyncio.sleep(backoff)
+                except asyncio.CancelledError:
+                    break
+                backoff = min(backoff * 2, 60)
 
     def _disconnect_server(self, name: str):
         """Disconnect a single MCP server, cleaning up session, tools, prompts, resources, and task"""
