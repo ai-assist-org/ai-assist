@@ -224,10 +224,13 @@ class KnowledgeGraph:
             ON relationships(tx_from, tx_to)
         """)
 
-        cursor.execute("""
+        from .embedding import EmbeddingModel
+
+        dims = EmbeddingModel.get().dimensions
+        cursor.execute(f"""
             CREATE VIRTUAL TABLE IF NOT EXISTS vec_embeddings USING vec0(
                 entity_id TEXT PRIMARY KEY,
-                embedding float[384]
+                embedding float[{dims}]
             )
         """)
 
