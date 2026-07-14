@@ -35,7 +35,7 @@ dev = [
     "isort>=8.0.1",
     "ruff>=0.15.21",
     "mypy>=2.3.0",
-    "types-PyYAML>=6.0.12",
+    "types-PyYAML>=6.0.12.20260518",
     "pylint>=4.0.6",
     "bandit[toml]>=1.9.4",
 ]
@@ -205,7 +205,7 @@ dev = [
     "isort>=8.0.1",
     "ruff>=0.15.21",
     "mypy>=2.3.0",
-    "types-PyYAML>=6.0.12",
+    "types-PyYAML>=6.0.12.20260518",
     "pylint>=4.0.6",
     "bandit[toml]>=1.9.4",
 ]
