@@ -235,6 +235,15 @@ class KnowledgeGraph:
         """)
 
         cursor.execute("""
+            CREATE VIRTUAL TABLE IF NOT EXISTS entity_fts USING fts5(
+                entity_id UNINDEXED,
+                entity_type UNINDEXED,
+                content,
+                tokenize='porter unicode61'
+            )
+        """)
+
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS knowledge_access (
                 entity_id TEXT NOT NULL,
                 accessed_at TIMESTAMP NOT NULL,
@@ -329,7 +338,7 @@ class KnowledgeGraph:
         )
         if entity.entity_type != "tool_result":
             text = self._entity_text_repr(entity.entity_type, entity.data)
-            self._embed_and_store(entity.id, text)
+            self._embed_and_store(entity.id, text, entity.entity_type)
         self._maybe_commit()
 
         return entity
@@ -396,7 +405,7 @@ class KnowledgeGraph:
         )
         if entity.entity_type != "tool_result":
             text = self._entity_text_repr(entity.entity_type, entity.data)
-            self._embed_and_store(entity.id, text)
+            self._embed_and_store(entity.id, text, entity.entity_type)
         self._maybe_commit()
 
         return entity
@@ -755,7 +764,7 @@ class KnowledgeGraph:
                 (json.dumps(data), valid_from.isoformat(), now.isoformat(), entity_id),
             )
             text = self._entity_text_repr(entity_type, data)
-            self._embed_and_store(entity_id, text)
+            self._embed_and_store(entity_id, text, entity_type)
             self._maybe_commit()
         else:
             # insert_entity already handles embedding for non-tool_result types
@@ -987,9 +996,10 @@ class KnowledgeGraph:
             return f"{entity_type}: {summary}"
         return f"{entity_type}: {json.dumps(data)[:200]}"
 
-    def _embed_and_store(self, entity_id: str, text: str) -> None:
+    def _embed_and_store(self, entity_id: str, text: str, entity_type: str = "") -> None:
         """Embed text and store the vector alongside the entity.
 
+        Also indexes the text in FTS5 for keyword search.
         Does not commit -- the caller is responsible for calling _maybe_commit().
         Failures are logged and silently ignored so entity insertion is never
         blocked by embedding issues (e.g. model not yet downloaded).
@@ -1005,6 +1015,14 @@ class KnowledgeGraph:
             )
         except Exception as e:
             logging.debug("Embedding failed for %s, will be backfilled later: %s", entity_id, e)
+        try:
+            self.conn.execute("DELETE FROM entity_fts WHERE entity_id = ?", (entity_id,))
+            self.conn.execute(
+                "INSERT INTO entity_fts(entity_id, entity_type, content) VALUES (?, ?, ?)",
+                (entity_id, entity_type, text),
+            )
+        except Exception as e:
+            logging.debug("FTS index failed for %s: %s", entity_id, e)
 
     def semantic_search(
         self,
@@ -1105,12 +1123,13 @@ class KnowledgeGraph:
                 score,
                 conf,
             )
+            content = data.get("content") or self._entity_text_repr(entity_type, data)
             results.append(
                 {
                     "entity_id": entity_id,
                     "entity_type": entity_type,
                     "key": data.get("key"),
-                    "content": data.get("content"),
+                    "content": content,
                     "metadata": data.get("metadata", {}),
                     "valid_from": valid_from,
                     "learned_at": tx_from,
@@ -1128,6 +1147,116 @@ class KnowledgeGraph:
             skipped_conf,
             skipped_score,
         )
+        return results
+
+    def keyword_search(
+        self,
+        query_text: str,
+        limit: int = 10,
+        entity_types: list[str] | None = None,
+        include_future: bool = False,
+    ) -> list[dict]:
+        """Search entities by FTS5 keyword matching."""
+        fts_query = " OR ".join(f'"{word}"' for word in query_text.split() if len(word) > 2)
+        if not fts_query:
+            return []
+
+        try:
+            if entity_types:
+                placeholders = ",".join("?" for _ in entity_types)
+                sql = f"""
+                    SELECT f.entity_id, f.entity_type, f.content, rank,
+                           e.data, e.valid_from, e.tx_from
+                    FROM entity_fts f
+                    JOIN entities e ON f.entity_id = e.id
+                    WHERE entity_fts MATCH ? AND f.entity_type IN ({placeholders})
+                    AND e.tx_to IS NULL
+                    ORDER BY rank
+                    LIMIT ?
+                """  # nosec B608 — placeholders are parameterized ?-markers
+                params: tuple = (fts_query, *entity_types, limit)
+            else:
+                sql = """
+                    SELECT f.entity_id, f.entity_type, f.content, rank,
+                           e.data, e.valid_from, e.tx_from
+                    FROM entity_fts f
+                    JOIN entities e ON f.entity_id = e.id
+                    WHERE entity_fts MATCH ?
+                    AND e.tx_to IS NULL
+                    ORDER BY rank
+                    LIMIT ?
+                """
+                params = (fts_query, limit)
+
+            rows = self.conn.execute(sql, params).fetchall()
+        except Exception as e:
+            logging.debug("FTS search failed: %s", e)
+            return []
+
+        results = []
+        for row in rows:
+            entity_id, entity_type, _content, rank, data_json, valid_from, tx_from = row
+            data = json.loads(data_json)
+            content = data.get("content") or self._entity_text_repr(entity_type, data)
+            results.append(
+                {
+                    "entity_id": entity_id,
+                    "entity_type": entity_type,
+                    "key": data.get("key"),
+                    "content": content,
+                    "metadata": data.get("metadata", {}),
+                    "valid_from": valid_from,
+                    "learned_at": tx_from,
+                    "score": min(1.0, -rank / 10.0) if rank else 0.5,
+                }
+            )
+        return results
+
+    def hybrid_search(
+        self,
+        query_text: str,
+        limit: int = 10,
+        entity_types: list[str] | None = None,
+        min_score: float = 0.0,
+        include_future: bool = False,
+    ) -> list[dict]:
+        """Combined keyword + vector search with Reciprocal Rank Fusion."""
+        vec_results = self.semantic_search(
+            query_text,
+            limit=limit * 2,
+            entity_types=entity_types,
+            min_score=min_score,
+            include_future=include_future,
+        )
+        kw_results = self.keyword_search(
+            query_text,
+            limit=limit * 2,
+            entity_types=entity_types,
+            include_future=include_future,
+        )
+
+        # RRF: score = sum(1 / (k + rank)) across both result lists
+        k = 60  # standard RRF constant
+        scores: dict[str, float] = {}
+        by_id: dict[str, dict] = {}
+
+        for rank, r in enumerate(vec_results):
+            eid = r["entity_id"]
+            scores[eid] = scores.get(eid, 0) + 1.0 / (k + rank + 1)
+            by_id[eid] = r
+
+        for rank, r in enumerate(kw_results):
+            eid = r["entity_id"]
+            scores[eid] = scores.get(eid, 0) + 1.0 / (k + rank + 1)
+            if eid not in by_id:
+                by_id[eid] = r
+
+        ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)[:limit]
+        results = []
+        for eid, rrf_score in ranked:
+            entry = by_id[eid].copy()
+            entry["score"] = rrf_score
+            results.append(entry)
         return results
 
     def backfill_embeddings(self) -> int:
@@ -1152,7 +1281,7 @@ class KnowledgeGraph:
             entity_id, entity_type, data_json = row
             data = json.loads(data_json)
             text = self._entity_text_repr(entity_type, data)
-            self._embed_and_store(entity_id, text)
+            self._embed_and_store(entity_id, text, entity_type)
             count += 1
         if count:
             self.conn.commit()

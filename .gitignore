@@ -57,3 +57,10 @@ coverage.xml
 # Project specific
 *.log
 temp/
+
+# Benchmarks - generated results and large datasets
+benchmarks/locomo/locomo10.json
+benchmarks/locomo/results*.md
+
+# Reports - generated output
+reports/
