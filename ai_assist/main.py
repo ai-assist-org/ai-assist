@@ -408,7 +408,7 @@ async def monitoring_mode(agent: AiAssistAgent, config, state_manager: StateMana
 
 async def run_awl_script(agent: AiAssistAgent, script_path: str, variables: dict | None = None, verbose: bool = False):
     """Run an AWL workflow script"""
-    from .awl_executor import get_missing_variables, load_awl_workflow
+    from .awl_executor import _merge_all_variables, get_missing_variables, load_awl_workflow
     from .awl_executor import run_awl_script as _run_awl
     from .awl_runtime import _compute_input_variables
 
@@ -421,11 +421,11 @@ async def run_awl_script(agent: AiAssistAgent, script_path: str, variables: dict
     missing_vars = get_missing_variables(workflow, variables)
     if missing_vars:
         required_vars = _compute_input_variables(workflow)
-        provided_vars = set(variables.keys()) if variables else set()
+        provided_vars = set(_merge_all_variables(variables).keys())
         print(f"Error: Missing required input variables: {sorted(missing_vars)}")
         print(f"\nRequired variables: {sorted(required_vars)}")
         print(f"Provided variables: {sorted(provided_vars)}")
-        print(f"\nUsage: ai-assist /run {awl_path.name} {' '.join(f'{v}=<value>' for v in sorted(required_vars))}")
+        print(f"\nUsage: ai-assist /run {awl_path.name} {' '.join(f'{v}=<value>' for v in sorted(missing_vars))}")
         sys.exit(1)
 
     print(f"Running AWL workflow: {awl_path.name}{' (verbose)' if verbose else ''}")
@@ -770,7 +770,11 @@ async def main_async():
     # Only initialize agent if needed (with knowledge graph for interactive learning)
     agent = AiAssistAgent(config, knowledge_graph=knowledge_graph) if needs_agent else None
 
+    from .awl_executor import cleanup_session_tmpdir, init_session_tmpdir
+
     try:
+        init_session_tmpdir()
+
         if agent:
             await agent.connect_to_servers()
 
@@ -951,6 +955,7 @@ async def main_async():
             await interactive_mode(agent, state_manager)
 
     finally:
+        cleanup_session_tmpdir()
         knowledge_graph.close()
         if agent:
             await agent.close()

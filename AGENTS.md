@@ -260,7 +260,8 @@ Files: `background_tasks.py`, `background_task_tools.py`
 1. Environment variables (`.env` file)
 2. `~/.ai-assist/mcp_servers.yaml` (MCP server definitions)
 3. `~/.ai-assist/identity.yaml` (personalization)
-4. `~/.ai-assist/event-schedules.json` (actions/triggers)
+4. `~/.ai-assist/variables.yaml` (AWL local variables — auto-injected into all AWL scripts)
+5. `~/.ai-assist/event-schedules.json` (actions/triggers)
 
 **Hot-reload** (`config_watcher.py`, `file_watchdog.py`):
 - Changes to config files trigger automatic reload without restart
