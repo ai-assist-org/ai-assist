@@ -270,6 +270,48 @@ ai-assist /run workflow.awl target="HTTP server" days=7
 
 Injected variables are available from the first node, just like `@set` variables.
 
+## Built-in Variables
+
+AWL automatically injects built-in variables into every execution. These are available without any CLI arguments or `@set` directives.
+
+**Date/time (generated fresh per execution):**
+
+| Variable | Example | Description |
+|---|---|---|
+| `date` | `2026-07-17` | Local date |
+| `time` | `14:30:05` | Local time |
+| `datetime` | `2026-07-17 14:30:05` | Local date+time |
+| `utc_date` | `2026-07-17` | UTC date |
+| `utc_time` | `12:30:05` | UTC time |
+| `utc_datetime` | `2026-07-17 12:30:05` | UTC date+time |
+| `timezone` | `CEST` | Local timezone abbreviation |
+
+**Paths:**
+
+| Variable | Description |
+|---|---|
+| `config_dir` | Config directory (`~/.ai-assist`) |
+| `reports_dir` | Reports directory (`~/ai-assist/reports`) |
+| `logs_dir` | Logs directory (`~/.ai-assist/logs`) |
+
+## User-Defined Variables (`variables.yaml`)
+
+Define custom variables in `~/.ai-assist/variables.yaml` to make them available in all AWL scripts. This makes scripts location-independent — different users can run the same script with their own settings.
+
+```yaml
+workspace: ~/ai-assist/workspace
+team: dci
+jira_project: CILAB
+```
+
+Values support `~` expansion and `$ENV_VAR` substitution. The file is optional.
+
+**Precedence** (highest wins):
+
+1. CLI / caller-provided variables (`ai-assist /run script.awl key=value`)
+2. User-defined variables from `variables.yaml`
+3. Built-in variables (date/time, paths)
+
 ## Variable Validation
 
 AWL performs static analysis before execution to detect variables that are used

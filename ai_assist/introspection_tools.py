@@ -1193,9 +1193,10 @@ Do NOT compact if you still need the old tool results for your current task.
 
         Performs static analysis on the parsed AST: collects all interpolated
         ${variable} references, then subtracts variables that are defined
-        within the script itself (Expose:, @set, @loop item_var).
+        within the script itself (Expose:, @set, @loop item_var) and
+        automatically available variables (builtins + user-defined locals).
         """
-        from .awl_executor import load_awl_workflow
+        from .awl_executor import _merge_all_variables, load_awl_workflow
         from .awl_parser import ParseError
         from .awl_runtime import _compute_input_variables, validate_workflow_variables
 
@@ -1212,12 +1213,15 @@ Do NOT compact if you still need the old tool results for your current task.
         except Exception as e:
             return json.dumps({"error": f"Error reading script: {e}"})
 
-        input_var_set = _compute_input_variables(workflow)
+        auto_vars = _merge_all_variables()
+        all_known = set(auto_vars.keys())
+        input_var_set = _compute_input_variables(workflow) - all_known
         input_vars = sorted(input_var_set)
-        var_warnings = validate_workflow_variables(workflow, input_var_set)
+        var_warnings = validate_workflow_variables(workflow, all_known | input_var_set)
         result: dict[str, Any] = {
             "script": awl_path.name,
             "input_variables": input_vars,
+            "available_variables": sorted(auto_vars.keys()),
             "next_step": (
                 "Resolve all input_variables from context (identity, user message), "
                 "then call introspection__execute_awl_script with them as 'variables'."
@@ -1229,6 +1233,7 @@ Do NOT compact if you still need the old tool results for your current task.
 
     def _validate_awl_script(self, arguments: dict) -> str:
         """Parse an AWL script and report syntax and variable errors"""
+        from .awl_executor import _merge_all_variables
         from .awl_parser import AWLParser, ParseError
         from .awl_runtime import _compute_input_variables, validate_workflow_variables
 
@@ -1243,7 +1248,9 @@ Do NOT compact if you still need the old tool results for your current task.
         except Exception as e:
             return f"Error: {e}"
 
-        warnings = validate_workflow_variables(workflow, _compute_input_variables(workflow))
+        auto_vars = set(_merge_all_variables().keys())
+        known = auto_vars | _compute_input_variables(workflow)
+        warnings = validate_workflow_variables(workflow, known)
         if warnings:
             return "AWL script parsed OK but has variable warnings:\n" + "\n".join(f"  - {w}" for w in warnings)
         return "Valid AWL script."
@@ -1272,8 +1279,11 @@ Do NOT compact if you still need the old tool results for your current task.
         except Exception as e:
             return f"Error reading script: {e}"
 
+        from .awl_executor import _merge_all_variables
+
+        all_var_names = set(_merge_all_variables(variables).keys())
         missing = get_missing_variables(workflow, variables)
-        var_warnings = validate_workflow_variables(workflow, set(variables.keys()) if variables else None)
+        var_warnings = validate_workflow_variables(workflow, all_var_names)
         if missing or var_warnings:
             error: dict[str, Any] = {}
             if missing:

@@ -1,9 +1,40 @@
 """Shared AWL script execution for action engine, task runner, CLI, and agent tools."""
 
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from .config import get_config_dir
+from .config import get_config_dir, get_reports_dir, load_local_variables
+
+
+def _generate_builtin_variables() -> dict[str, str]:
+    """Generate built-in date/time and path variables for AWL execution."""
+    now_local = datetime.now().astimezone()
+    now_utc = datetime.now(UTC)
+
+    config_dir = get_config_dir()
+
+    return {
+        "date": now_local.strftime("%Y-%m-%d"),
+        "time": now_local.strftime("%H:%M:%S"),
+        "datetime": now_local.strftime("%Y-%m-%d %H:%M:%S"),
+        "utc_date": now_utc.strftime("%Y-%m-%d"),
+        "utc_time": now_utc.strftime("%H:%M:%S"),
+        "utc_datetime": now_utc.strftime("%Y-%m-%d %H:%M:%S"),
+        "timezone": now_local.strftime("%Z"),
+        "config_dir": str(config_dir),
+        "reports_dir": str(get_reports_dir()),
+        "logs_dir": str(config_dir / "logs"),
+    }
+
+
+def _merge_all_variables(variables: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Merge builtin, local, and caller-provided variables (caller wins)."""
+    merged = _generate_builtin_variables()
+    merged.update(load_local_variables())
+    if variables:
+        merged.update(variables)
+    return merged
 
 
 def load_awl_workflow(prompt: str):
@@ -35,7 +66,7 @@ def get_missing_variables(workflow, variables: dict[str, Any] | None = None) -> 
     from .awl_runtime import _compute_input_variables
 
     required = _compute_input_variables(workflow)
-    provided = set(variables.keys()) if variables else set()
+    provided = set(_merge_all_variables(variables).keys())
     return required - provided
 
 
@@ -49,8 +80,15 @@ async def run_awl_script(
     - Action engine (scheduled actions)
     - Task runner
     - Agent tool (introspection__execute_awl_script)
+
+    Variables are merged from three sources (highest precedence wins):
+    1. Caller-provided variables (CLI key=value, agent tool)
+    2. User-defined variables from ~/.ai-assist/variables.yaml
+    3. Built-in variables (date/time, paths)
     """
     from .awl_ast import GoalNode
+
+    merged = _merge_all_variables(variables)
 
     workflow, _awl_path = load_awl_workflow(prompt)
     has_goal = any(isinstance(n, GoalNode) for n in workflow.body)
@@ -60,7 +98,7 @@ async def run_awl_script(
         from .goal_state import GoalStateManager
 
         state_manager = GoalStateManager(get_config_dir() / "state")
-        runner = GoalRunner(_awl_path, agent, state_manager)
+        runner = GoalRunner(_awl_path, agent, state_manager, initial_variables=merged)
         runner.load()
         await runner.run_cycle()
 
@@ -74,7 +112,7 @@ async def run_awl_script(
     from .awl_runtime import AWLRuntime
 
     runtime = AWLRuntime(agent, verbose=verbose)
-    result = await runtime.execute(workflow, variables=variables)
+    result = await runtime.execute(workflow, variables=merged)
     if not result.success:
         raise RuntimeError(
             f"AWL workflow failed: {result.task_outcomes[-1].summary if result.task_outcomes else 'unknown error'}"

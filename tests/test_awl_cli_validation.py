@@ -55,7 +55,8 @@ async def test_run_awl_script_validates_typo_in_variable_name(tmp_path, capsys):
     assert "Missing required input variables" in captured.out
     assert "subject" in captured.out
     assert "Required variables: ['subject']" in captured.out
-    assert "Provided variables: ['subjec']" in captured.out
+    assert "'subjec'" in captured.out
+    assert "Provided variables:" in captured.out
 
 
 @pytest.mark.asyncio

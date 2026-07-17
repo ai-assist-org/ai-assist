@@ -372,6 +372,45 @@ def load_mcp_servers_from_yaml(path: Path) -> dict[str, MCPServerConfig]:
         return {}
 
 
+def load_local_variables(config_dir: Path | None = None) -> dict[str, str]:
+    """Load user-defined AWL local variables from variables.yaml.
+
+    Returns an empty dict if the file does not exist or is malformed.
+    Values undergo ~ and $ENV_VAR expansion.
+    """
+    if config_dir is None:
+        config_dir = get_config_dir()
+
+    path = config_dir / "variables.yaml"
+    if not path.exists():
+        return {}
+
+    try:
+        with open(path) as f:
+            data = yaml.safe_load(f)
+
+        if not isinstance(data, dict):
+            return {}
+
+        result = {}
+        for key, value in data.items():
+            if not isinstance(key, str):
+                continue
+            str_val = str(value) if value is not None else ""
+            str_val = os.path.expanduser(str_val)
+            str_val = os.path.expandvars(str_val)
+            result[key] = str_val
+
+        return result
+
+    except yaml.YAMLError:
+        logger.exception("Error parsing variables.yaml")
+        return {}
+    except Exception:
+        logger.exception("Error loading local variables")
+        return {}
+
+
 def get_config() -> AiAssistConfig:
     """Get the current configuration"""
     return AiAssistConfig.from_env()

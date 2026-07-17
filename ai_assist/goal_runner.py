@@ -16,10 +16,17 @@ logger = logging.getLogger(__name__)
 class GoalRunner:
     """Run a @goal AWL script with persisted state between cycles."""
 
-    def __init__(self, awl_path: Path, agent, state_manager: GoalStateManager):
+    def __init__(
+        self,
+        awl_path: Path,
+        agent,
+        state_manager: GoalStateManager,
+        initial_variables: dict | None = None,
+    ):
         self.awl_path = awl_path
         self.agent = agent
         self.state_manager = state_manager
+        self._initial_variables = initial_variables or {}
         self._workflow: WorkflowNode | None = None
         self._goal_node: GoalNode | None = None
 
@@ -50,8 +57,9 @@ class GoalRunner:
             print(f"Goal {self.goal_id} is {state.status}, stopping cycle")
             raise asyncio.CancelledError()
 
-        # Load persisted variables from previous cycle
-        variables = dict(state.variables)
+        # Merge: builtin/local vars < persisted state < initial (caller) vars
+        variables = dict(self._initial_variables)
+        variables.update(state.variables)
 
         # Execute the full workflow (may include @set nodes before @goal)
         runtime = AWLRuntime(
