@@ -1385,14 +1385,14 @@ class AiAssistAgent:
             logging.debug("KG injection: %d user preferences injected", len(preferences))
             self.knowledge_graph.record_access([p["entity_id"] for p in preferences], "system_prompt_preference")
 
-        # Semantic search for relevant learnings
+        # Hybrid search for relevant learnings (keyword + vector with RRF)
         if self._current_query_text:
-            results = self.knowledge_graph.semantic_search(
+            results = self.knowledge_graph.hybrid_search(
                 self._current_query_text,
                 limit=5,
                 entity_types=["lesson_learned", "project_context", "decision_rationale"],
-                min_confidence=0.7,
                 min_score=0.2,
+                include_future=True,
             )
             if results:
                 query_lines = [f"- [{r['entity_type']}] {r['content'][:100]}" for r in results]
@@ -1431,10 +1431,11 @@ class AiAssistAgent:
             return ""
 
         knowledge_types = {"user_preference", "lesson_learned", "project_context", "decision_rationale"}
-        results = self.knowledge_graph.semantic_search(
+        results = self.knowledge_graph.hybrid_search(
             self._current_query_text,
             limit=15,
             min_score=0.15,
+            include_future=True,
         )
         context_entries = [r for r in results if r["entity_type"] not in knowledge_types][:5]
 
