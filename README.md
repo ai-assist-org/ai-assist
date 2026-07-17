@@ -45,7 +45,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 Then install ai-assist:
 
 ```bash
-git clone https://github.com/fredericlepied/ai-assist
+git clone https://github.com/ai-assist-org/ai-assist
 cd ai-assist
 uv sync
 ```

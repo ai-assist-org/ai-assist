@@ -757,12 +757,12 @@ pagination:
     \item ``What was actually \textbf{true} at time X?'' \quad (valid time)
   \end{itemize}
   \item Knowledge should \textbf{grow} with every interaction
-  \item \alert{Auto-context injection}: relevant KG entities injected into each query's system prompt via \textbf{semantic search} (vector embeddings)
+  \item \alert{Auto-context injection}: relevant KG entities injected into each query's system prompt via \textbf{hybrid search} (keyword + vector)
 \end{itemize}
 
 \vfill
 \centering
-\small\color{gray} Solution: a \textbf{bi-temporal knowledge graph} stored in SQLite + \textbf{sqlite-vec} for vector search
+\small\color{gray} Solution: a \textbf{bi-temporal knowledge graph} stored in SQLite + \textbf{sqlite-vec} (vector) + \textbf{FTS5} (Full-Text Search)
 \end{frame}
 
 % ── Slide 12: Bi-Temporal Data Model ─────────────────────────────
@@ -848,7 +848,7 @@ pagination:
   \draw[arr=rhteal] (recall) -- (conv);
 
   % Center annotation
-  \node[font=\scriptsize\sffamily\color{gray}, align=center] at (0,0) {Claude extracts\\preferences, lessons,\\context, decisions};
+  \node[font=\scriptsize\sffamily\color{gray}, align=center] at (0,0) {ai-assist extracts\\preferences, lessons,\\context, decisions};
 
   % Side annotations
   \node[font=\tiny\sffamily\color{gray}, right=5mm of kg, align=left] {Nightly task\\(22:00 weekdays)};
@@ -907,6 +907,57 @@ pagination:
 \end{columns}
 \end{frame}
 
+% ── Slide: Example End-to-End ────────────────────────────────────
+\begin{frame}[fragile]{Example: From Conversation to Recall}
+\centering
+\begin{tikzpicture}[
+  step/.style={draw=#1, fill=#1!12, rounded corners=4pt,
+    font=\tiny\sffamily, minimum width=2.3cm, minimum height=1.6cm,
+    align=center, text width=2.1cm, text=#1!80!black},
+  arr/.style={-{Stealth}, very thick, #1},
+  lbl/.style={font=\fontsize{5}{6}\selectfont\sffamily\bfseries, text=#1},
+  scale=0.88, transform shape
+]
+  % Step 1: Conversation
+  \node[step=rhblue] (conv) at (0,0) {%
+    \textit{``The OCP 4.19 job failed due to network timeouts in BOS2''}};
+  \node[lbl=rhblue, above=1mm of conv] {1. Conversation};
+
+  % Step 2: Synthesis
+  \node[step=rhorange, right=6mm of conv] (synth) {%
+    \texttt{lesson\_learned}:\\
+    ``OCP 4.19 failures in BOS2 are often network timeouts''};
+  \node[lbl=rhorange, above=1mm of synth] {2. Synthesis};
+
+  % Step 3: Connection
+  \node[step=rhpurple, right=6mm of synth] (conn) {%
+    Edge: lesson\\{\footnotesize\texttt{--caused\_by-->}}\\
+    \texttt{project\_context}:\\``BOS2 lab network config''};
+  \node[lbl=rhpurple, above=1mm of conn] {3. Connection};
+
+  % Step 4: Recall
+  \node[step=rhgreen, right=6mm of conn] (recall) {%
+    Query: \textit{``Why did the BOS2 job fail?''}\\finds lesson + follows graph edge};
+  \node[lbl=rhgreen, above=1mm of recall] {4. Recall};
+
+  % Arrows
+  \draw[arr=rhblue] (conv) -- (synth);
+  \draw[arr=rhorange] (synth) -- (conn);
+  \draw[arr=rhpurple] (conn) -- (recall);
+
+  % Timeline
+  \draw[gray, thick, dashed] (-1.5,-1.5) -- (12.5,-1.5);
+  \node[font=\tiny\sffamily\color{gray}] at (1.2,-1.8) {Day 1: User conversation};
+  \node[font=\tiny\sffamily\color{gray}] at (5.6,-1.8) {Night: Automated synthesis + discovery};
+  \node[font=\tiny\sffamily\color{gray}] at (10.5,-1.8) {Day N: Future query};
+\end{tikzpicture}
+
+\vfill
+{\scriptsize\color{gray}
+Hybrid search (FTS5 keyword + sqlite-vec vector, merged via Reciprocal Rank Fusion) retrieves the lesson.
+Graph traversal follows the \texttt{caused\_by} edge to surface related context.}
+\end{frame}
+
 % ── Slide 15: Query Context Assembly ─────────────────────────────
 \begin{frame}[fragile]{How Query Context Is Built}
 \centering
@@ -944,19 +995,19 @@ pagination:
   \node[data=rhgreen] (prefs) at (2.8,3.8)
     {5.\ \textbf{User Preferences}\\(always injected, min conf.\ 0.5)};
   \node[data=rhred] (learnings) at (2.8,2.8)
-    {6.\ \textbf{Relevant Learnings}\\(semantic search, top 5)};
+    {6.\ \textbf{Relevant Learnings}\\(hybrid search, top 5)};
   \node[data=rhred] (context) at (2.8,1.8)
-    {7.\ \textbf{Auto-Context Entities}\\(semantic search, top 5)};
+    {7.\ \textbf{Auto-Context Entities}\\(hybrid search, top 5)};
 
   % KG bracket
   \draw[decorate, decoration={brace, amplitude=4pt, mirror},
     thick, rhred!70!black] (5.1,1.45) -- (5.1,4.15)
     node[midway, right=5pt, font=\tiny\sffamily, text=rhred!70!black, align=left]
-    {from KG via\\vector embeddings\\(\texttt{sqlite-vec})};
+    {from KG via\\keyword + vector\\with RRF fusion};
 
   % Arrow from query to prompt
   \draw[arr=rhblue] (query) -- (prompt)
-    node[midway, right=3pt, font=\tiny\sffamily\color{gray}] {embed query};
+    node[midway, right=3pt, font=\tiny\sffamily\color{gray}] {search query};
 
   % Claude API at the bottom
   \node[block=rhdarkgray] (api) at (0,-0.5) {Claude API Call};
@@ -1577,6 +1628,8 @@ Task blocks show brief description; hover reveals full goal, context, constraint
   \item \textcolor{green!60!black}{\checkmark} \alert{Event-driven actions} (MQTT, D-Bus, File)
   \item \textcolor{green!60!black}{\checkmark} Unified trigger + action model
   \item \textcolor{green!60!black}{\checkmark} \alert{Sandbox instances} (podman-compose, per-service credential isolation)
+  \item \textcolor{green!60!black}{\checkmark} Hybrid search (FTS5 + vector + RRF fusion)
+  \item \textcolor{green!60!black}{\checkmark} LoCoMo memory benchmark: 56.3\%
 \end{itemize}
 \end{column}
 \begin{column}{0.48\textwidth}
@@ -1600,7 +1653,7 @@ ai-assist turns information overload into actionable insights.
 \normalsize\color{rhdarkgray} Questions?
 
 \smallskip
-\small\url{https://github.com/fredericlepied/ai-assist}
+\small\url{https://github.com/ai-assist-org/ai-assist}
 \end{frame}
 
 \end{document}
