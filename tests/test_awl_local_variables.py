@@ -9,7 +9,9 @@ import pytest
 from ai_assist.awl_executor import (
     _generate_builtin_variables,
     _merge_all_variables,
+    cleanup_session_tmpdir,
     get_missing_variables,
+    init_session_tmpdir,
 )
 from ai_assist.config import load_local_variables
 
@@ -92,6 +94,7 @@ def test_generate_builtin_variables_keys():
         "config_dir",
         "reports_dir",
         "logs_dir",
+        "tmpdir",
     }
     assert set(result.keys()) == expected_keys
 
@@ -110,6 +113,56 @@ def test_generate_builtin_variables_paths():
     assert Path(result["config_dir"]).is_absolute()
     assert Path(result["reports_dir"]).is_absolute()
     assert result["logs_dir"].endswith("/logs")
+
+
+def test_generate_builtin_variables_tmpdir():
+    result = _generate_builtin_variables()
+    tmpdir = Path(result["tmpdir"])
+    assert tmpdir.is_absolute()
+    assert tmpdir.exists()
+
+
+# ── session tmpdir lifecycle ─────────────────────────────────────
+
+
+def test_init_session_tmpdir_creates_directory():
+    import ai_assist.awl_executor as mod
+
+    old = mod._session_tmpdir
+    try:
+        mod._session_tmpdir = None
+        path = init_session_tmpdir()
+        assert Path(path).exists()
+        assert "ai-assist-" in path
+    finally:
+        cleanup_session_tmpdir()
+        mod._session_tmpdir = old
+
+
+def test_cleanup_session_tmpdir_removes_directory():
+    import ai_assist.awl_executor as mod
+
+    old = mod._session_tmpdir
+    try:
+        mod._session_tmpdir = None
+        path = init_session_tmpdir()
+        assert Path(path).exists()
+        cleanup_session_tmpdir()
+        assert not Path(path).exists()
+        assert mod._session_tmpdir is None
+    finally:
+        mod._session_tmpdir = old
+
+
+def test_cleanup_session_tmpdir_noop_when_none():
+    import ai_assist.awl_executor as mod
+
+    old = mod._session_tmpdir
+    try:
+        mod._session_tmpdir = None
+        cleanup_session_tmpdir()  # should not raise
+    finally:
+        mod._session_tmpdir = old
 
 
 # ── _merge_all_variables ─────────────────────────────────────────

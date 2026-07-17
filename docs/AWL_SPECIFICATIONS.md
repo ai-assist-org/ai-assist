@@ -293,6 +293,7 @@ AWL automatically injects built-in variables into every execution. These are ava
 | `config_dir` | Config directory (`~/.ai-assist`) |
 | `reports_dir` | Reports directory (`~/ai-assist/reports`) |
 | `logs_dir` | Logs directory (`~/.ai-assist/logs`) |
+| `tmpdir` | Session-scoped temporary directory (created at startup, cleaned up on exit) |
 
 ## User-Defined Variables (`variables.yaml`)
 

@@ -770,7 +770,11 @@ async def main_async():
     # Only initialize agent if needed (with knowledge graph for interactive learning)
     agent = AiAssistAgent(config, knowledge_graph=knowledge_graph) if needs_agent else None
 
+    from .awl_executor import cleanup_session_tmpdir, init_session_tmpdir
+
     try:
+        init_session_tmpdir()
+
         if agent:
             await agent.connect_to_servers()
 
@@ -951,6 +955,7 @@ async def main_async():
             await interactive_mode(agent, state_manager)
 
     finally:
+        cleanup_session_tmpdir()
         knowledge_graph.close()
         if agent:
             await agent.close()

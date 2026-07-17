@@ -1,10 +1,46 @@
 """Shared AWL script execution for action engine, task runner, CLI, and agent tools."""
 
+import atexit
+import logging
+import shutil
+import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from .config import get_config_dir, get_reports_dir, load_local_variables
+
+logger = logging.getLogger(__name__)
+
+_session_tmpdir: str | None = None
+
+
+def init_session_tmpdir() -> str:
+    """Create a session-scoped temporary directory. Returns the path."""
+    global _session_tmpdir  # noqa: PLW0603
+    if _session_tmpdir is None:
+        _session_tmpdir = tempfile.mkdtemp(prefix="ai-assist-")
+        logger.info("Session tmpdir created: %s", _session_tmpdir)
+    return _session_tmpdir
+
+
+def cleanup_session_tmpdir() -> None:
+    """Remove the session temporary directory if it exists."""
+    global _session_tmpdir  # noqa: PLW0603
+    if _session_tmpdir is not None:
+        shutil.rmtree(_session_tmpdir, ignore_errors=True)
+        logger.info("Session tmpdir removed: %s", _session_tmpdir)
+        _session_tmpdir = None
+
+
+def _get_session_tmpdir() -> str:
+    """Get or lazily create the session tmpdir."""
+    if _session_tmpdir is not None:
+        return _session_tmpdir
+    # Lazy init with atexit cleanup for non-CLI usage
+    path = init_session_tmpdir()
+    atexit.register(cleanup_session_tmpdir)
+    return path
 
 
 def _generate_builtin_variables() -> dict[str, str]:
@@ -25,6 +61,7 @@ def _generate_builtin_variables() -> dict[str, str]:
         "config_dir": str(config_dir),
         "reports_dir": str(get_reports_dir()),
         "logs_dir": str(config_dir / "logs"),
+        "tmpdir": _get_session_tmpdir(),
     }
 
 
