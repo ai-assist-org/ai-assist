@@ -337,7 +337,7 @@ class KnowledgeGraph:
             ),
         )
         if entity.entity_type != "tool_result":
-            text = self._entity_text_repr(entity.entity_type, entity.data)
+            text = self._entity_text_repr(entity.entity_type, entity.data, entity.valid_from)
             self._embed_and_store(entity.id, text, entity.entity_type)
         self._maybe_commit()
 
@@ -404,7 +404,7 @@ class KnowledgeGraph:
             ),
         )
         if entity.entity_type != "tool_result":
-            text = self._entity_text_repr(entity.entity_type, entity.data)
+            text = self._entity_text_repr(entity.entity_type, entity.data, entity.valid_from)
             self._embed_and_store(entity.id, text, entity.entity_type)
         self._maybe_commit()
 
@@ -763,7 +763,7 @@ class KnowledgeGraph:
             """,
                 (json.dumps(data), valid_from.isoformat(), now.isoformat(), entity_id),
             )
-            text = self._entity_text_repr(entity_type, data)
+            text = self._entity_text_repr(entity_type, data, valid_from)
             self._embed_and_store(entity_id, text, entity_type)
             self._maybe_commit()
         else:
@@ -987,10 +987,24 @@ class KnowledgeGraph:
         }
 
     @staticmethod
-    def _entity_text_repr(entity_type: str, data: dict[str, Any]) -> str:
+    def _entity_text_repr(entity_type: str, data: dict[str, Any], valid_from: datetime | None = None) -> str:
         """Build text representation of an entity for embedding."""
+        date_str = valid_from.strftime("%B %d, %Y") if valid_from else ""
         if "key" in data and "content" in data:
-            return f"{data['key']}: {data['content']}"
+            parts = [f"{data['key']}: {data['content']}"]
+            if date_str:
+                parts.append(f"(on {date_str})")
+            return " ".join(parts)
+        if entity_type == "conversation":
+            parts = []
+            if date_str:
+                parts.append(f"[{date_str}]")
+            user = data.get("user", "")
+            assistant = data.get("assistant", "")
+            if user or assistant:
+                parts.append(" | ".join(filter(None, [user, assistant])))
+            if parts:
+                return " ".join(parts)
         summary = data.get("summary") or data.get("name") or data.get("content")
         if summary:
             return f"{entity_type}: {summary}"
@@ -1123,7 +1137,8 @@ class KnowledgeGraph:
                 score,
                 conf,
             )
-            content = data.get("content") or self._entity_text_repr(entity_type, data)
+            vf = datetime.fromisoformat(valid_from) if isinstance(valid_from, str) else valid_from
+            content = data.get("content") or self._entity_text_repr(entity_type, data, vf)
             results.append(
                 {
                     "entity_id": entity_id,
@@ -1197,7 +1212,8 @@ class KnowledgeGraph:
         for row in rows:
             entity_id, entity_type, _content, rank, data_json, valid_from, tx_from = row
             data = json.loads(data_json)
-            content = data.get("content") or self._entity_text_repr(entity_type, data)
+            vf = datetime.fromisoformat(valid_from) if isinstance(valid_from, str) else valid_from
+            content = data.get("content") or self._entity_text_repr(entity_type, data, vf)
             results.append(
                 {
                     "entity_id": entity_id,
@@ -1270,7 +1286,7 @@ class KnowledgeGraph:
             Number of entities backfilled.
         """
         cursor = self.conn.execute("""
-            SELECT e.id, e.entity_type, e.data
+            SELECT e.id, e.entity_type, e.data, e.valid_from
             FROM entities e
             LEFT JOIN vec_embeddings v ON e.id = v.entity_id
             WHERE e.tx_to IS NULL AND v.entity_id IS NULL
@@ -1278,9 +1294,10 @@ class KnowledgeGraph:
             """)
         count = 0
         for row in cursor.fetchall():
-            entity_id, entity_type, data_json = row
+            entity_id, entity_type, data_json, valid_from_str = row
             data = json.loads(data_json)
-            text = self._entity_text_repr(entity_type, data)
+            valid_from = datetime.fromisoformat(valid_from_str) if valid_from_str else None
+            text = self._entity_text_repr(entity_type, data, valid_from)
             self._embed_and_store(entity_id, text, entity_type)
             count += 1
         if count:

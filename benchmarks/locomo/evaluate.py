@@ -37,7 +37,13 @@ Retrieved context:
 
 Gold-standard answer: {gold_answer}
 
-Does the retrieved context support answering the question correctly? \
+Evaluation criteria:
+- CORRECT if the context contains the key facts needed to produce the gold answer, \
+even if phrased differently or spread across multiple context entries
+- CORRECT if the context contains information that directly implies or entails the answer
+- WRONG only if the context is missing the critical facts needed, or contains \
+contradictory information
+
 Reply with exactly one word: CORRECT or WRONG."""
 
 
@@ -107,15 +113,40 @@ def _create_client():
     return Anthropic()
 
 
+def _format_date(result: dict) -> str:
+    """Format date from the KG's valid_from temporal field."""
+    from datetime import datetime
+
+    vf = result.get("valid_from")
+    if not vf:
+        return ""
+    try:
+        if isinstance(vf, str):
+            dt = datetime.fromisoformat(vf)
+        elif isinstance(vf, datetime):
+            dt = vf
+        else:
+            return ""
+        return dt.strftime("%B %d, %Y")
+    except ValueError, TypeError:
+        return ""
+
+
 def _extract_content(result: dict) -> str:
     """Extract displayable text from a search result or entity data dict."""
+    parts = []
+    date = _format_date(result)
+    if date:
+        parts.append(f"[{date}]")
     content = result.get("content")
     if content:
-        return content
+        parts.append(content)
+        return " ".join(parts)
     user = result.get("user", "")
     assistant = result.get("assistant", "")
     if user or assistant:
-        return " | ".join(filter(None, [user, assistant]))
+        parts.append(" | ".join(filter(None, [user, assistant])))
+        return " ".join(parts)
     return ""
 
 
@@ -123,9 +154,9 @@ def _build_context(kg, question: str) -> str:
     """Retrieve context using hybrid search + graph traversal.
 
     Strategy:
-    1. Hybrid search over knowledge types
-    2. Hybrid search for conversation entities
-    3. Graph traversal from top results (2 hops for multi-hop)
+    1. Hybrid search over knowledge types (synthesized insights)
+    2. Hybrid search for raw conversation entities
+    3. Graph traversal from top results (2 hops)
     """
     parts = []
     seen_ids = set()
@@ -133,7 +164,7 @@ def _build_context(kg, question: str) -> str:
     # 1. Hybrid search over knowledge types
     knowledge_results = kg.hybrid_search(
         question,
-        limit=15,
+        limit=20,
         entity_types=["user_preference", "lesson_learned", "project_context", "decision_rationale"],
         min_score=0.0,
         include_future=True,
@@ -150,7 +181,7 @@ def _build_context(kg, question: str) -> str:
     # 2. Hybrid search for conversation entities
     auto_results = kg.hybrid_search(
         question,
-        limit=15,
+        limit=20,
         min_score=0.0,
         include_future=True,
     )
@@ -167,11 +198,11 @@ def _build_context(kg, question: str) -> str:
         seen_ids.add(eid)
         parts.append(f"[context] {content}")
         count += 1
-        if count >= 8:
+        if count >= 12:
             break
 
     # 3. Graph traversal — 2 hops for multi-hop questions
-    hop1_ids = list(seen_ids)[:5]
+    hop1_ids = list(seen_ids)[:8]
     hop2_ids = []
     for eid in hop1_ids:
         try:
@@ -187,8 +218,7 @@ def _build_context(kg, question: str) -> str:
         except Exception:
             pass
 
-    # Second hop
-    for eid in hop2_ids[:3]:
+    for eid in hop2_ids[:5]:
         try:
             related = kg.get_related_entities(eid, direction="both")
             for _rel, entity in related:

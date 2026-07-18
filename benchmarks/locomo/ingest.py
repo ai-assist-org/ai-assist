@@ -30,7 +30,50 @@ def _strip_code_fence(text: str) -> str:
     return text.strip()
 
 
-BATCH_SIZE = 30
+BATCH_SIZE = 15
+BATCH_STRIDE = 10
+
+LOCOMO_SYNTHESIS_PROMPT = """\
+Extract ALL factual information from this conversation. Be thorough — every \
+specific detail matters for later recall.
+
+Extract:
+- **User Preferences**: Likes, dislikes, favorites (food, music, activities, \
+places, brands, styles)
+- **Personal Facts**: Name, age, occupation, relationships, where they live, \
+health conditions, pets
+- **Events**: What happened, when (exact dates/times), where, with whom, outcomes
+- **Plans & Decisions**: Future plans, travel plans, commitments, reasons for decisions
+- **Opinions & Experiences**: Views expressed, experiences shared, recommendations
+
+For each fact:
+- Write a specific, detailed summary. Include names, dates, places, numbers.
+- Use a descriptive unique key
+- Assign confidence (0.0-1.0)
+- Add relevant tags including any dates mentioned
+
+Conversation:
+{history_text}
+
+Output valid JSON only (no markdown):
+{{
+  "insights": [
+    {{
+      "category": "user_preference|lesson_learned|project_context|decision_rationale",
+      "key": "unique_identifier",
+      "content": "Specific factual summary with names, dates, places",
+      "confidence": 0.9,
+      "tags": ["tag1", "tag2"]
+    }}
+  ]
+}}
+
+Map to categories: personal facts/events -> project_context, \
+preferences -> user_preference, opinions/experiences -> lesson_learned, \
+plans/decisions -> decision_rationale.
+
+Extract as many facts as possible. If no facts, return {{"insights": []}}
+"""
 
 
 def _create_client():
@@ -114,6 +157,7 @@ def _store_conversations(kg, sample: dict, sample_idx: int) -> tuple[int, list[d
                     data={
                         "user": f"{turn_a.get('speaker', 'A')}: {user_text}",
                         "assistant": f"{turn_b.get('speaker', 'B')}: {assistant_text}" if assistant_text else "",
+                        "session": session_idx,
                     },
                     valid_from=session_dt,
                     entity_id=entity_id,
@@ -145,24 +189,22 @@ def _store_conversations(kg, sample: dict, sample_idx: int) -> tuple[int, list[d
 
 def _run_synthesis(kg, client, model: str, turns: list[dict], sample_id: str) -> int:
     """Phase B: Run LLM synthesis on batches of turns to extract structured knowledge."""
-    from ai_assist.agent import SYNTHESIS_PROMPT_TEMPLATE
-
     count = 0
-    for batch_start in range(0, len(turns), BATCH_SIZE):
+    for batch_start in range(0, len(turns), BATCH_STRIDE):
         batch = turns[batch_start : batch_start + BATCH_SIZE]
+        date_info = ""
+        if batch and batch[0].get("datetime"):
+            date_info = f" [Date: {batch[0]['datetime'].strftime('%B %d, %Y')}]"
         history_text = "\n".join(f"{t['speaker']}: {t['text']}" for t in batch if t["text"])
         if not history_text.strip():
             continue
 
-        prompt = SYNTHESIS_PROMPT_TEMPLATE.format(
-            focus="everything in this conversation — preferences, facts, events, decisions",
-            history_text=history_text,
-        )
+        prompt = LOCOMO_SYNTHESIS_PROMPT.format(history_text=date_info + "\n" + history_text)
 
         try:
             response = client.messages.create(
                 model=model,
-                max_tokens=2000,
+                max_tokens=4000,
                 messages=[{"role": "user", "content": prompt}],
             )
             response_text = _strip_code_fence(response.content[0].text.strip())
@@ -213,7 +255,7 @@ def _run_connection_discovery(kg, client, model: str) -> int:
 
     all_entities = []
     for et in KNOWLEDGE_TYPES:
-        all_entities.extend(kg.search_knowledge(entity_type=et, limit=200))
+        all_entities.extend(kg.search_knowledge(entity_type=et, limit=500))
 
     if not all_entities:
         logger.info("No knowledge entities for connection discovery")
