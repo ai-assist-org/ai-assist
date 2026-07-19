@@ -176,6 +176,61 @@ If no meaningful connections are found, return {{"connections": []}}
 """
 
 
+def _extract_date_range(question: str) -> tuple[datetime, datetime] | None:
+    """Extract a date range from a question for temporal filtering.
+
+    Returns (after, before) datetime tuple or None if no date detected.
+    Uses a ±1 month window around the detected date for better recall.
+    """
+    import re
+
+    months = {
+        "january": 1,
+        "february": 2,
+        "march": 3,
+        "april": 4,
+        "may": 5,
+        "june": 6,
+        "july": 7,
+        "august": 8,
+        "september": 9,
+        "october": 10,
+        "november": 11,
+        "december": 12,
+    }
+
+    def _month_window(year: int, month: int) -> tuple[datetime, datetime]:
+        prev_m = month - 1 if month > 1 else 12
+        prev_y = year if month > 1 else year - 1
+        next_m = month + 1 if month < 12 else 1
+        next_y = year if month < 12 else year + 1
+        after_m = next_m + 1 if next_m < 12 else 1
+        after_y = next_y if next_m < 12 else next_y + 1
+        return (datetime(prev_y, prev_m, 1), datetime(after_y, after_m, 1))
+
+    # Match "Month DD, YYYY"
+    m = re.search(
+        r"(\b(?:" + "|".join(months) + r")\b)\s+(\d{1,2}),?\s+(\d{4})",
+        question.lower(),
+    )
+    if m:
+        month = months[m.group(1)]
+        year = int(m.group(3))
+        return _month_window(year, month)
+
+    # Match "Month YYYY"
+    m = re.search(
+        r"(\b(?:" + "|".join(months) + r")\b)\s+(\d{4})",
+        question.lower(),
+    )
+    if m:
+        month = months[m.group(1)]
+        year = int(m.group(2))
+        return _month_window(year, month)
+
+    return None
+
+
 class AiAssistAgent:
     """AI Agent with MCP capabilities"""
 
@@ -1441,7 +1496,7 @@ class AiAssistAgent:
             # 2. Project context (personal facts — searched separately for recall)
             project_results = kg.hybrid_search(
                 query,
-                limit=10,
+                limit=20,
                 entity_types=["project_context"],
                 min_score=0.1,
                 include_future=True,
@@ -1451,7 +1506,7 @@ class AiAssistAgent:
             # 3. Lessons and decisions
             other_results = kg.hybrid_search(
                 query,
-                limit=5,
+                limit=10,
                 entity_types=["lesson_learned", "decision_rationale"],
                 min_score=0.2,
                 include_future=True,
@@ -1532,6 +1587,20 @@ class AiAssistAgent:
                 )
                 all_learning_lines.extend(_add(name_results, "system_prompt_learning"))
 
+            # 5. Temporal-filtered search when date detected in query
+            date_range = _extract_date_range(query)
+            if date_range:
+                after, before = date_range
+                temporal_results = kg.hybrid_search(
+                    query,
+                    limit=10,
+                    min_score=0.1,
+                    include_future=True,
+                    valid_from_after=after,
+                    valid_from_before=before,
+                )
+                all_learning_lines.extend(_add(temporal_results, "system_prompt_learning"))
+
             if all_learning_lines:
                 parts.append("## Relevant Learnings\n" + "\n".join(all_learning_lines))
                 logging.debug(
@@ -1563,8 +1632,9 @@ class AiAssistAgent:
         if not self.knowledge_graph or not self._current_query_text or self._no_kg:
             return ""
 
+        kg = self.knowledge_graph
         knowledge_types = {"user_preference", "lesson_learned", "project_context", "decision_rationale"}
-        results = self.knowledge_graph.hybrid_search(
+        results = kg.hybrid_search(
             self._current_query_text,
             limit=20,
             min_score=0.1,
@@ -1589,7 +1659,7 @@ class AiAssistAgent:
             len(context_entries),
             ", ".join(scores),
         )
-        self.knowledge_graph.record_access([r["entity_id"] for r in context_entries], "system_prompt_auto_context")
+        kg.record_access([r["entity_id"] for r in context_entries], "system_prompt_auto_context")
 
         section = "\n\n# Relevant Context From Knowledge Graph\n\n"
         section += "\n".join(context_lines)
@@ -3193,6 +3263,9 @@ class AiAssistAgent:
             print("💭 No new conversations to synthesize")
             synthesis_summary = "No new conversations to synthesize"
         else:
+            # Use earliest conversation timestamp for synthesized knowledge
+            conv_valid_from = min(c.valid_from for c in conversations)
+
             # Build conversation text
             history_parts = []
             for conv in conversations:
@@ -3241,6 +3314,7 @@ class AiAssistAgent:
                                     "synthesized_at": now.isoformat(),
                                 },
                                 confidence=insight.get("confidence", 1.0),
+                                valid_from=conv_valid_from,
                             )
                             saved_count += 1
                             print(f"💡 Learned: {insight['category']}:{insight['key']}")

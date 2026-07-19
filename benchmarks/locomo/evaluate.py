@@ -254,7 +254,7 @@ def _build_context(kg, question: str) -> str:
     # 1. Separate preference search (agent loads all preferences separately)
     pref_results = kg.hybrid_search(
         question,
-        limit=25,
+        limit=40,
         entity_types=["user_preference"],
         min_score=0.0,
         include_future=True,
@@ -265,7 +265,7 @@ def _build_context(kg, question: str) -> str:
     # 2. Project context (personal facts — critical for single-hop)
     ctx_results = kg.hybrid_search(
         question,
-        limit=25,
+        limit=50,
         entity_types=["project_context"],
         min_score=0.0,
         include_future=True,
@@ -276,7 +276,7 @@ def _build_context(kg, question: str) -> str:
     # 3. Lessons and decisions
     other_results = kg.hybrid_search(
         question,
-        limit=15,
+        limit=25,
         entity_types=["lesson_learned", "decision_rationale"],
         min_score=0.0,
         include_future=True,
@@ -350,13 +350,26 @@ def _build_context(kg, question: str) -> str:
     for name in names[:2]:
         name_results = kg.keyword_search(
             name,
-            limit=20,
+            limit=40,
             include_future=True,
         )
         for r in name_results:
             etype = r.get("entity_type", "")
-            if etype in KNOWLEDGE_TYPES:
-                _add_result(r, etype)
+            label = etype if etype in KNOWLEDGE_TYPES else "context"
+            _add_result(r, label)
+
+    # 4b. Content keyword search — find facts matching specific nouns
+    content_words = [
+        w.rstrip("?'s.,!").lower()
+        for w in question.split()
+        if w.rstrip("?'s.,!").lower() not in _stop
+        and len(w.rstrip("?'s.,!")) > 3
+        and w.rstrip("?'s.,!").isalpha()
+        and not w[0].isupper()
+    ]
+    for word in content_words[:2]:
+        for r in kg.keyword_search(word, limit=5, include_future=True):
+            _add_result(r, r.get("entity_type", "") if r.get("entity_type", "") in KNOWLEDGE_TYPES else "context")
 
     # 5. Temporal-filtered search when date detected
     date_range = _extract_date_range(question)
