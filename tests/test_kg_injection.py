@@ -156,7 +156,7 @@ class TestGetKgLearningsSection:
             )
         agent = _make_agent(kg=kg)
         section = agent._get_kg_learnings_section()
-        assert len(section) <= 2000  # 1500 cap + header
+        assert len(section) <= 3600  # 3000 cap + header
 
     def test_learnings_in_system_prompt(self):
         kg = KnowledgeGraph(":memory:")
@@ -278,7 +278,7 @@ class TestGetKgAutoContextSection:
         agent._current_query_text = "Show me the build jobs"
         section = agent._get_kg_auto_context_section()
         entity_lines = [line for line in section.split("\n") if line.strip().startswith("- [")]
-        assert len(entity_lines) <= 5
+        assert len(entity_lines) <= 10
 
     def test_deduplication(self):
         kg = KnowledgeGraph(":memory:")

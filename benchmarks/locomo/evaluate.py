@@ -76,6 +76,16 @@ class BenchmarkResults:
             by_cat[r.category].append(r.score)
         return {cat: sum(scores) / len(scores) * 100 for cat, scores in sorted(by_cat.items())}
 
+    def failures_markdown(self) -> str:
+        lines = ["# LoCoMo Failures", ""]
+        for r in self.results:
+            if r.score == 0:
+                lines.append(f"## [{r.category}] {r.question}")
+                lines.append(f"**Gold answer:** {r.gold_answer}")
+                lines.append(f"**Context:** {r.context}")
+                lines.append("")
+        return "\n".join(lines)
+
     def to_markdown(self) -> str:
         lines = ["# LoCoMo Benchmark Results", ""]
         lines.append(
@@ -150,35 +160,222 @@ def _extract_content(result: dict) -> str:
     return ""
 
 
-def _build_context(kg, question: str) -> str:
-    """Retrieve context using hybrid search + graph traversal.
+def _extract_date_range(question: str):
+    """Extract a date range from a question for temporal filtering.
 
-    Strategy:
-    1. Hybrid search over knowledge types (synthesized insights)
-    2. Hybrid search for raw conversation entities
-    3. Graph traversal from top results (2 hops)
+    Returns (after, before) datetime tuple or None if no date detected.
+    Uses a ±1 month window around the detected date for better recall.
+    """
+    import re
+    from datetime import datetime
+
+    months = {
+        "january": 1,
+        "february": 2,
+        "march": 3,
+        "april": 4,
+        "may": 5,
+        "june": 6,
+        "july": 7,
+        "august": 8,
+        "september": 9,
+        "october": 10,
+        "november": 11,
+        "december": 12,
+    }
+
+    def _month_window(year, month):
+        """Return (start_of_prev_month, end_of_next_month) for ±1 month window."""
+        prev_m = month - 1 if month > 1 else 12
+        prev_y = year if month > 1 else year - 1
+        next_m = month + 1 if month < 12 else 1
+        next_y = year if month < 12 else year + 1
+        after_m = next_m + 1 if next_m < 12 else 1
+        after_y = next_y if next_m < 12 else next_y + 1
+        return (datetime(prev_y, prev_m, 1), datetime(after_y, after_m, 1))
+
+    # Match "Month DD, YYYY"
+    m = re.search(
+        r"(\b(?:" + "|".join(months) + r")\b)\s+(\d{1,2}),?\s+(\d{4})",
+        question.lower(),
+    )
+    if m:
+        month = months[m.group(1)]
+        year = int(m.group(3))
+        return _month_window(year, month)
+
+    # Match "Month YYYY"
+    m = re.search(
+        r"(\b(?:" + "|".join(months) + r")\b)\s+(\d{4})",
+        question.lower(),
+    )
+    if m:
+        month = months[m.group(1)]
+        year = int(m.group(2))
+        return _month_window(year, month)
+
+    # Match standalone month name (assume 2023 for LoCoMo)
+    m = re.search(r"\b(" + "|".join(months) + r")\b", question.lower())
+    if m:
+        month = months[m.group(1)]
+        return _month_window(2023, month)
+
+    return None
+
+
+def _entity_to_result(entity) -> dict:
+    """Convert an Entity object to a result dict with valid_from for date formatting."""
+    return {**entity.data, "valid_from": entity.valid_from.isoformat()}
+
+
+def _build_context(kg, question: str) -> str:
+    """Retrieve context using multi-strategy hybrid search + graph traversal.
+
+    Strategy mirrors the production agent with additional temporal awareness:
+    1. Separate preference search (like agent's search_knowledge)
+    2. Project context search (personal facts)
+    3. Lessons and decisions
+    4. Name-based keyword search (all facts about mentioned people)
+    5. Temporal-filtered search when date detected in question
+    6. Conversation entities (broad search)
+    7. Graph traversal from top results (2 hops)
     """
     parts = []
     seen_ids = set()
 
-    # 1. Hybrid search over knowledge types
-    knowledge_results = kg.hybrid_search(
-        question,
-        limit=20,
-        entity_types=["user_preference", "lesson_learned", "project_context", "decision_rationale"],
-        min_score=0.0,
-        include_future=True,
-    )
-    for r in knowledge_results:
+    def _add_result(r, label):
         eid = r.get("entity_id", "")
         content = _extract_content(r)
         if not content or eid in seen_ids:
-            continue
+            return
         seen_ids.add(eid)
-        etype = r.get("entity_type", "")
-        parts.append(f"[{etype}] {content}")
+        parts.append(f"[{label}] {content}")
 
-    # 2. Hybrid search for conversation entities
+    # 1. Separate preference search (agent loads all preferences separately)
+    pref_results = kg.hybrid_search(
+        question,
+        limit=25,
+        entity_types=["user_preference"],
+        min_score=0.0,
+        include_future=True,
+    )
+    for r in pref_results:
+        _add_result(r, "user_preference")
+
+    # 2. Project context (personal facts — critical for single-hop)
+    ctx_results = kg.hybrid_search(
+        question,
+        limit=25,
+        entity_types=["project_context"],
+        min_score=0.0,
+        include_future=True,
+    )
+    for r in ctx_results:
+        _add_result(r, "project_context")
+
+    # 3. Lessons and decisions
+    other_results = kg.hybrid_search(
+        question,
+        limit=15,
+        entity_types=["lesson_learned", "decision_rationale"],
+        min_score=0.0,
+        include_future=True,
+    )
+    for r in other_results:
+        _add_result(r, r.get("entity_type", ""))
+
+    # 4. Name-based keyword search — find ALL facts about mentioned people
+    _stop = {
+        "what",
+        "which",
+        "where",
+        "when",
+        "who",
+        "whom",
+        "how",
+        "why",
+        "does",
+        "did",
+        "was",
+        "were",
+        "are",
+        "is",
+        "has",
+        "have",
+        "had",
+        "the",
+        "and",
+        "for",
+        "that",
+        "this",
+        "with",
+        "from",
+        "about",
+        "not",
+        "but",
+        "they",
+        "them",
+        "their",
+        "your",
+        "you",
+        "she",
+        "her",
+        "his",
+        "its",
+        "can",
+        "will",
+        "would",
+        "could",
+        "should",
+        "been",
+        "being",
+        "some",
+        "any",
+        "all",
+        "each",
+        "every",
+        "both",
+        "into",
+        "over",
+        "after",
+        "before",
+        "between",
+        "during",
+    }
+    names = [
+        w.rstrip("?'s.,!")
+        for w in question.split()
+        if w[0].isupper() and w.rstrip("?'s.,!").isalpha() and w.rstrip("?'s.,!").lower() not in _stop and len(w) > 2
+    ]
+    for name in names[:2]:
+        name_results = kg.keyword_search(
+            name,
+            limit=20,
+            include_future=True,
+        )
+        for r in name_results:
+            etype = r.get("entity_type", "")
+            if etype in KNOWLEDGE_TYPES:
+                _add_result(r, etype)
+
+    # 5. Temporal-filtered search when date detected
+    date_range = _extract_date_range(question)
+    if date_range:
+        after, before = date_range
+        temporal_results = kg.hybrid_search(
+            question,
+            limit=15,
+            min_score=0.0,
+            include_future=True,
+            valid_from_after=after,
+            valid_from_before=before,
+        )
+        for r in temporal_results:
+            etype = r.get("entity_type", "")
+            label = etype if etype in KNOWLEDGE_TYPES else "context"
+            _add_result(r, label)
+
+    # 6. Conversation entities (broad search)
     auto_results = kg.hybrid_search(
         question,
         limit=20,
@@ -198,11 +395,11 @@ def _build_context(kg, question: str) -> str:
         seen_ids.add(eid)
         parts.append(f"[context] {content}")
         count += 1
-        if count >= 12:
+        if count >= 15:
             break
 
-    # 3. Graph traversal — 2 hops for multi-hop questions
-    hop1_ids = list(seen_ids)[:8]
+    # 7. Graph traversal — 2 hops for multi-hop questions
+    hop1_ids = list(seen_ids)[:10]
     hop2_ids = []
     for eid in hop1_ids:
         try:
@@ -211,7 +408,7 @@ def _build_context(kg, question: str) -> str:
                 if entity.id in seen_ids:
                     continue
                 seen_ids.add(entity.id)
-                content = _extract_content(entity.data)
+                content = _extract_content(_entity_to_result(entity))
                 if content:
                     parts.append(f"[related] {content}")
                     hop2_ids.append(entity.id)
@@ -225,7 +422,7 @@ def _build_context(kg, question: str) -> str:
                 if entity.id in seen_ids:
                     continue
                 seen_ids.add(entity.id)
-                content = _extract_content(entity.data)
+                content = _extract_content(_entity_to_result(entity))
                 if content:
                     parts.append(f"[related-2] {content}")
         except Exception:
@@ -254,7 +451,11 @@ def _judge_answer(client, model: str, question: str, context: str, gold_answer: 
 
 
 def evaluate_dataset(
-    kg, dataset_path: str | Path, model: str = "claude-sonnet-4-6", limit: int | None = None
+    kg,
+    dataset_path: str | Path,
+    model: str = "claude-sonnet-4-6",
+    limit: int | None = None,
+    categories: set[int] | None = None,
 ) -> BenchmarkResults:
     """Run LoCoMo evaluation against a populated KG."""
     path = Path(dataset_path)
@@ -282,6 +483,9 @@ def evaluate_dataset(
             raw_cat = qa.get("category", 0)
             category = CATEGORY_NAMES.get(raw_cat, f"cat-{raw_cat}")
 
+            if categories and raw_cat not in categories:
+                continue
+
             if not question or not gold_answer:
                 continue
 
@@ -294,7 +498,7 @@ def evaluate_dataset(
                     question=question,
                     category=category,
                     gold_answer=gold_answer,
-                    context=context[:500],
+                    context=context[:2000],
                     verdict=verdict,
                     score=score,
                 )

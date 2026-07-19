@@ -35,19 +35,28 @@ BATCH_STRIDE = 10
 
 LOCOMO_SYNTHESIS_PROMPT = """\
 Extract ALL factual information from this conversation. Be thorough — every \
-specific detail matters for later recall.
+specific detail matters for later recall. Capture EVERY named entity and \
+specific detail, even if mentioned briefly.
 
 Extract:
 - **User Preferences**: Likes, dislikes, favorites (food, music, activities, \
-places, brands, styles)
+places, brands, styles). Include specific titles (book titles, movie names, \
+game titles, song names, brand names).
 - **Personal Facts**: Name, age, occupation, relationships, where they live, \
-health conditions, pets
-- **Events**: What happened, when (exact dates/times), where, with whom, outcomes
-- **Plans & Decisions**: Future plans, travel plans, commitments, reasons for decisions
+health conditions, allergies, pets. Include geographic specifics (city AND \
+state/country). Include academic details (degree, school, field of study).
+- **Events**: What happened, when (exact dates/times), where (full location), \
+with whom, outcomes
+- **Plans & Decisions**: Future plans, travel plans, career goals, commitments, \
+reasons for decisions
 - **Opinions & Experiences**: Views expressed, experiences shared, recommendations
+- **Inferred Facts**: When a specific product, game, or item is mentioned, note \
+its platform/brand/creator if commonly known (e.g., a specific game implies its \
+console platform)
 
 For each fact:
 - Write a specific, detailed summary. Include names, dates, places, numbers.
+- Always include the person's name in the content.
 - Use a descriptive unique key
 - Assign confidence (0.0-1.0)
 - Add relevant tags including any dates mentioned

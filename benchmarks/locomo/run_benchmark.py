@@ -56,6 +56,13 @@ def main():
         "--eval-only", action="store_true", help="Skip ingestion — evaluate on existing KG (requires --db-dir)"
     )
     parser.add_argument("--output", type=Path, default=None, help="Write results to markdown file")
+    parser.add_argument(
+        "--categories",
+        type=str,
+        default=None,
+        help="Comma-separated category numbers to evaluate (1=single-hop, 2=multi-hop, 3=temporal, 4=open-domain, 5=adversarial)",
+    )
+    parser.add_argument("--failures", type=Path, default=None, help="Write failure details to markdown file")
     parser.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
     args = parser.parse_args()
 
@@ -96,7 +103,8 @@ def main():
             logger.info("=== Skipping ingestion (--eval-only) ===")
 
         logger.info("=== Phase 2: Evaluation ===")
-        results = evaluate_dataset(kg, args.dataset, model=args.model, limit=args.limit)
+        cat_filter = {int(c) for c in args.categories.split(",")} if args.categories else None
+        results = evaluate_dataset(kg, args.dataset, model=args.model, limit=args.limit, categories=cat_filter)
 
         kg.close()
 
@@ -107,6 +115,10 @@ def main():
         if args.output:
             args.output.write_text(report)
             logger.info("Results written to %s", args.output)
+
+        if args.failures:
+            args.failures.write_text(results.failures_markdown())
+            logger.info("Failures written to %s", args.failures)
 
     finally:
         if not args.keep_db and not args.db_dir:
