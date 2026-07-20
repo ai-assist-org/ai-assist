@@ -1,5 +1,7 @@
 expected_tools:
   - "execute_command"
+forbidden_tools:
+  - "execute_skill_script"
 forbid_python_pipe: true
 notes: |
   The agent should use __jq_filter on execute_command or pipe through jq,

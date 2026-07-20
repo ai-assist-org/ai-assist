@@ -1,0 +1,4 @@
+expected_tools:
+  - "execute_command"
+forbidden_tools:
+  - "execute_skill_script"

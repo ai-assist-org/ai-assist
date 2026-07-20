@@ -395,14 +395,14 @@ exit 1
 
 
 def test_system_prompt_lists_skill_without_script_details(skills_manager_with_skill):
-    """Test that system prompt lists skill but not script details (progressive disclosure)"""
+    """Test that system prompt lists skill with script names for tool selection guidance"""
     result = skills_manager_with_skill.get_system_prompt_section()
 
-    # Should list the skill
+    # Should list the skill with its script names
     assert "test-skill" in result
-    # Script details are behind progressive disclosure
+    assert "hello.sh" in result
+    # Full skill body is still behind progressive disclosure
     assert "Script Execution" not in result
-    assert "hello.sh" not in result
 
 
 # --- Skill environment variable allowlist tests ---

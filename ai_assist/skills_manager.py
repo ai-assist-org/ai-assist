@@ -241,9 +241,17 @@ class SkillsManager:
         sections.append("You have access to the following specialized skills:\n")
 
         for skill_name, content in self.loaded_skills.items():
-            sections.append(f"- **{skill_name}**: {content.metadata.description}")
+            if content.scripts:
+                script_names = ", ".join(sorted(content.scripts.keys()))
+                sections.append(f"- **{skill_name}** (scripts: {script_names}): {content.metadata.description}")
+            else:
+                sections.append(f"- **{skill_name}** (docs only — use execute_command): {content.metadata.description}")
 
         sections.append("\nFor detailed skill instructions, call introspection__get_skill_help " "with the skill name.")
+        sections.append(
+            "Only use execute_skill_script for skills that have scripts listed above. "
+            "For docs-only skills, use execute_command instead."
+        )
 
         return "\n".join(sections)
 

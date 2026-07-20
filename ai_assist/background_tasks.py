@@ -97,8 +97,9 @@ class BackgroundTaskManager:
         self.notifications_file.parent.mkdir(parents=True, exist_ok=True)
         if task.status == "completed":
             body = task.result[:500] if task.result else "No output"
-            if task.result_report:
-                body += f"\n\nFull result saved to report: {task.result_report}"
+            if task.result_report and hasattr(self.agent, "report_tools"):
+                report_file = self.agent.report_tools.reports_dir / f"{task.result_report}.md"
+                body += f"\n\nFull result saved to report: file://{report_file}"
         else:
             body = task.error or "Unknown error"
 

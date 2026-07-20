@@ -231,7 +231,7 @@ class ReportTools:
         elif fmt in ("csv", "tsv"):
             report_file.write_text(content.rstrip("\n") + "\n")
 
-        return f"Report '{name}' ({fmt}) written to {report_file}"
+        return f"Report '{name}' ({fmt}) written to file://{report_file}"
 
     def _append_to_report(self, name: str, content: str, section: str | None = None, fmt: str = "md") -> str:
         if fmt not in SUPPORTED_FORMATS:
