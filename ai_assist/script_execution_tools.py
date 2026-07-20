@@ -45,7 +45,11 @@ class ScriptExecutionTools:
         return [
             {
                 "name": "internal__execute_skill_script",
-                "description": "Execute a script from an installed Agent Skill",
+                "description": (
+                    "Execute a script bundled inside an installed Agent Skill's scripts/ directory. "
+                    "Only use this for skills that have scripts (listed in the system prompt). "
+                    "Do NOT use this for general shell commands — use execute_command instead."
+                ),
                 "input_schema": {
                     "type": "object",
                     "properties": {

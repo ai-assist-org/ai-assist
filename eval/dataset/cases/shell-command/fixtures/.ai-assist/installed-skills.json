@@ -1,0 +1,28 @@
+{
+  "skills": [
+    {
+      "name": "gh",
+      "source": "clawhub:gh",
+      "source_type": "clawhub",
+      "branch": "main",
+      "installed_at": "2026-01-01T00:00:00.000000",
+      "cache_path": "{workspace}/.ai-assist/skills-cache/gh"
+    },
+    {
+      "name": "slack-webhook",
+      "source": "local",
+      "source_type": "local",
+      "branch": "main",
+      "installed_at": "2026-01-01T00:00:00.000000",
+      "cache_path": "{workspace}/.ai-assist/skills-cache/slack-webhook"
+    },
+    {
+      "name": "erc-team",
+      "source": "local",
+      "source_type": "local",
+      "branch": "main",
+      "installed_at": "2026-01-01T00:00:00.000000",
+      "cache_path": "{workspace}/.ai-assist/skills-cache/erc-team"
+    }
+  ]
+}

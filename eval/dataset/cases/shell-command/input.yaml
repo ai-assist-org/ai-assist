@@ -1,0 +1,57 @@
+prompt: |
+  Now fetch the PR comments and reviews for PR #1 on octocat/Hello-World.
+  Run these gh commands:
+  - gh api repos/octocat/Hello-World/pulls/1/comments
+  - gh api repos/octocat/Hello-World/pulls/1/reviews
+  - gh pr view 1 --repo octocat/Hello-World --json mergeable --jq .mergeable
+config:
+  allow_skill_script_execution: true
+history:
+  - role: user
+    content: "Post a message to the #ci-alerts Slack channel saying 'DCI job failed on BOS2 lab'"
+  - role: assistant
+    content:
+      - type: text
+        text: "I'll use the slack-webhook skill to post this message."
+      - type: tool_use
+        id: "eval_tc_1"
+        name: "internal__execute_skill_script"
+        input:
+          skill_name: "slack-webhook"
+          script_name: "post_message.py"
+          args: ["--channel", "#ci-alerts", "--message", "DCI job failed on BOS2 lab"]
+  - role: user
+    content:
+      - type: tool_result
+        tool_use_id: "eval_tc_1"
+        content: "Message posted to #ci-alerts: DCI job failed on BOS2 lab"
+  - role: assistant
+    content:
+      - type: text
+        text: "Done! The message has been posted to #ci-alerts."
+  - role: user
+    content: "Good. Now run a dcictl command to get the job details: dcictl.sh job-show abc123"
+  - role: assistant
+    content:
+      - type: text
+        text: "I'll use the erc-team skill to run the dcictl command."
+      - type: tool_use
+        id: "eval_tc_2"
+        name: "internal__execute_skill_script"
+        input:
+          skill_name: "erc-team"
+          script_name: "dcictl.sh"
+          args: ["job-show", "abc123"]
+  - role: user
+    content:
+      - type: tool_result
+        tool_use_id: "eval_tc_2"
+        content: "Job abc123: status=failure, component=OCP 4.19.0, duration=45m"
+  - role: assistant
+    content:
+      - type: text
+        text: |
+          Here are the job details for abc123:
+          - Status: failure
+          - Component: OCP 4.19.0
+          - Duration: 45 minutes

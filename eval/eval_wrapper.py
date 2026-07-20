@@ -24,6 +24,13 @@ async def run(workspace: Path, output_dir: Path, model: str, timeout: int):
     os.environ["AI_ASSIST_CONFIG_DIR"] = str(eval_config_dir)
     os.environ["AI_ASSIST_REPORTS_DIR"] = str(workspace / "reports")
 
+    # Resolve {workspace} placeholders in installed-skills.json cache paths
+    skills_file = eval_config_dir / "installed-skills.json"
+    if skills_file.exists():
+        raw = skills_file.read_text()
+        if "{workspace}" in raw:
+            skills_file.write_text(raw.replace("{workspace}", str(workspace)))
+
     from ai_assist.agent import AiAssistAgent
     from ai_assist.config import AiAssistConfig
     from ai_assist.knowledge_graph import KnowledgeGraph
@@ -46,15 +53,25 @@ async def run(workspace: Path, output_dir: Path, model: str, timeout: int):
     kg = KnowledgeGraph(db_path=kg_path)
 
     # Minimal config: internal tools only, no MCP servers
-    config = AiAssistConfig(model=model, mcp_servers={})
+    case_config = input_data.get("config", {})
+    config = AiAssistConfig(
+        model=model,
+        mcp_servers={},
+        allow_skill_script_execution=case_config.get("allow_skill_script_execution", False),
+    )
     agent = AiAssistAgent(config, knowledge_graph=kg)
 
     # Register internal tools (connect_to_servers populates available_tools)
     await agent.connect_to_servers()
 
+    # Build messages: optional history + current prompt
+    history = input_data.get("history", [])
+    messages = [{"role": m["role"], "content": m["content"]} for m in history]
+    messages.append({"role": "user", "content": prompt})
+
     # Run query
     start_time = time.time()
-    response = await agent.query(prompt, max_time_seconds=timeout)
+    response = await agent.query(messages=messages, max_time_seconds=timeout)
 
     # Capture trace (must happen before clear_tool_calls)
     trace = agent.capture_trace(prompt, response, start_time)
