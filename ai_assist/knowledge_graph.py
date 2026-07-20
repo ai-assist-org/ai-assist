@@ -337,7 +337,7 @@ class KnowledgeGraph:
             ),
         )
         if entity.entity_type != "tool_result":
-            text = self._entity_text_repr(entity.entity_type, entity.data)
+            text = self._entity_text_repr(entity.entity_type, entity.data, entity.valid_from)
             self._embed_and_store(entity.id, text, entity.entity_type)
         self._maybe_commit()
 
@@ -404,7 +404,7 @@ class KnowledgeGraph:
             ),
         )
         if entity.entity_type != "tool_result":
-            text = self._entity_text_repr(entity.entity_type, entity.data)
+            text = self._entity_text_repr(entity.entity_type, entity.data, entity.valid_from)
             self._embed_and_store(entity.id, text, entity.entity_type)
         self._maybe_commit()
 
@@ -763,7 +763,7 @@ class KnowledgeGraph:
             """,
                 (json.dumps(data), valid_from.isoformat(), now.isoformat(), entity_id),
             )
-            text = self._entity_text_repr(entity_type, data)
+            text = self._entity_text_repr(entity_type, data, valid_from)
             self._embed_and_store(entity_id, text, entity_type)
             self._maybe_commit()
         else:
@@ -987,10 +987,24 @@ class KnowledgeGraph:
         }
 
     @staticmethod
-    def _entity_text_repr(entity_type: str, data: dict[str, Any]) -> str:
+    def _entity_text_repr(entity_type: str, data: dict[str, Any], valid_from: datetime | None = None) -> str:
         """Build text representation of an entity for embedding."""
+        date_str = valid_from.strftime("%B %d, %Y") if valid_from else ""
         if "key" in data and "content" in data:
-            return f"{data['key']}: {data['content']}"
+            parts = [f"{data['key']}: {data['content']}"]
+            if date_str:
+                parts.append(f"(on {date_str})")
+            return " ".join(parts)
+        if entity_type == "conversation":
+            parts = []
+            if date_str:
+                parts.append(f"[{date_str}]")
+            user = data.get("user", "")
+            assistant = data.get("assistant", "")
+            if user or assistant:
+                parts.append(" | ".join(filter(None, [user, assistant])))
+            if parts:
+                return " ".join(parts)
         summary = data.get("summary") or data.get("name") or data.get("content")
         if summary:
             return f"{entity_type}: {summary}"
@@ -1032,6 +1046,8 @@ class KnowledgeGraph:
         min_confidence: float = 0.0,
         min_score: float = 0.0,
         include_future: bool = False,
+        valid_from_after: datetime | None = None,
+        valid_from_before: datetime | None = None,
     ) -> list[dict]:
         """Search entities by semantic similarity to query text."""
         from .embedding import EmbeddingModel
@@ -1052,32 +1068,25 @@ class KnowledgeGraph:
             return []
 
         over_fetch = limit * 3
-        if include_future:
-            rows = self.conn.execute(
-                """
-                SELECT v.entity_id, v.distance, e.entity_type, e.data, e.valid_from, e.tx_from
-                FROM vec_embeddings v
-                JOIN entities e ON v.entity_id = e.id
-                WHERE v.embedding MATCH ? AND k = ?
-                AND e.tx_to IS NULL
-                ORDER BY v.distance
-                """,
-                (query_vec, over_fetch),
-            ).fetchall()
-        else:
-            now = datetime.now().isoformat()
-            rows = self.conn.execute(
-                """
-                SELECT v.entity_id, v.distance, e.entity_type, e.data, e.valid_from, e.tx_from
-                FROM vec_embeddings v
-                JOIN entities e ON v.entity_id = e.id
-                WHERE v.embedding MATCH ? AND k = ?
-                AND e.tx_to IS NULL
-                AND e.valid_from <= ?
-                ORDER BY v.distance
-                """,
-                (query_vec, over_fetch, now),
-            ).fetchall()
+        sql = """
+            SELECT v.entity_id, v.distance, e.entity_type, e.data, e.valid_from, e.tx_from
+            FROM vec_embeddings v
+            JOIN entities e ON v.entity_id = e.id
+            WHERE v.embedding MATCH ? AND k = ?
+            AND e.tx_to IS NULL
+        """
+        params: list = [query_vec, over_fetch]
+        if not include_future:
+            sql += " AND e.valid_from <= ?"
+            params.append(datetime.now().isoformat())
+        if valid_from_after:
+            sql += " AND e.valid_from >= ?"
+            params.append(valid_from_after.isoformat())
+        if valid_from_before:
+            sql += " AND e.valid_from <= ?"
+            params.append(valid_from_before.isoformat())
+        sql += " ORDER BY v.distance"
+        rows = self.conn.execute(sql, params).fetchall()
 
         results: list[dict] = []
         skipped_type = 0
@@ -1123,7 +1132,8 @@ class KnowledgeGraph:
                 score,
                 conf,
             )
-            content = data.get("content") or self._entity_text_repr(entity_type, data)
+            vf = datetime.fromisoformat(valid_from) if isinstance(valid_from, str) else valid_from
+            content = data.get("content") or self._entity_text_repr(entity_type, data, vf)
             results.append(
                 {
                     "entity_id": entity_id,
@@ -1155,40 +1165,44 @@ class KnowledgeGraph:
         limit: int = 10,
         entity_types: list[str] | None = None,
         include_future: bool = False,
+        valid_from_after: datetime | None = None,
+        valid_from_before: datetime | None = None,
+        match_all: bool = False,
     ) -> list[dict]:
-        """Search entities by FTS5 keyword matching."""
-        fts_query = " OR ".join(f'"{word}"' for word in query_text.split() if len(word) > 2)
+        """Search entities by FTS5 keyword matching.
+
+        Args:
+            match_all: If True, require ALL terms (AND); default OR.
+        """
+        joiner = " " if match_all else " OR "
+        fts_query = joiner.join(f'"{word}"' for word in query_text.split() if len(word) > 2)
         if not fts_query:
             return []
 
         try:
+            sql = """
+                SELECT f.entity_id, f.entity_type, f.content, rank,
+                       e.data, e.valid_from, e.tx_from
+                FROM entity_fts f
+                JOIN entities e ON f.entity_id = e.id
+                WHERE entity_fts MATCH ?
+                AND e.tx_to IS NULL
+            """
+            param_list: list = [fts_query]
             if entity_types:
                 placeholders = ",".join("?" for _ in entity_types)
-                sql = f"""
-                    SELECT f.entity_id, f.entity_type, f.content, rank,
-                           e.data, e.valid_from, e.tx_from
-                    FROM entity_fts f
-                    JOIN entities e ON f.entity_id = e.id
-                    WHERE entity_fts MATCH ? AND f.entity_type IN ({placeholders})
-                    AND e.tx_to IS NULL
-                    ORDER BY rank
-                    LIMIT ?
-                """  # nosec B608 — placeholders are parameterized ?-markers
-                params: tuple = (fts_query, *entity_types, limit)
-            else:
-                sql = """
-                    SELECT f.entity_id, f.entity_type, f.content, rank,
-                           e.data, e.valid_from, e.tx_from
-                    FROM entity_fts f
-                    JOIN entities e ON f.entity_id = e.id
-                    WHERE entity_fts MATCH ?
-                    AND e.tx_to IS NULL
-                    ORDER BY rank
-                    LIMIT ?
-                """
-                params = (fts_query, limit)
+                sql += f" AND f.entity_type IN ({placeholders})"  # nosec B608
+                param_list.extend(entity_types)
+            if valid_from_after:
+                sql += " AND e.valid_from >= ?"
+                param_list.append(valid_from_after.isoformat())
+            if valid_from_before:
+                sql += " AND e.valid_from <= ?"
+                param_list.append(valid_from_before.isoformat())
+            sql += " ORDER BY rank LIMIT ?"
+            param_list.append(limit)
 
-            rows = self.conn.execute(sql, params).fetchall()
+            rows = self.conn.execute(sql, param_list).fetchall()
         except Exception as e:
             logging.debug("FTS search failed: %s", e)
             return []
@@ -1197,7 +1211,8 @@ class KnowledgeGraph:
         for row in rows:
             entity_id, entity_type, _content, rank, data_json, valid_from, tx_from = row
             data = json.loads(data_json)
-            content = data.get("content") or self._entity_text_repr(entity_type, data)
+            vf = datetime.fromisoformat(valid_from) if isinstance(valid_from, str) else valid_from
+            content = data.get("content") or self._entity_text_repr(entity_type, data, vf)
             results.append(
                 {
                     "entity_id": entity_id,
@@ -1219,6 +1234,8 @@ class KnowledgeGraph:
         entity_types: list[str] | None = None,
         min_score: float = 0.0,
         include_future: bool = False,
+        valid_from_after: datetime | None = None,
+        valid_from_before: datetime | None = None,
     ) -> list[dict]:
         """Combined keyword + vector search with Reciprocal Rank Fusion."""
         vec_results = self.semantic_search(
@@ -1227,12 +1244,16 @@ class KnowledgeGraph:
             entity_types=entity_types,
             min_score=min_score,
             include_future=include_future,
+            valid_from_after=valid_from_after,
+            valid_from_before=valid_from_before,
         )
         kw_results = self.keyword_search(
             query_text,
             limit=limit * 2,
             entity_types=entity_types,
             include_future=include_future,
+            valid_from_after=valid_from_after,
+            valid_from_before=valid_from_before,
         )
 
         # RRF: score = sum(1 / (k + rank)) across both result lists
@@ -1270,7 +1291,7 @@ class KnowledgeGraph:
             Number of entities backfilled.
         """
         cursor = self.conn.execute("""
-            SELECT e.id, e.entity_type, e.data
+            SELECT e.id, e.entity_type, e.data, e.valid_from
             FROM entities e
             LEFT JOIN vec_embeddings v ON e.id = v.entity_id
             WHERE e.tx_to IS NULL AND v.entity_id IS NULL
@@ -1278,9 +1299,10 @@ class KnowledgeGraph:
             """)
         count = 0
         for row in cursor.fetchall():
-            entity_id, entity_type, data_json = row
+            entity_id, entity_type, data_json, valid_from_str = row
             data = json.loads(data_json)
-            text = self._entity_text_repr(entity_type, data)
+            valid_from = datetime.fromisoformat(valid_from_str) if valid_from_str else None
+            text = self._entity_text_repr(entity_type, data, valid_from)
             self._embed_and_store(entity_id, text, entity_type)
             count += 1
         if count:

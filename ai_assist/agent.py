@@ -176,6 +176,61 @@ If no meaningful connections are found, return {{"connections": []}}
 """
 
 
+def _extract_date_range(question: str) -> tuple[datetime, datetime] | None:
+    """Extract a date range from a question for temporal filtering.
+
+    Returns (after, before) datetime tuple or None if no date detected.
+    Uses a ±1 month window around the detected date for better recall.
+    """
+    import re
+
+    months = {
+        "january": 1,
+        "february": 2,
+        "march": 3,
+        "april": 4,
+        "may": 5,
+        "june": 6,
+        "july": 7,
+        "august": 8,
+        "september": 9,
+        "october": 10,
+        "november": 11,
+        "december": 12,
+    }
+
+    def _month_window(year: int, month: int) -> tuple[datetime, datetime]:
+        prev_m = month - 1 if month > 1 else 12
+        prev_y = year if month > 1 else year - 1
+        next_m = month + 1 if month < 12 else 1
+        next_y = year if month < 12 else year + 1
+        after_m = next_m + 1 if next_m < 12 else 1
+        after_y = next_y if next_m < 12 else next_y + 1
+        return (datetime(prev_y, prev_m, 1), datetime(after_y, after_m, 1))
+
+    # Match "Month DD, YYYY"
+    m = re.search(
+        r"(\b(?:" + "|".join(months) + r")\b)\s+(\d{1,2}),?\s+(\d{4})",
+        question.lower(),
+    )
+    if m:
+        month = months[m.group(1)]
+        year = int(m.group(3))
+        return _month_window(year, month)
+
+    # Match "Month YYYY"
+    m = re.search(
+        r"(\b(?:" + "|".join(months) + r")\b)\s+(\d{4})",
+        question.lower(),
+    )
+    if m:
+        month = months[m.group(1)]
+        year = int(m.group(2))
+        return _month_window(year, month)
+
+    return None
+
+
 class AiAssistAgent:
     """AI Agent with MCP capabilities"""
 
@@ -1377,50 +1432,181 @@ class AiAssistAgent:
     def _get_kg_learnings_section(self) -> str:
         """Fetch synthesized learnings from KG for system prompt injection.
 
-        User preferences are always injected. Lessons, project context, and
-        decision rationale are found via semantic search on the current query.
+        Multi-strategy retrieval using the KG's bi-temporal fields and
+        hybrid search:
+        1. User preferences (always injected)
+        2. Project context (personal facts, events — searched separately)
+        3. Lessons learned and decision rationale
+        4. Name-based keyword search for person-specific queries
+        5. Temporal-filtered search when dates are detected
         """
         if not self.knowledge_graph or self._no_kg:
             return ""
 
+        kg = self.knowledge_graph
         parts: list[str] = []
+        seen_ids: set[str] = set()
 
-        # Always inject user preferences (behavioral guidance)
-        preferences = self.knowledge_graph.search_knowledge(
+        def _fmt(entity: dict) -> str:
+            """Format an entity for display with temporal date if available."""
+            date_str = ""
+            vf = entity.get("valid_from")
+            if vf:
+                try:
+                    from datetime import datetime as _dt
+
+                    dt = _dt.fromisoformat(vf) if isinstance(vf, str) else vf
+                    date_str = f"[{dt.strftime('%b %d, %Y')}] "
+                except ValueError, TypeError, AttributeError:
+                    pass
+            return f"{date_str}{entity['content'][:200]}"
+
+        def _add(entities: list[dict], access_type: str) -> list[str]:
+            lines = []
+            for e in entities:
+                eid = e.get("entity_id", "")
+                if eid in seen_ids:
+                    continue
+                seen_ids.add(eid)
+                etype = e.get("entity_type", "")
+                lines.append(f"- [{etype}] {_fmt(e)}")
+            if lines:
+                ids = [e["entity_id"] for e in entities if e.get("entity_id") not in (seen_ids - {e.get("entity_id")})]
+                if ids:
+                    kg.record_access(ids, access_type)
+            return lines
+
+        # 1. User preferences (behavioral guidance)
+        preferences = kg.search_knowledge(
             entity_type="user_preference",
             min_confidence=0.5,
-            limit=10,
+            limit=15,
         )
         if preferences:
-            pref_lines = [f"- {p['key']}: {p['content'][:100]}" for p in preferences]
+            pref_lines = [f"- {p['key']}: {p['content'][:200]}" for p in preferences]
             parts.append("## User Preferences\n" + "\n".join(pref_lines))
             logging.debug("KG injection: %d user preferences injected", len(preferences))
-            self.knowledge_graph.record_access([p["entity_id"] for p in preferences], "system_prompt_preference")
+            kg.record_access([p["entity_id"] for p in preferences], "system_prompt_preference")
+            seen_ids.update(p["entity_id"] for p in preferences)
 
-        # Hybrid search for relevant learnings (keyword + vector with RRF)
         if self._current_query_text:
-            results = self.knowledge_graph.hybrid_search(
-                self._current_query_text,
-                limit=5,
-                entity_types=["lesson_learned", "project_context", "decision_rationale"],
+            query = self._current_query_text
+            all_learning_lines: list[str] = []
+
+            # 2. Project context (personal facts — searched separately for recall)
+            project_results = kg.hybrid_search(
+                query,
+                limit=20,
+                entity_types=["project_context"],
+                min_score=0.1,
+                include_future=True,
+            )
+            all_learning_lines.extend(_add(project_results, "system_prompt_learning"))
+
+            # 3. Lessons and decisions
+            other_results = kg.hybrid_search(
+                query,
+                limit=10,
+                entity_types=["lesson_learned", "decision_rationale"],
                 min_score=0.2,
                 include_future=True,
             )
-            if results:
-                query_lines = [f"- [{r['entity_type']}] {r['content'][:100]}" for r in results]
-                parts.append("## Relevant Learnings\n" + "\n".join(query_lines))
-                scores = [f"{r['entity_id']}={r['score']:.3f}" for r in results]
-                logging.debug(
-                    "KG learnings: query=%r → %d results [%s]",
-                    self._current_query_text[:60],
-                    len(results),
-                    ", ".join(scores),
+            all_learning_lines.extend(_add(other_results, "system_prompt_learning"))
+
+            # 4. Name-based keyword search for mentioned people
+            _stop = {
+                "what",
+                "which",
+                "where",
+                "when",
+                "who",
+                "whom",
+                "how",
+                "why",
+                "does",
+                "did",
+                "was",
+                "were",
+                "are",
+                "is",
+                "has",
+                "have",
+                "had",
+                "the",
+                "and",
+                "for",
+                "that",
+                "this",
+                "with",
+                "from",
+                "about",
+                "not",
+                "but",
+                "they",
+                "them",
+                "their",
+                "your",
+                "you",
+                "she",
+                "her",
+                "his",
+                "its",
+                "can",
+                "will",
+                "would",
+                "could",
+                "should",
+                "been",
+                "being",
+                "some",
+                "any",
+                "all",
+                "each",
+                "every",
+                "both",
+                "into",
+                "over",
+                "after",
+                "before",
+                "between",
+                "during",
+            }
+            names = [
+                w.rstrip("?'s.,!")
+                for w in query.split()
+                if w[0:1].isupper()
+                and w.rstrip("?'s.,!").isalpha()
+                and w.rstrip("?'s.,!").lower() not in _stop
+                and len(w.rstrip("?'s.,!")) > 2
+            ]
+            for name in names[:2]:
+                name_results = kg.keyword_search(
+                    name,
+                    limit=10,
+                    include_future=True,
                 )
-                self.knowledge_graph.record_access([r["entity_id"] for r in results], "system_prompt_learning")
-            else:
+                all_learning_lines.extend(_add(name_results, "system_prompt_learning"))
+
+            # 5. Temporal-filtered search when date detected in query
+            date_range = _extract_date_range(query)
+            if date_range:
+                after, before = date_range
+                temporal_results = kg.hybrid_search(
+                    query,
+                    limit=10,
+                    min_score=0.1,
+                    include_future=True,
+                    valid_from_after=after,
+                    valid_from_before=before,
+                )
+                all_learning_lines.extend(_add(temporal_results, "system_prompt_learning"))
+
+            if all_learning_lines:
+                parts.append("## Relevant Learnings\n" + "\n".join(all_learning_lines))
                 logging.debug(
-                    "KG learnings: query=%r → 0 results",
-                    self._current_query_text[:60],
+                    "KG learnings: query=%r → %d results",
+                    query[:60],
+                    len(all_learning_lines),
                 )
 
         if not parts:
@@ -1433,23 +1619,28 @@ class AiAssistAgent:
             "being asked. Do not wait for the user to ask about them.\n\n"
         )
         full_text = "\n\n".join(parts)
-        if len(full_text) > 1500:
-            full_text = full_text[:1500] + "\n[...truncated]"
+        if len(full_text) > 3000:
+            full_text = full_text[:3000] + "\n[...truncated]"
         return section + full_text
 
     def _get_kg_auto_context_section(self) -> str:
-        """Fetch KG entities relevant to the current query for auto-context."""
+        """Fetch KG entities relevant to the current query for auto-context.
+
+        Searches for conversation entities and other non-knowledge-type data
+        that may contain relevant details from prior interactions.
+        """
         if not self.knowledge_graph or not self._current_query_text or self._no_kg:
             return ""
 
+        kg = self.knowledge_graph
         knowledge_types = {"user_preference", "lesson_learned", "project_context", "decision_rationale"}
-        results = self.knowledge_graph.hybrid_search(
+        results = kg.hybrid_search(
             self._current_query_text,
-            limit=15,
-            min_score=0.15,
+            limit=20,
+            min_score=0.1,
             include_future=True,
         )
-        context_entries = [r for r in results if r["entity_type"] not in knowledge_types][:5]
+        context_entries = [r for r in results if r["entity_type"] not in knowledge_types][:10]
 
         if not context_entries:
             return ""
@@ -1457,8 +1648,8 @@ class AiAssistAgent:
         context_lines = []
         for r in context_entries:
             summary = r.get("content") or r.get("key") or ""
-            if len(summary) > 100:
-                summary = summary[:100]
+            if len(summary) > 200:
+                summary = summary[:200]
             context_lines.append(f"- [{r['entity_type']}] {r['entity_id']}: {summary}")
 
         scores = [f"{r['entity_id']}={r['score']:.3f}" for r in context_entries]
@@ -1468,7 +1659,7 @@ class AiAssistAgent:
             len(context_entries),
             ", ".join(scores),
         )
-        self.knowledge_graph.record_access([r["entity_id"] for r in context_entries], "system_prompt_auto_context")
+        kg.record_access([r["entity_id"] for r in context_entries], "system_prompt_auto_context")
 
         section = "\n\n# Relevant Context From Knowledge Graph\n\n"
         section += "\n".join(context_lines)
@@ -3072,6 +3263,9 @@ class AiAssistAgent:
             print("💭 No new conversations to synthesize")
             synthesis_summary = "No new conversations to synthesize"
         else:
+            # Use earliest conversation timestamp for synthesized knowledge
+            conv_valid_from = min(c.valid_from for c in conversations)
+
             # Build conversation text
             history_parts = []
             for conv in conversations:
@@ -3120,6 +3314,7 @@ class AiAssistAgent:
                                     "synthesized_at": now.isoformat(),
                                 },
                                 confidence=insight.get("confidence", 1.0),
+                                valid_from=conv_valid_from,
                             )
                             saved_count += 1
                             print(f"💡 Learned: {insight['category']}:{insight['key']}")

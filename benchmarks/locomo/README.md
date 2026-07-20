@@ -62,6 +62,7 @@ python run_benchmark.py \
 | System | Overall Score |
 |--------|-------------|
 | Evermind | 93.05% |
+| ai-assist (synthesis + hybrid) | 77.6% |
 | Memobase | 75.78% |
 | Mem0 | ~70% |
 | ai-assist (vector baseline) | 32.0% |

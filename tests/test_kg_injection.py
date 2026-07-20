@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from ai_assist.agent import AiAssistAgent
+from ai_assist.agent import AiAssistAgent, _extract_date_range
 from ai_assist.config import AiAssistConfig
 from ai_assist.knowledge_graph import KnowledgeGraph
 
@@ -156,7 +156,7 @@ class TestGetKgLearningsSection:
             )
         agent = _make_agent(kg=kg)
         section = agent._get_kg_learnings_section()
-        assert len(section) <= 2000  # 1500 cap + header
+        assert len(section) <= 3600  # 3000 cap + header
 
     def test_learnings_in_system_prompt(self):
         kg = KnowledgeGraph(":memory:")
@@ -185,7 +185,7 @@ class TestGetKgLearningsSection:
         section = agent._get_kg_learnings_section()
         # Count lesson entries (lines starting with "- [")
         lesson_lines = [line for line in section.split("\n") if line.strip().startswith("- [")]
-        assert len(lesson_lines) <= 5
+        assert len(lesson_lines) <= 10
 
     def test_learnings_ranked_by_semantic_similarity(self):
         """Results are ranked by semantic relevance to the query"""
@@ -278,7 +278,7 @@ class TestGetKgAutoContextSection:
         agent._current_query_text = "Show me the build jobs"
         section = agent._get_kg_auto_context_section()
         entity_lines = [line for line in section.split("\n") if line.strip().startswith("- [")]
-        assert len(entity_lines) <= 5
+        assert len(entity_lines) <= 10
 
     def test_deduplication(self):
         kg = KnowledgeGraph(":memory:")
@@ -308,6 +308,54 @@ class TestGetKgAutoContextSection:
         agent._current_query_text = "What is the critical production issue?"
         prompt = _prompt_text(agent._build_system_prompt())
         assert "Relevant Context" in prompt
+
+
+class TestExtractDateRange:
+    def test_month_day_year(self):
+        result = _extract_date_range("What happened on January 15, 2024?")
+        assert result is not None
+        after, before = result
+        assert after == datetime(2023, 12, 1)
+        assert before == datetime(2024, 3, 1)
+
+    def test_month_year(self):
+        result = _extract_date_range("What changed in March 2025?")
+        assert result is not None
+        after, before = result
+        assert after == datetime(2025, 2, 1)
+        assert before == datetime(2025, 5, 1)
+
+    def test_no_date(self):
+        assert _extract_date_range("What is the weather?") is None
+
+    def test_december_wraps_year(self):
+        result = _extract_date_range("What happened in December 2024?")
+        assert result is not None
+        after, before = result
+        assert after == datetime(2024, 11, 1)
+        assert before == datetime(2025, 2, 1)
+
+    def test_temporal_search_in_learnings(self):
+        """Agent retrieves temporally-relevant facts when query mentions a date."""
+        kg = KnowledgeGraph(":memory:")
+        kg.insert_knowledge(
+            entity_type="project_context",
+            key="march_event",
+            content="Team offsite in Austin",
+            confidence=0.9,
+            valid_from=datetime(2024, 3, 15),
+        )
+        kg.insert_knowledge(
+            entity_type="project_context",
+            key="june_event",
+            content="Product launch in Berlin",
+            confidence=0.9,
+            valid_from=datetime(2024, 6, 10),
+        )
+        agent = _make_agent(kg=kg)
+        agent._current_query_text = "What happened in March 2024?"
+        section = agent._get_kg_learnings_section()
+        assert "Austin" in section
 
 
 class TestNoKgPrefix:
