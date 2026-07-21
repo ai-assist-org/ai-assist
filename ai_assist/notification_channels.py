@@ -1,6 +1,7 @@
 """Notification channel implementations"""
 
 import json
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -64,6 +65,7 @@ class FileNotificationChannel:
             "title": notification.title,
             "message": notification.message,
             "action_id": notification.action_id,
+            "pid": os.getpid(),
         }
 
         # Append as JSONL

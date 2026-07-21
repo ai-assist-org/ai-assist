@@ -55,6 +55,7 @@ class QueryTrace:
     # Metadata
     model: str = ""
     tools_available_count: int = 0
+    pid: int = 0
 
     # Dedup
     duplicate_tool_calls: int = 0

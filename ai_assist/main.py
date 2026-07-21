@@ -682,6 +682,16 @@ async def main_async():
 
     setup_logging()
 
+    # Rotate old trace and audit entries on startup (best-effort)
+    try:
+        from .audit import AuditLogger
+        from .eval import TraceStore
+
+        TraceStore().cleanup()
+        AuditLogger().cleanup()
+    except Exception:
+        pass
+
     # Check for --dev flag and enable code watching
     dev_mode = "--dev" in sys.argv
     if dev_mode:

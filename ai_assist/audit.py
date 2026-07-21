@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 import re
 import time
 from datetime import datetime, timedelta
@@ -77,6 +78,7 @@ class AuditLogger:
             "result_summary": result_summary,
             "success": success,
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "pid": os.getpid(),
         }
 
         # Log to standard logger for log file visibility

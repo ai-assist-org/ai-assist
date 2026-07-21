@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import os
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -36,6 +37,7 @@ class ScheduledAction(BaseModel):
     status: str = "pending"  # "pending", "executing", "completed", "failed"
     result: str | None = None  # Execution result
     executed_at: datetime | None = None
+    pid: int = Field(default_factory=os.getpid)
 
 
 class ScheduledActionManager:

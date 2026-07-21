@@ -1,6 +1,7 @@
 """Tests for audit logging of tool calls"""
 
 import json
+import os
 import time
 
 import pytest
@@ -45,6 +46,7 @@ def test_audit_log_written_on_tool_call(logger, audit_dir):
     assert entry["success"] is True
     assert "timestamp" in entry
     assert "result_summary" in entry
+    assert entry["pid"] == os.getpid()
 
 
 def test_audit_log_sanitizes_secrets(logger, audit_dir):

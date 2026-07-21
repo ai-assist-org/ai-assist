@@ -2,10 +2,11 @@
 
 import json
 import logging
+import os
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from rich.console import Console
 from rich.panel import Panel
 
@@ -28,6 +29,7 @@ class BridgeEvent(BaseModel):
     body: str
     event_data: dict = {}
     level: str = "info"  # "info", "success", "warning", "error"
+    pid: int = Field(default_factory=os.getpid)
 
 
 class BridgePublisher:
