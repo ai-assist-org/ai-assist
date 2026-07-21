@@ -489,6 +489,13 @@ class AWLRuntime:
                 if missing_vars:
                     exposed = await self._retry_expose_extraction(task, response, exposed, missing_vars)
 
+                # Fallback: extract from === SECTION === markers in reports read during this task
+                missing_vars = [v for v in task.expose if v not in exposed]
+                if missing_vars:
+                    report_exposed = self._extract_from_report_sections(task, tool_calls_before, missing_vars)
+                    if report_exposed:
+                        exposed.update(report_exposed)
+
             self._variables.update(exposed)
             outcome = TaskOutcome(status="success", summary=response[:200], exposed=exposed)
             self._task_outcomes.append(outcome)
@@ -581,6 +588,85 @@ class AWLRuntime:
         except Exception as e:
             logger.warning("AWL task '%s': nudge failed: %s", task.task_id, e)
         return partial_exposed
+
+    def _extract_from_report_sections(
+        self,
+        task: TaskNode,
+        tool_calls_before: int,
+        missing_vars: list[str],
+    ) -> dict[str, Any]:
+        """Extract exposed vars from === SECTION === markers in reports read during the task.
+
+        When the model fails to emit a JSON block (and the nudge also fails),
+        fall back to parsing the report files that were read during the task.
+        Reports use === VAR_NAME === markers to delimit sections.
+        """
+        # Find report content from tool calls made during this task
+        report_contents: list[str] = []
+        for tc in self._agent.last_tool_calls[tool_calls_before:]:
+            if tc.get("tool_name") == "internal__read_report" and isinstance(tc.get("result"), str):
+                report_contents.append(tc["result"])
+
+        if not report_contents:
+            return {}
+
+        # Build lookups for matching section names to expose var names.
+        # "needs_code_changes" matches "=== NEEDS CODE CHANGES ===" (exact after normalization)
+        # "pr_comments_summary" matches "=== COMMENTS SUMMARY ===" (var name ends with section name)
+        var_lookup: dict[str, str] = {}  # normalized section name -> expose var name
+        for v in missing_vars:
+            var_lookup[v.lower().replace(" ", "_")] = v
+
+        def _match_section(section_normalized: str) -> str | None:
+            """Match a section name to an expose var, with suffix matching."""
+            if section_normalized in var_lookup:
+                return var_lookup[section_normalized]
+            for var_norm, var_orig in var_lookup.items():
+                if var_norm.endswith(section_normalized):
+                    return var_orig
+            return None
+
+        result: dict[str, Any] = {}
+        section_pattern = re.compile(r"^===\s+(.+?)\s+===$", re.MULTILINE)
+        # Sections end at the next === marker OR a --- separator line
+        section_end_pattern = re.compile(r"^(?:===\s|---\s*$)", re.MULTILINE)
+
+        for content in report_contents:
+            markers = list(section_pattern.finditer(content))
+            for _i, match in enumerate(markers):
+                section_name = match.group(1).strip().lower().replace(" ", "_")
+                var_name = _match_section(section_name)
+                if var_name is None:
+                    continue
+
+                # Extract content between this marker and the next section/separator
+                start = match.end()
+                end_match = section_end_pattern.search(content, start)
+                section_text = content[start : end_match.start() if end_match else len(content)].strip()
+
+                # Convert simple values
+                lower = section_text.lower()
+                if lower == "true":
+                    result[var_name] = True
+                elif lower == "false":
+                    result[var_name] = False
+                elif lower == "[]":
+                    result[var_name] = []
+                else:
+                    result[var_name] = section_text
+
+            if set(missing_vars) <= set(result.keys()):
+                break
+
+        if result:
+            logger.info(
+                "AWL task '%s': report fallback recovered vars: %s",
+                task.task_id,
+                list(result.keys()),
+            )
+            print(f"    [+] report fallback recovered: {list(result.keys())}")
+
+        return result
 
     def _execute_set(self, node: SetNode):
         self._variables[node.variable] = self._expr.interpolate(node.value, self._variables)
