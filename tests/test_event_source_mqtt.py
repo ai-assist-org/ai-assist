@@ -56,7 +56,7 @@ class TestMqttEventSource:
         source = MqttEventSource({})
         assert source.broker == "localhost"
         assert source.port == 1883
-        assert source.client_id == "ai-assist"
+        assert source.client_id.startswith("ai-assist-")
         assert source.username is None
 
     @pytest.mark.asyncio

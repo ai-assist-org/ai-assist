@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import os
 from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import Any
@@ -17,7 +18,8 @@ class MqttEventSource(EventSource):
     def __init__(self, config: dict[str, Any]) -> None:
         self.broker = config.get("broker", "localhost")
         self.port = config.get("port", 1883)
-        self.client_id = config.get("client_id", "ai-assist")
+        default_id = f"ai-assist-{os.getpid()}"
+        self.client_id = config.get("client_id", default_id)
         self.username = config.get("username")
         self.password = config.get("password")
         self._subscriptions: dict[str, list[str]] = {}  # topic_pattern -> [task_name, ...]
@@ -48,6 +50,9 @@ class MqttEventSource(EventSource):
     async def _listen(self) -> None:
         import aiomqtt
 
+        backoff = 5.0
+        max_backoff = 300.0
+
         while self._running:
             try:
                 async with aiomqtt.Client(
@@ -60,6 +65,7 @@ class MqttEventSource(EventSource):
                     for topic_pattern in self._subscriptions:
                         await client.subscribe(topic_pattern)
                     logger.info("MQTT connected to %s:%d", self.broker, self.port)
+                    backoff = 5.0
 
                     async for message in client.messages:
                         event = EventContext(
@@ -82,5 +88,6 @@ class MqttEventSource(EventSource):
             except asyncio.CancelledError:
                 break
             except Exception:
-                logger.exception("MQTT connection error, reconnecting in 5s")
-                await asyncio.sleep(5.0)
+                logger.exception("MQTT connection error, reconnecting in %.0fs", backoff)
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, max_backoff)
