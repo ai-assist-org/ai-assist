@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import os
 import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -110,6 +111,7 @@ class BackgroundTaskManager:
             "message": body,
             "level": level,
             "channels": ["file"],
+            "pid": os.getpid(),
         }
         with open(self.notifications_file, "a") as f:
             f.write(json.dumps(notification) + "\n")

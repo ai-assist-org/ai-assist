@@ -146,10 +146,14 @@ async def run_awl_script(
             lines.append(f"Success: {state.success_reason}")
         return "\n".join(lines)
 
-    from .awl_runtime import AWLRuntime
+    from .awl_runtime import AWLRuntime, AWLRuntimeError
 
     runtime = AWLRuntime(agent, verbose=verbose)
-    result = await runtime.execute(workflow, variables=merged)
+    try:
+        result = await runtime.execute(workflow, variables=merged)
+    except AWLRuntimeError as e:
+        logger.error("AWL workflow aborted: %s", e)
+        raise RuntimeError(f"AWL workflow aborted: {e}") from e
     if not result.success:
         raise RuntimeError(
             f"AWL workflow failed: {result.task_outcomes[-1].summary if result.task_outcomes else 'unknown error'}"

@@ -47,6 +47,7 @@ class TaskOutcome:
     status: str
     summary: str
     exposed: dict[str, Any] = field(default_factory=dict)
+    expose_methods: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -423,6 +424,23 @@ class AWLRuntime:
         logger.info("AWL task '%s' starting", task.task_id)
         model_info = f" (model={task.model})" if task.model else ""
         print(f"  > task '{task.task_id}'{model_info} ...", flush=True)
+
+        # Pre-extract: if all expose vars can be found in existing reports, skip the model call
+        if task.expose:
+            pre_exposed = self._pre_extract_from_reports(task)
+            if pre_exposed and all(v in pre_exposed for v in task.expose):
+                expose_methods = dict.fromkeys(pre_exposed, "pre_extract")
+                self._variables.update(pre_exposed)
+                outcome = TaskOutcome(
+                    status="success",
+                    summary="pre-extracted from reports",
+                    exposed=pre_exposed,
+                    expose_methods=expose_methods,
+                )
+                self._task_outcomes.append(outcome)
+                self._log_exposed(task, pre_exposed, expose_methods)
+                return
+
         try:
             callback = self._progress_callback if self._verbose else None
             # During AWL tasks, use renderer for inner execution (no noisy text)
@@ -481,49 +499,14 @@ class AWLRuntime:
                 for line in details:
                     print(line)
 
-            exposed = self._extract_exposed(response, task.expose)
-
-            # Retry: if exposed vars are missing, nudge the agent to emit the JSON block
-            if task.expose:
-                missing_vars = [v for v in task.expose if v not in exposed]
-                if missing_vars:
-                    exposed = await self._retry_expose_extraction(task, response, exposed, missing_vars)
+            exposed, expose_methods = await self._resolve_exposed(task, response, tool_calls_before)
 
             self._variables.update(exposed)
-            outcome = TaskOutcome(status="success", summary=response[:200], exposed=exposed)
+            outcome = TaskOutcome(
+                status="success", summary=response[:200], exposed=exposed, expose_methods=expose_methods
+            )
             self._task_outcomes.append(outcome)
-
-            # Log exposed variables and default missing ones to None
-            if task.expose:
-                missing_vars = [v for v in task.expose if v not in exposed]
-                if missing_vars:
-                    logger.warning(
-                        "AWL task '%s': expected exposed vars %s but got %s (missing: %s)",
-                        task.task_id,
-                        task.expose,
-                        list(exposed.keys()),
-                        missing_vars,
-                    )
-                    print(f"    [!] missing exposed vars: {missing_vars}")
-                    # Default missing vars to None so downstream @if checks
-                    # evaluate to False instead of triggering "undefined variable"
-                    for var in missing_vars:
-                        self._variables[var] = None
-
-            if exposed:
-                for key, val in exposed.items():
-                    val_str = str(val)
-                    if len(val_str) > 200:
-                        val_str = val_str[:200] + "..."
-                    print(f"    [+] {key} = {val_str}")
-                logger.info(
-                    "AWL task '%s' succeeded, exposed: %s",
-                    task.task_id,
-                    {k: repr(v)[:100] for k, v in exposed.items()},
-                )
-            else:
-                print("    [+] success")
-                logger.info("AWL task '%s' succeeded (no exposed vars)", task.task_id)
+            self._log_exposed(task, exposed, expose_methods)
         except Exception as e:
             outcome = TaskOutcome(status="failed", summary=str(e))
             self._task_outcomes.append(outcome)
@@ -531,6 +514,82 @@ class AWLRuntime:
             print(f"    [-] failed: {e}")
             if self._loop_depth == 0 and "continue-on-failure" not in task.hints:
                 raise _TaskFailedError(f"Task '{task.task_id}' failed: {e}") from e
+
+    async def _resolve_exposed(
+        self,
+        task: TaskNode,
+        response: str,
+        tool_calls_before: int,
+    ) -> tuple[dict[str, Any], dict[str, str]]:
+        """Run the full expose extraction chain: json → nudge → response sections → report sections."""
+        exposed = self._extract_exposed(response, task.expose)
+        expose_methods: dict[str, str] = dict.fromkeys(exposed, "json")
+
+        if not task.expose:
+            return exposed, expose_methods
+
+        missing_vars = [v for v in task.expose if v not in exposed]
+        if missing_vars:
+            exposed = await self._retry_expose_extraction(task, response, exposed, missing_vars)
+            for v in exposed:
+                if v not in expose_methods:
+                    expose_methods[v] = "nudge"
+
+        missing_vars = [v for v in task.expose if v not in exposed]
+        if missing_vars:
+            response_exposed = self._extract_from_response_sections(task, response, missing_vars)
+            if response_exposed:
+                exposed.update(response_exposed)
+                for v in response_exposed:
+                    expose_methods[v] = "response_sections"
+
+        missing_vars = [v for v in task.expose if v not in exposed]
+        if missing_vars:
+            report_exposed = self._extract_from_report_sections(task, tool_calls_before, missing_vars)
+            if report_exposed:
+                exposed.update(report_exposed)
+                for v in report_exposed:
+                    expose_methods[v] = "report_sections"
+
+        return exposed, expose_methods
+
+    def _log_exposed(
+        self,
+        task: TaskNode,
+        exposed: dict[str, Any],
+        expose_methods: dict[str, str],
+    ) -> None:
+        """Log exposed variables and default missing ones to None."""
+        if task.expose:
+            missing_vars = [v for v in task.expose if v not in exposed]
+            if missing_vars:
+                logger.warning(
+                    "AWL task '%s': expected exposed vars %s but got %s (missing: %s)",
+                    task.task_id,
+                    task.expose,
+                    list(exposed.keys()),
+                    missing_vars,
+                )
+                print(f"    [!] missing exposed vars: {missing_vars}")
+                for var in missing_vars:
+                    self._variables[var] = None
+
+        if exposed:
+            for key, val in exposed.items():
+                val_str = str(val)
+                if len(val_str) > 200:
+                    val_str = val_str[:200] + "..."
+                method = expose_methods.get(key, "unknown")
+                print(f"    [+] {key} = {val_str} (via {method})")
+            logger.info(
+                "AWL task '%s' succeeded, exposed: %s, methods: %s",
+                task.task_id,
+                {k: repr(v)[:100] for k, v in exposed.items()},
+                expose_methods,
+            )
+        else:
+            print("    [+] success")
+            logger.info("AWL task '%s' succeeded (no exposed vars)", task.task_id)
 
     async def _retry_expose_extraction(
         self,
@@ -582,6 +641,143 @@ class AWLRuntime:
             logger.warning("AWL task '%s': nudge failed: %s", task.task_id, e)
         return partial_exposed
 
+    @staticmethod
+    def _parse_section_markers(text: str, missing_vars: list[str]) -> dict[str, Any]:
+        """Parse === SECTION === markers from text and match to expose var names.
+
+        Supports exact match after normalization (spaces→underscores, lowered)
+        and suffix matching (e.g. var "pr_comments_summary" matches section
+        "COMMENTS SUMMARY" because the var name ends with "comments_summary").
+
+        Sections are terminated by the next === marker or a --- separator line.
+        """
+        section_pattern = re.compile(r"^(?:#+ +)?===\s+(.+?)\s+===$", re.MULTILINE)
+        section_end_pattern = re.compile(r"^(?:===\s|---\s*$)", re.MULTILINE)
+
+        var_lookup: dict[str, str] = {}
+        for v in missing_vars:
+            var_lookup[v.lower().replace(" ", "_")] = v
+
+        def _match_section(section_normalized: str) -> str | None:
+            if section_normalized in var_lookup:
+                return var_lookup[section_normalized]
+            for var_norm, var_orig in var_lookup.items():
+                if var_norm.endswith(section_normalized):
+                    return var_orig
+            return None
+
+        result: dict[str, Any] = {}
+        markers = list(section_pattern.finditer(text))
+        for _i, match in enumerate(markers):
+            section_name = match.group(1).strip().lower().replace(" ", "_")
+            var_name = _match_section(section_name)
+            if var_name is None:
+                continue
+
+            start = match.end()
+            end_match = section_end_pattern.search(text, start)
+            section_text = text[start : end_match.start() if end_match else len(text)].strip()
+
+            # If the first non-empty line is a simple value, use only that line
+            # (ignore trailing commentary/notes that the model may have added)
+            first_line = section_text.split("\n", 1)[0].strip().lower()
+            if first_line in ("true", "false", "[]"):
+                if first_line == "true":
+                    result[var_name] = True
+                elif first_line == "false":
+                    result[var_name] = False
+                else:
+                    result[var_name] = []
+            else:
+                result[var_name] = section_text
+
+        return result
+
+    def _pre_extract_from_reports(self, task: TaskNode) -> dict[str, Any]:
+        """Extract from reports referenced in the task goal by name."""
+        report_tools = getattr(self._agent, "report_tools", None)
+        if report_tools is None:
+            return {}
+        reports_dir = report_tools.reports_dir
+        if not reports_dir.is_dir():
+            return {}
+
+        # Only scan reports whose name appears in the interpolated task goal
+        goal = self._expr.interpolate(task.goal, self._variables)
+        result: dict[str, Any] = {}
+        for report_file in sorted(reports_dir.glob("*.md")):
+            stem = report_file.stem
+            if stem not in goal:
+                continue
+            try:
+                content = report_file.read_text()
+            except OSError:
+                continue
+            missing = [v for v in task.expose if v not in result]
+            if not missing:
+                break
+            parsed = self._parse_section_markers(content, missing)
+            result.update(parsed)
+
+        if result:
+            logger.info(
+                "AWL task '%s': pre-extracted from reports: %s",
+                task.task_id,
+                list(result.keys()),
+            )
+            print(f"    [+] pre-extracted from reports: {list(result.keys())}")
+
+        return result
+
+    def _extract_from_response_sections(
+        self,
+        task: TaskNode,
+        response: str,
+        missing_vars: list[str],
+    ) -> dict[str, Any]:
+        """Extract exposed vars from === SECTION === markers in the agent's text response."""
+        result = self._parse_section_markers(response, missing_vars)
+        if result:
+            logger.info(
+                "AWL task '%s': response section fallback recovered vars: %s",
+                task.task_id,
+                list(result.keys()),
+            )
+            print(f"    [+] response section fallback recovered: {list(result.keys())}")
+        return result
+
+    def _extract_from_report_sections(
+        self,
+        task: TaskNode,
+        tool_calls_before: int,
+        missing_vars: list[str],
+    ) -> dict[str, Any]:
+        """Extract exposed vars from === SECTION === markers in reports read during the task."""
+        report_contents: list[str] = []
+        for tc in self._agent.last_tool_calls[tool_calls_before:]:
+            if tc.get("tool_name") == "internal__read_report" and isinstance(tc.get("result"), str):
+                report_contents.append(tc["result"])
+
+        if not report_contents:
+            return {}
+
+        result: dict[str, Any] = {}
+        for content in report_contents:
+            parsed = self._parse_section_markers(content, missing_vars)
+            result.update(parsed)
+            if set(missing_vars) <= set(result.keys()):
+                break
+
+        if result:
+            logger.info(
+                "AWL task '%s': report fallback recovered vars: %s",
+                task.task_id,
+                list(result.keys()),
+            )
+            print(f"    [+] report fallback recovered: {list(result.keys())}")
+
+        return result
+
     def _execute_set(self, node: SetNode):
         self._variables[node.variable] = self._expr.interpolate(node.value, self._variables)
 
@@ -620,10 +816,13 @@ class AWLRuntime:
         collection = self._variables.get(node.collection, [])
         collection = self._coerce_to_list(collection, node.collection)
         if not isinstance(collection, list | tuple):
-            raise AWLRuntimeError(
+            msg = (
                 f"@loop '{node.collection}' is not a list (got {type(collection).__name__}). "
                 f"Ensure the task exposes it as a JSON array."
             )
+            logger.error("AWL %s", msg)
+            print(f"  [-] {msg}")
+            return
 
         items = collection
         if node.limit is not None:

@@ -1,6 +1,7 @@
 """Tests for the agent evaluation framework (eval.py)"""
 
 import json
+import os
 from datetime import datetime, timedelta
 
 from ai_assist.eval import EvalMetrics, QueryEvaluator, QueryTrace, TraceStore
@@ -71,6 +72,7 @@ class TestQueryTrace:
         assert trace.total_input_tokens == 0
         assert trace.model == ""
         assert trace.duplicate_tool_calls == 0
+        assert trace.pid == 0
 
 
 class TestTraceStore:
@@ -335,6 +337,7 @@ class TestCaptureTrace:
         assert len(trace.tool_calls) == 1
         # Results should NOT be in the trace (keeps traces small)
         assert "result" not in trace.tool_calls[0]
+        assert trace.pid == os.getpid()
 
     def test_capture_trace_uses_last_turn_count(self):
         """capture_trace reads _last_turn_count when turn_count not passed"""

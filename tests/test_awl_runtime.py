@@ -1212,6 +1212,82 @@ class TestExtractExposed:
         result = rt._extract_exposed('{"a": 1}', [])
         assert result == {}
 
+    def test_values_in_prose_not_extracted(self, mock_agent):
+        """Values present in prose but not in a JSON block are not extracted.
+
+        Reproduces the pattern from expose-tool-failure-analysis.md:
+        the model describes the values in natural language (e.g. after a
+        think call) but never emits the JSON block.
+        """
+        rt = self._make_runtime(mock_agent)
+        response = (
+            "After analyzing the PR, I can see that needs_code_changes is true. "
+            "The fix_plan is to update the config parser to handle nested keys. "
+            "There are no companion_repos affected. "
+            "The PR comments highlight a missing test case."
+        )
+        result = rt._extract_exposed(
+            response,
+            ["needs_code_changes", "fix_plan", "companion_repos", "pr_comments_summary"],
+        )
+        assert result == {}
+
+
+@pytest.mark.asyncio
+async def test_expose_fails_when_model_ends_after_think(mock_agent, runtime, capsys):
+    """Expose fails when the model describes values in prose but omits the JSON block.
+
+    Reproduces the core failure from expose-tool-failure-analysis.md:
+    1. Task response contains correct values in natural language (as if
+       the model "thought about" them) but no JSON block
+    2. Nudge retry also fails to produce a JSON block
+    3. Downstream @if takes the wrong branch because vars default to None
+    """
+    mock_agent.query.side_effect = [
+        # Task response: values described in prose, no JSON block
+        (
+            "I've analyzed the PR and found the following:\n\n"
+            "needs_code_changes is true because the config parser doesn't handle nested keys.\n\n"
+            "The fix_plan should be:\n"
+            "1. Update parse_config() to recursively process nested dicts\n"
+            "2. Add test coverage for nested key scenarios\n\n"
+            "No companion_repos are affected.\n\n"
+            "The pr_comments_summary: reviewers noted missing test coverage."
+        ),
+        # Nudge also returns prose instead of JSON
+        (
+            "Based on the output above:\n"
+            "- needs_code_changes = true\n"
+            "- fix_plan = update parse_config and add tests\n"
+            "- companion_repos = none\n"
+            "- pr_comments_summary = missing test coverage"
+        ),
+        # Else-branch task (should not reach then-branch)
+        "No changes to apply.",
+    ]
+    workflow = WorkflowNode(
+        body=[
+            TaskNode(
+                task_id="extract",
+                goal="Extract PR decisions.",
+                expose=["needs_code_changes", "fix_plan", "companion_repos", "pr_comments_summary"],
+            ),
+            IfNode(
+                expression="needs_code_changes",
+                then_body=[TaskNode(task_id="apply_fixes", goal="Apply code fixes.")],
+                else_body=[TaskNode(task_id="skip", goal="Skip fixes.")],
+            ),
+        ]
+    )
+    result = await runtime.execute(workflow)
+    assert result.success is True
+    # 3 calls: extract + nudge + skip (else branch, because vars defaulted to None)
+    assert mock_agent.query.call_count == 3
+    captured = capsys.readouterr()
+    assert "missing exposed vars" in captured.out
+    # The then-branch should NOT have run
+    assert "apply_fixes" not in captured.out
+
 
 # ── @wait runtime tests ──────────────────────────────────────────
 

@@ -1306,7 +1306,7 @@ Do NOT compact if you still need the old tool results for your current task.
 
         try:
             output = await run_awl_script(script_path, self.agent, variables=variables or None)
-        except AWLRuntimeError as e:
+        except (AWLRuntimeError, RuntimeError) as e:
             return json.dumps(
                 {
                     "error": f"AWL Runtime Error: {e}",

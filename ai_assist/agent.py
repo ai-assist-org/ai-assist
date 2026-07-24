@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import os
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -1111,6 +1112,7 @@ class AiAssistAgent:
             model=self.config.model,
             tools_available_count=len(self.available_tools),
             duplicate_tool_calls=getattr(self, "_duplicate_tool_call_count", 0),
+            pid=os.getpid(),
         )
 
     @staticmethod
@@ -1711,6 +1713,7 @@ class AiAssistAgent:
             else:
                 return await self._query_inner(prompt, messages, max_turns, progress_callback, max_time_seconds)
         except TimeoutError:
+            logger.warning("Task timed out after %d seconds (asyncio timeout)", max_time_seconds)
             return f"Task timeout after {max_time_seconds} seconds (max: {max_time_seconds}s)"
         finally:
             self._query_depth -= 1
@@ -1795,6 +1798,7 @@ class AiAssistAgent:
             elapsed = time.time() - start_time
             if elapsed > effective_max_time:
                 self._last_turn_count = turn + 1
+                logger.warning("Time budget exhausted after %d seconds (max: %ds)", int(elapsed), effective_max_time)
                 return f"Task timeout after {int(elapsed)} seconds (max: {effective_max_time}s)"
             if progress_callback:
                 progress_callback("calling_claude", turn + 1, max_turns, None)
@@ -1899,6 +1903,7 @@ class AiAssistAgent:
             except BadRequestError as e:
                 # Context limit or invalid request - return error to agent
                 error_msg = str(e)
+                logger.warning("API BadRequestError: %s", error_msg)
                 if "too long" in error_msg.lower() or "prompt" in error_msg.lower() or "context" in error_msg.lower():
                     return (
                         f"API Error: {error_msg}\n\n"
@@ -1916,6 +1921,7 @@ class AiAssistAgent:
                 return f"API Error: {error_msg}"
             except RateLimitError as e:
                 # Rate limit - agent should retry later
+                logger.warning("API rate limit exceeded: %s", e)
                 return (
                     f"API Rate Limit Error: {str(e)}\n\n"
                     f"The API rate limit has been exceeded. Please:\n"
@@ -1925,6 +1931,7 @@ class AiAssistAgent:
                 )
             except APIConnectionError as e:
                 # Network/connection issues
+                logger.warning("API connection error: %s", e)
                 return (
                     f"API Connection Error: {str(e)}\n\n"
                     f"Could not connect to the API. This could be due to:\n"
@@ -1935,6 +1942,7 @@ class AiAssistAgent:
                 )
             except APIError as e:
                 error_msg = str(e)
+                logger.warning("API error: %s", error_msg)
                 if "overloaded" in error_msg.lower():
                     return (
                         "The API is currently overloaded (all retry attempts failed). "
@@ -1948,6 +1956,7 @@ class AiAssistAgent:
 
             if getattr(response, "stop_reason", None) == "refusal":
                 self._last_turn_count = turn + 1
+                logger.warning("Model declined request for safety reasons")
                 return "The model declined this request for safety reasons."
 
             messages.append({"role": "assistant", "content": _serialize_content(response.content)})
@@ -1964,6 +1973,7 @@ class AiAssistAgent:
                 # Find the looping tool name for the error message
                 tool_blocks = [b for b in response.content if b.type == "tool_use"]
                 loop_name = tool_blocks[-1].name if tool_blocks else "unknown"
+                logger.warning("Tool loop detected: %s called repeatedly with same arguments", loop_name)
                 return f"Loop detected: {loop_name} called repeatedly with same arguments"
 
             if not tool_results:
@@ -2008,6 +2018,7 @@ class AiAssistAgent:
                 )
 
         self._last_turn_count = max_turns
+        logger.warning("Tool budget exhausted: reached maximum %d turns without final answer", max_turns)
         return "Maximum turns reached without final answer"
 
     async def query_streaming(
@@ -2097,6 +2108,9 @@ class AiAssistAgent:
                     elapsed = time.time() - start_time
                     if elapsed > max_time_seconds:
                         self._last_turn_count = turn + 1
+                        logger.warning(
+                            "Time budget exhausted after %d seconds (max: %ds)", int(elapsed), max_time_seconds
+                        )
                         yield {
                             "type": "error",
                             "message": f"Task timeout after {int(elapsed)} seconds (max: {max_time_seconds}s)",
@@ -2204,6 +2218,7 @@ class AiAssistAgent:
 
                         if getattr(final_message, "stop_reason", None) == "refusal":
                             self._last_turn_count = turn + 1
+                            logger.warning("Model declined request for safety reasons")
                             yield {"type": "error", "message": "The model declined this request for safety reasons."}
                             return
 
@@ -2233,6 +2248,7 @@ class AiAssistAgent:
                             self._last_turn_count = turn + 1
                             tool_blocks = [b for b in final_message.content if b.type == "tool_use"]
                             loop_name = tool_blocks[-1].name if tool_blocks else "unknown"
+                            logger.warning("Tool loop detected: %s called repeatedly with same arguments", loop_name)
                             yield {
                                 "type": "error",
                                 "message": f"Loop detected: {loop_name} called repeatedly with same arguments",
@@ -2273,6 +2289,7 @@ class AiAssistAgent:
                     error_msg = str(e)
 
                     if "overloaded" in error_msg.lower():
+                        logger.warning("API overloaded: %s", error_msg)
                         yield {
                             "type": "error",
                             "message": (
@@ -2286,6 +2303,7 @@ class AiAssistAgent:
                     if isinstance(e, BadRequestError) and (
                         "too long" in error_msg.lower() or "prompt" in error_msg.lower()
                     ):
+                        logger.warning("API BadRequestError (context too large): %s", error_msg)
                         # Calculate message stats for helpful error message
                         messages_chars = sum(len(str(m.get("content", ""))) for m in messages)
                         system_chars = sum(len(b["text"]) for b in system_prompt) if "system_prompt" in locals() else 0
@@ -2309,12 +2327,14 @@ class AiAssistAgent:
                             ),
                         }
                     else:
+                        logger.warning("API error: %s", error_msg)
                         yield {"type": "error", "message": error_msg}
 
                     return
 
             # Max turns reached
             self._last_turn_count = max_turns
+            logger.warning("Tool budget exhausted: reached maximum %d turns without final answer", max_turns)
             yield {"type": "error", "message": "Maximum turns reached without final answer"}
         finally:
             self._query_depth -= 1
