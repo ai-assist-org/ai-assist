@@ -357,3 +357,53 @@ class TestCaptureTrace:
         trace = agent.capture_trace("test query", "test response", start)
 
         assert trace.turn_count == 15
+
+
+class TestCostFields:
+    """Tests for cost tracking in QueryTrace and EvalMetrics"""
+
+    def test_query_trace_cost_field_default(self):
+        trace = QueryTrace(query_text="test", timestamp="2026-01-01T00:00:00")
+        assert trace.total_cost_usd == 0.0
+
+    def test_query_trace_cost_roundtrip(self):
+        trace = QueryTrace(
+            query_text="test",
+            timestamp="2026-01-01T00:00:00",
+            total_cost_usd=0.0123,
+        )
+        line = trace.to_jsonl_line()
+        data = json.loads(line)
+        restored = QueryTrace.from_json(data)
+        assert abs(restored.total_cost_usd - 0.0123) < 1e-10
+
+    def test_backward_compat_no_cost_field(self):
+        data = {
+            "query_text": "old trace",
+            "timestamp": "2025-01-01T00:00:00",
+            "total_input_tokens": 100,
+            "total_output_tokens": 50,
+        }
+        trace = QueryTrace.from_json(data)
+        assert trace.total_cost_usd == 0.0
+
+    def test_eval_metrics_cost_aggregation(self):
+        traces = [
+            QueryTrace(
+                query_text="q1",
+                timestamp="2026-01-01T00:00:00",
+                total_cost_usd=0.01,
+                total_input_tokens=100,
+                total_output_tokens=50,
+            ),
+            QueryTrace(
+                query_text="q2",
+                timestamp="2026-01-01T01:00:00",
+                total_cost_usd=0.03,
+                total_input_tokens=200,
+                total_output_tokens=100,
+            ),
+        ]
+        metrics = QueryEvaluator.evaluate_traces(traces)
+        assert abs(metrics.total_cost_usd - 0.04) < 1e-10
+        assert abs(metrics.avg_cost_per_query_usd - 0.02) < 1e-10

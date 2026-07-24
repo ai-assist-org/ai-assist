@@ -13,6 +13,7 @@ INTERACTIVE_COMMANDS = [
     "/kg-viz",
     "/awl-viz",
     "/eval-stats",
+    "/cost",
     "/bg",
     "/plan",
 ]
@@ -36,6 +37,7 @@ CLI_COMMANDS = [
     "/kg-viz",
     "/awl-viz",
     "/eval-stats",
+    "/cost",
     "/sandbox",
     "/service",
     "/help",

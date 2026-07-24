@@ -98,7 +98,7 @@ eval/runs/ai-assist-internal-tools/2026-06-02-claude-sonnet-4-6/
       output/
         response.txt        # agent response
         tool_calls.json     # tools called [{name, input}]
-        metrics.json        # token usage, turns, model
+        metrics.json        # token usage, turns, model, cost_usd
       run_result.json       # exit code, duration, cost
       stdout.log
       stderr.log
@@ -113,3 +113,5 @@ eval/runs/ai-assist-internal-tools/2026-06-02-claude-sonnet-4-6/
 ## Cost
 
 Each case makes 1-3 LLM API calls (agent query). With `claude-sonnet-4-6`, a full 15-case run costs approximately $0.10-0.30 depending on tool call complexity.
+
+Token costs are automatically tracked in query traces (`~/.ai-assist/traces/query_traces.jsonl`) with per-turn `cost_usd` and per-query `total_cost_usd` fields. Use `/cost` or `/cost 30d` to view cost summaries, or `/eval-stats` for aggregate metrics including cost.

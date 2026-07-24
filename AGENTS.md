@@ -273,8 +273,16 @@ Files: `background_tasks.py`, `background_task_tools.py`
 - `allowed_commands.json` - User-approved shell commands
 - `skill_env.json` - Per-skill env var allowlists
 - `scheduled-actions.json` - One-time future actions
+- `traces/query_traces.jsonl` - Per-query traces with token usage and cost (100-day retention)
 - `events.jsonl` - Event bridge (monitor→interactive IPC)
 - `interactive_history.txt` - Command history
+
+**Cost tracking** (`pricing.py`, `eval.py`):
+- Token costs are computed locally using hardcoded per-model pricing in `MODEL_PRICING` (`pricing.py`).
+  Prices are **not** available from the Anthropic API; update `MODEL_PRICING` when Anthropic publishes new rates
+  (see https://docs.anthropic.com/en/docs/about-claude/models).
+- Costs are recorded per-turn in `_track_token_usage()` and aggregated per-query in `QueryTrace.total_cost_usd`.
+- Commands: `/cost [period]` for cost summary, `/eval-stats` for aggregate metrics including cost.
 
 Files: `config.py`, `state.py`, `config_watcher.py`, `file_watchdog.py`
 
