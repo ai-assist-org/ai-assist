@@ -356,7 +356,7 @@ def test_open_awl_visualization_file_not_found(mock_open):
 
 
 def test_node_styles_coverage():
-    expected = ["task", "if", "loop", "while", "wait", "notify", "set", "return", "fail", "goal"]
+    expected = ["task", "if", "loop", "while", "wait", "notify", "set", "return", "fail", "continue", "break", "goal"]
     for node_type in expected:
         assert node_type in NODE_STYLES
         assert "color" in NODE_STYLES[node_type]

@@ -4,6 +4,8 @@ import re
 
 from .awl_ast import (
     ASTNode,
+    BreakNode,
+    ContinueNode,
     FailNode,
     GoalNode,
     IfNode,
@@ -103,6 +105,10 @@ class AWLParser:
                 nodes.append(self._parse_return())
             elif line.startswith("@fail"):
                 nodes.append(self._parse_fail())
+            elif line.startswith("@continue"):
+                nodes.append(self._parse_continue())
+            elif line.startswith("@break"):
+                nodes.append(self._parse_break())
             elif line.startswith("@goal "):
                 nodes.append(self._parse_goal())
             elif line.startswith("@wait "):
@@ -366,3 +372,19 @@ class AWLParser:
             raise ParseError(self._pos + 1, "@fail requires a message")
         self._advance()
         return FailNode(message=message)
+
+    def _parse_continue(self) -> ContinueNode:
+        line = self._require_line()
+        message = line.removeprefix("@continue").strip()
+        if not message:
+            raise ParseError(self._pos + 1, "@continue requires a message")
+        self._advance()
+        return ContinueNode(message=message)
+
+    def _parse_break(self) -> BreakNode:
+        line = self._require_line()
+        message = line.removeprefix("@break").strip()
+        if not message:
+            raise ParseError(self._pos + 1, "@break requires a message")
+        self._advance()
+        return BreakNode(message=message)

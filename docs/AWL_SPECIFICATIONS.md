@@ -80,6 +80,8 @@ AWL defines the following directives.
 | @if | conditional execution |
 | @else | alternate branch |
 | @loop | iterate collection |
+| @continue | skip current loop iteration |
+| @break | exit loop early |
 | @return | return workflow result |
 | @goal | autonomous goal pursuit |
 
@@ -366,6 +368,64 @@ abort vs. alternative path.
 **Agent guidance**: When a task's upstream service is unavailable or returns an
 error, do NOT expose the expected variables — leave them unset. The script can
 then detect the failure with `@if not <variable>` and abort with `@fail`.
+
+---
+
+## @continue
+
+Skips the rest of the current loop iteration and proceeds to the next item
+(like Python's `continue`). Only valid inside `@loop` or `@while` blocks.
+Outside a loop, behaves like `@fail`.
+
+Syntax:
+
+@continue <message>
+
+The message is required and supports `${variable}` interpolation. It is logged
+for debugging. When used inside a `@loop` with `collect=`, skipped iterations
+contribute nothing to the collected results.
+
+Example — skip a loop iteration when a task returns unexpected state:
+
+@loop pull_requests as pr
+  @task checkout_branch
+    goal: Check out the branch for PR ${pr.number}.
+    Expose: branch_ready
+  @end
+  @if branch_ready == 'unknown'
+    @continue checkout nudged -- branch state unknown, skipping PR ${pr.number}
+  @end
+  @task analyze_pr
+    goal: Analyze the PR.
+  @end
+@end
+
+---
+
+## @break
+
+Exits the enclosing loop immediately (like Python's `break`). Only valid
+inside `@loop` or `@while` blocks. Outside a loop, behaves like `@fail`.
+
+Syntax:
+
+@break <message>
+
+The message is required and supports `${variable}` interpolation. When used
+inside a `@loop` with `collect=`, items collected before `@break` are preserved.
+
+Example — stop processing after finding the first match:
+
+@loop candidates as candidate
+  @task evaluate
+    goal: Evaluate ${candidate}.
+    Expose: score
+  @end
+  @if score > 90
+    @set winner ${candidate}
+    @break found a winner with score ${score}
+  @end
+@end
 
 ---
 
