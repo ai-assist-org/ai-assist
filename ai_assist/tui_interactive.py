@@ -6,7 +6,6 @@ import logging
 import os
 import sys
 import threading
-import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -186,7 +185,6 @@ async def query_with_feedback(
     from ai_assist.output import RichRenderer
 
     identity = get_identity()
-    start_time = time.time()
 
     # Detect @no-kg prefix: skip enrichment (agent handles flag and stripping)
     no_kg = prompt.lstrip().startswith("@no-kg")
@@ -262,16 +260,6 @@ async def query_with_feedback(
             console.print(
                 f"[dim]💾 Saved {kg_saved_count} entit{'y' if kg_saved_count == 1 else 'ies'} to knowledge graph[/dim]"
             )
-
-        # Capture trace before clearing tool calls (best-effort)
-        try:
-            from .eval import TraceStore
-
-            turn: int = last_turn
-            trace = agent.capture_trace(prompt, full_response, start_time, turn)
-            TraceStore().append(trace)
-        except Exception:
-            pass  # Never break the user flow
 
         # Clear tool calls for next query
         agent.clear_tool_calls()
@@ -895,7 +883,6 @@ async def tui_interactive_mode(agent: AiAssistAgent, state_manager: StateManager
                         # The prompt has been injected into 'messages' and is the last user message
                         try:
                             console.print()  # Blank line before response
-                            prompt_start_time = time.time()
 
                             # Use streaming query with the messages that now include the prompt
                             full_response = ""
@@ -921,15 +908,6 @@ async def tui_interactive_mode(agent: AiAssistAgent, state_manager: StateManager
                                 console.print(
                                     f"[dim]💾 Saved {kg_saved_count} entit{'y' if kg_saved_count == 1 else 'ies'} to knowledge graph[/dim]"
                                 )
-
-                            # Capture trace before clearing tool calls (best-effort)
-                            try:
-                                from .eval import TraceStore
-
-                                trace = agent.capture_trace(user_input, full_response, prompt_start_time)
-                                TraceStore().append(trace)
-                            except Exception:
-                                pass  # Never break the user flow
 
                             agent.clear_tool_calls()
 
@@ -1052,6 +1030,12 @@ async def tui_interactive_mode(agent: AiAssistAgent, state_manager: StateManager
 
                 if user_input.lower() == "/eval-stats":
                     await handle_eval_stats_command(console)
+                    continue
+
+                if user_input.lower().startswith("/cost"):
+                    parts = user_input.strip().split()
+                    period = parts[1] if len(parts) > 1 else None
+                    await handle_cost_command(console, period)
                     continue
 
                 if user_input.lower().startswith("/plan "):
@@ -1341,11 +1325,46 @@ async def handle_eval_stats_command(console: Console):
     table.add_row("Avg turns", f"{metrics.avg_turns:.1f}")
     table.add_row("Avg total tokens", f"{metrics.avg_total_tokens:,}")
     table.add_row("Avg duration", f"{metrics.avg_duration_seconds:.1f}s")
+    table.add_row("Total cost", f"${metrics.total_cost_usd:.4f}")
+    table.add_row("Avg cost per query", f"${metrics.avg_cost_per_query_usd:.4f}")
     table.add_row("Avg duplicate tool calls", f"{metrics.avg_duplicate_tool_calls:.1f}")
     table.add_row("Queries with duplicates", str(metrics.queries_with_duplicates))
 
     console.print()
     console.print(table)
+    console.print()
+
+
+async def handle_cost_command(console: Console, period: str | None = None):
+    """Handle /cost command - show token cost summary"""
+    from .eval import compute_cost_summary
+
+    result = compute_cost_summary(period)
+    if isinstance(result, str):
+        console.print(f"\n[yellow]{result}[/yellow]\n")
+        return
+
+    table = Table(title=f"Cost Summary ({result.label}, {result.query_count} queries)")
+    table.add_column("Metric", style="cyan")
+    table.add_column("Value", style="green")
+
+    table.add_row("Total cost", f"${result.total_cost:.4f}")
+    table.add_row("Avg cost/query", f"${result.avg_cost:.4f}")
+    table.add_row("Total input tokens", f"{result.total_input_tokens:,}")
+    table.add_row("Total output tokens", f"{result.total_output_tokens:,}")
+
+    console.print()
+    console.print(table)
+
+    if result.cost_by_model:
+        model_table = Table(title="Cost by Model")
+        model_table.add_column("Model", style="cyan")
+        model_table.add_column("Cost", style="green")
+        model_table.add_column("Queries", style="yellow")
+        for model in sorted(result.cost_by_model, key=lambda m: result.cost_by_model[m], reverse=True):
+            model_table.add_row(model, f"${result.cost_by_model[model]:.4f}", str(result.queries_by_model[model]))
+        console.print(model_table)
+
     console.print()
 
 
@@ -1506,6 +1525,7 @@ async def handle_help_command(console: Console):
 - `/bg cancel [id]` - Cancel a background task (or all if no id)
 - `/plan <task>` - Plan a task before executing (explore → approve → execute)
 - `/eval-stats` - Show evaluation metrics from query traces
+- `/cost [period]` - Show token cost summary (e.g. `/cost 7d`, `/cost 30d`)
 - `/mcp/restart <server>` - Restart an MCP server (picks up binary updates)
 - `/exit` or `/quit` - Exit interactive mode
 - `/help` - Show this help

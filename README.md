@@ -143,6 +143,8 @@ uv run ai-assist
 - `/skill/add_env <skill> <VAR>` - Allow an environment variable for a skill's scripts
 - `/skill/remove_env <skill> <VAR>` - Remove an allowed env var from a skill
 - `/skill/list_env [skill]` - Show allowed env vars for skills
+- `/eval-stats` - Show evaluation metrics from query traces
+- `/cost [period]` - Show token cost summary (e.g. `/cost 7d`, `/cost 30d`)
 - `/plan <task>` - Plan a task before executing (explore → approve → execute)
 - `/mcp/restart <server>` - Restart an MCP server (picks up binary updates)
 - `/help` - Show help

@@ -1047,18 +1047,28 @@ class AiAssistAgent:
         if hasattr(usage, "service_tier") and usage.service_tier:
             entry["service_tier"] = usage.service_tier
 
+        try:
+            from .pricing import compute_turn_cost
+
+            entry["cost_usd"] = compute_turn_cost(self.config.model, entry)
+        except Exception:
+            entry["cost_usd"] = 0.0
+
         self._turn_token_usage.append(entry)
 
         # Warn if approaching context limit
-        context_window = self.get_context_window_size()
-        utilization = usage.input_tokens / context_window
-        if utilization >= self.CONTEXT_BUDGET_WARNING_THRESHOLD:
-            logging.warning(
-                "Context budget warning: using %d/%d tokens (%.0f%% of context window)",
-                usage.input_tokens,
-                context_window,
-                utilization * 100,
-            )
+        try:
+            context_window = self.get_context_window_size()
+            utilization = usage.input_tokens / context_window
+            if utilization >= self.CONTEXT_BUDGET_WARNING_THRESHOLD:
+                logging.warning(
+                    "Context budget warning: using %d/%d tokens (%.0f%% of context window)",
+                    usage.input_tokens,
+                    context_window,
+                    utilization * 100,
+                )
+        except TypeError, ValueError:
+            pass
 
     def get_token_usage(self) -> list[dict[str, Any]]:
         """Get per-turn token usage from the last query.
@@ -1097,6 +1107,7 @@ class AiAssistAgent:
         total_input = sum(t.get("input_tokens", 0) for t in token_usage)
         total_output = sum(t.get("output_tokens", 0) for t in token_usage)
         total_thinking = sum(t.get("thinking_tokens", 0) for t in token_usage)
+        total_cost = sum(t.get("cost_usd", 0.0) for t in token_usage)
 
         return QueryTrace(
             query_text=query_text,
@@ -1108,12 +1119,23 @@ class AiAssistAgent:
             total_input_tokens=total_input,
             total_output_tokens=total_output,
             total_thinking_tokens=total_thinking,
+            total_cost_usd=total_cost,
             duration_seconds=round(time.time() - start_time, 2),
             model=self.config.model,
             tools_available_count=len(self.available_tools),
             duplicate_tool_calls=getattr(self, "_duplicate_tool_call_count", 0),
             pid=os.getpid(),
         )
+
+    def _auto_capture_trace(self, query_text: str, response_text: str, start_time: float):
+        """Persist a trace after query/query_streaming completes."""
+        try:
+            from .eval import TraceStore
+
+            trace = self.capture_trace(query_text, response_text, start_time)
+            TraceStore().append(trace)
+        except Exception:
+            logger.debug("Failed to auto-capture trace", exc_info=True)
 
     @staticmethod
     def _mask_old_observations(messages: list, keep_recent: int = 10) -> None:
@@ -1704,21 +1726,27 @@ class AiAssistAgent:
         is_outermost = self._query_depth == 1
         if is_outermost and max_time_seconds:
             self._query_deadline = time.time() + max_time_seconds
+        query_text = prompt or ""
+        start_time = time.time()
+        result = ""
         try:
             if max_time_seconds:
-                return await asyncio.wait_for(
+                result = await asyncio.wait_for(
                     self._query_inner(prompt, messages, max_turns, progress_callback, max_time_seconds),
                     timeout=max_time_seconds,
                 )
             else:
-                return await self._query_inner(prompt, messages, max_turns, progress_callback, max_time_seconds)
+                result = await self._query_inner(prompt, messages, max_turns, progress_callback, max_time_seconds)
+            return result
         except TimeoutError:
             logger.warning("Task timed out after %d seconds (asyncio timeout)", max_time_seconds)
-            return f"Task timeout after {max_time_seconds} seconds (max: {max_time_seconds}s)"
+            result = f"Task timeout after {max_time_seconds} seconds (max: {max_time_seconds}s)"
+            return result
         finally:
             self._query_depth -= 1
             if is_outermost:
                 self._query_deadline = None
+                self._auto_capture_trace(query_text, result, start_time)
 
     async def _query_inner(
         self,
@@ -2059,6 +2087,10 @@ class AiAssistAgent:
 
         # Track nesting depth for _no_kg reset logic
         self._query_depth += 1
+        is_outermost = self._query_depth == 1
+        query_text = prompt or ""
+        start_time = time.time()
+        accumulated_text = []
         try:
             # Capture current query text for KG context injection
             if prompt:
@@ -2195,6 +2227,7 @@ class AiAssistAgent:
                                 if hasattr(event.delta, "text"):
                                     chunk = event.delta.text
                                     current_text += chunk
+                                    accumulated_text.append(chunk)
                                     yield chunk  # Stream text to user
 
                             # Content block start - tool use
@@ -2338,6 +2371,8 @@ class AiAssistAgent:
             yield {"type": "error", "message": "Maximum turns reached without final answer"}
         finally:
             self._query_depth -= 1
+            if is_outermost:
+                self._auto_capture_trace(query_text, "".join(accumulated_text), start_time)
 
     async def execute_mcp_prompt(
         self,
@@ -3196,6 +3231,7 @@ class AiAssistAgent:
                 max_tokens=2000,
                 messages=[{"role": "user", "content": synthesis_prompt}],
             )
+            self._track_token_usage(response, turn=-1)
 
             first_block = response.content[0]
             response_text = first_block.text.strip() if hasattr(first_block, "text") else ""
@@ -3305,6 +3341,7 @@ class AiAssistAgent:
                     max_tokens=4096,
                     messages=[{"role": "user", "content": synthesis_prompt}],
                 )
+                self._track_token_usage(response, turn=-1)
 
                 first_block = response.content[0]
                 response_text = first_block.text.strip() if hasattr(first_block, "text") else ""
@@ -3511,6 +3548,7 @@ class AiAssistAgent:
                 max_tokens=8000,
                 messages=[{"role": "user", "content": prompt}],
             )
+            self._track_token_usage(response, turn=-1)
 
             first_block = response.content[0]
             response_text = first_block.text.strip() if hasattr(first_block, "text") else ""

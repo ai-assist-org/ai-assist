@@ -347,9 +347,6 @@ async def basic_interactive_mode(agent: AiAssistAgent, state_manager: StateManag
                 total_chars = sum(len(str(m.get("content", ""))) for m in messages)
 
             # Query with full message history (including any injected prompts)
-            import time
-
-            start_time = time.time()
             response = await agent.query(messages=messages)
             print(response)
             print()
@@ -364,15 +361,6 @@ async def basic_interactive_mode(agent: AiAssistAgent, state_manager: StateManag
                     print("💡 Tip: Use /clear to reset conversation history and recover from context overflow\n")
                 # Don't track API errors in conversation context
             else:
-                # Capture trace (best-effort)
-                try:
-                    from .eval import TraceStore
-
-                    trace = agent.capture_trace(user_input, response, start_time)
-                    TraceStore().append(trace)
-                except Exception:
-                    pass
-
                 # Add assistant response to messages
                 messages.append({"role": "assistant", "content": response})
 
@@ -438,20 +426,8 @@ async def run_awl_script(agent: AiAssistAgent, script_path: str, variables: dict
 
 async def run_query(agent: AiAssistAgent, query: str):
     """Run a single query"""
-    import time
-
-    start_time = time.time()
     response = await agent.query(query)
     print(response)
-
-    # Capture trace (best-effort)
-    try:
-        from .eval import TraceStore
-
-        trace = agent.capture_trace(query, response, start_time)
-        TraceStore().append(trace)
-    except Exception:
-        pass
 
 
 def kg_stats_command(kg: KnowledgeGraph):
@@ -607,8 +583,33 @@ def eval_stats_command():
     print(f"  Avg turns:              {metrics.avg_turns:.1f}")
     print(f"  Avg total tokens:       {metrics.avg_total_tokens:,}")
     print(f"  Avg duration:           {metrics.avg_duration_seconds:.1f}s")
+    print(f"  Total cost:             ${metrics.total_cost_usd:.4f}")
+    print(f"  Avg cost per query:     ${metrics.avg_cost_per_query_usd:.4f}")
     print(f"  Avg duplicate calls:    {metrics.avg_duplicate_tool_calls:.1f}")
     print(f"  Queries with duplicates:{metrics.queries_with_duplicates}")
+    print()
+
+
+def cost_command(period: str | None = None):
+    """Show token cost summary, optionally filtered by time period."""
+    from .eval import compute_cost_summary
+
+    result = compute_cost_summary(period)
+    if isinstance(result, str):
+        print(f"\n{result}\n")
+        return
+
+    print(f"\nCost Summary ({result.label}, {result.query_count} queries)")
+    print("=" * 50)
+    print(f"  Total cost:         ${result.total_cost:.4f}")
+    print(f"  Avg cost/query:     ${result.avg_cost:.4f}")
+    print(f"  Total input tokens: {result.total_input_tokens:,}")
+    print(f"  Total output tokens:{result.total_output_tokens:,}")
+
+    if result.cost_by_model:
+        print("\n  By model:")
+        for model in sorted(result.cost_by_model, key=lambda m: result.cost_by_model[m], reverse=True):
+            print(f"    {model}: ${result.cost_by_model[model]:.4f} ({result.queries_by_model[model]} queries)")
     print()
 
 
@@ -736,7 +737,7 @@ async def main_async():
     identity_commands = ["identity-show", "identity-init"]
     state_commands = ["status", "clear-cache"]
     action_commands = ["cleanup-actions"]
-    eval_commands = ["eval-stats"]
+    eval_commands = ["eval-stats", "cost"]
     service_commands = ["service"]
     sandbox_commands = ["sandbox"]
     no_agent_commands = (
@@ -812,6 +813,7 @@ async def main_async():
                 print("  /awl-viz [script]  - Visualize an AWL workflow in browser")
                 print("  /cleanup-actions   - Archive old completed/failed actions")
                 print("  /eval-stats        - Show evaluation metrics from query traces")
+                print("  /cost [period]     - Show token cost summary (e.g. /cost 7d)")
                 print("  /sandbox <sub> [name] [args]  - Manage sandboxed instances")
                 print("    init, run, stop, list, delete")
                 print("  /service <sub> [dir] [rpts]   - Manage systemd user service")
@@ -923,6 +925,9 @@ async def main_async():
                         sys.exit(1)
             elif command == "eval-stats":
                 eval_stats_command()
+            elif command == "cost":
+                period = sys.argv[2] if len(sys.argv) > 2 else None
+                cost_command(period)
             elif command == "cleanup-actions":
                 from .scheduled_actions import ScheduledActionManager
 

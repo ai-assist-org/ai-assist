@@ -34,15 +34,10 @@ class AiAssistCompleter(Completer):
     """Command completer for ai-assist interactive mode"""
 
     def __init__(self, agent=None):
+        from .commands import INTERACTIVE_COMMANDS
+
         self.agent = agent
-        self.commands = [
-            "/status",
-            "/history",
-            "/clear-cache",
-            "/clear",
-            "/kg-save",
-            "/kg-viz",
-            "/awl-viz",
+        self.commands = list(INTERACTIVE_COMMANDS) + [
             "/prompts",
             "/search",
             "/skill/install",
@@ -52,13 +47,8 @@ class AiAssistCompleter(Completer):
             "/skill/add_env",
             "/skill/remove_env",
             "/skill/list_env",
-            "/bg",
             "/bg cancel",
             "/mcp/restart",
-            "/plan",
-            "/exit",
-            "/quit",
-            "/help",
         ]
 
     @staticmethod
