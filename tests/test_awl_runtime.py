@@ -5,6 +5,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from ai_assist.awl_ast import (
+    BreakNode,
+    ContinueNode,
     FailNode,
     GoalNode,
     IfNode,
@@ -1550,3 +1552,212 @@ def test_resolve_model_aliases_nested():
     )
     _resolve_model_aliases(workflow)
     assert workflow.body[0].body[0].model == "claude-haiku-4-5"
+
+
+# ── @continue / @break tests ───────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_continue_in_loop_skips_iteration(mock_agent, runtime):
+    call_count = 0
+
+    async def mock_query(prompt, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        return f'{{"result": "ok_{call_count}"}}'
+
+    mock_agent.query = AsyncMock(side_effect=mock_query)
+    workflow = WorkflowNode(
+        body=[
+            LoopNode(
+                collection="items",
+                item_var="item",
+                body=[
+                    IfNode(
+                        expression="not item",
+                        then_body=[ContinueNode(message="skipping empty item")],
+                        else_body=[],
+                    ),
+                    TaskNode(task_id="process", goal="Process ${item}.", expose=["result"]),
+                ],
+            ),
+        ]
+    )
+    await runtime.execute(workflow, variables={"items": ["a", "", "c"]})
+    assert mock_agent.query.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_continue_in_loop_skips_collect(mock_agent, runtime):
+    call_count = 0
+
+    async def mock_query(prompt, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        return f'{{"summary": "done_{call_count}"}}'
+
+    mock_agent.query = AsyncMock(side_effect=mock_query)
+    workflow = WorkflowNode(
+        body=[
+            LoopNode(
+                collection="items",
+                item_var="item",
+                collect="results",
+                body=[
+                    IfNode(
+                        expression="not item",
+                        then_body=[ContinueNode(message="skipping")],
+                        else_body=[],
+                    ),
+                    TaskNode(task_id="analyze", goal="Analyze ${item}.", expose=["summary"]),
+                ],
+            ),
+        ]
+    )
+    result = await runtime.execute(workflow, variables={"items": ["a", "", "c"]})
+    results = result.variables["results"]
+    assert len(results) == 2
+    assert results[0] == {"summary": "done_1"}
+    assert results[1] == {"summary": "done_2"}
+
+
+@pytest.mark.asyncio
+async def test_break_in_loop_exits_early(mock_agent, runtime):
+    call_count = 0
+
+    async def mock_query(prompt, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        return f'{{"result": "ok_{call_count}"}}'
+
+    mock_agent.query = AsyncMock(side_effect=mock_query)
+    workflow = WorkflowNode(
+        body=[
+            LoopNode(
+                collection="items",
+                item_var="item",
+                body=[
+                    TaskNode(task_id="process", goal="Process ${item}.", expose=["result"]),
+                    IfNode(
+                        expression="not item",
+                        then_body=[BreakNode(message="stopping at empty item")],
+                        else_body=[],
+                    ),
+                ],
+            ),
+        ]
+    )
+    await runtime.execute(workflow, variables={"items": ["a", "b", "", "d", "e"]})
+    assert mock_agent.query.call_count == 3
+
+
+@pytest.mark.asyncio
+async def test_break_in_loop_preserves_collected(mock_agent, runtime):
+    call_count = 0
+
+    async def mock_query(prompt, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        return f'{{"summary": "done_{call_count}"}}'
+
+    mock_agent.query = AsyncMock(side_effect=mock_query)
+    workflow = WorkflowNode(
+        body=[
+            LoopNode(
+                collection="items",
+                item_var="item",
+                collect="results",
+                body=[
+                    TaskNode(task_id="analyze", goal="Analyze ${item}.", expose=["summary"]),
+                    IfNode(
+                        expression="not item",
+                        then_body=[BreakNode(message="stopping")],
+                        else_body=[],
+                    ),
+                ],
+            ),
+        ]
+    )
+    result = await runtime.execute(workflow, variables={"items": ["a", "b", "", "c"]})
+    results = result.variables["results"]
+    assert len(results) == 2
+    assert results[0] == {"summary": "done_1"}
+    assert results[1] == {"summary": "done_2"}
+
+
+@pytest.mark.asyncio
+async def test_continue_in_while(mock_agent, runtime):
+    call_count = 0
+
+    async def mock_query(prompt, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        return f'{{"counter": "{3 - call_count}"}}'
+
+    mock_agent.query = AsyncMock(side_effect=mock_query)
+    workflow = WorkflowNode(
+        body=[
+            SetNode(variable="counter", value="3"),
+            SetNode(variable="skip_flag", value="yes"),
+            WhileNode(
+                expression="counter > 0",
+                max_iterations=10,
+                body=[
+                    TaskNode(task_id="decrement", goal="Decrement.", expose=["counter"]),
+                    IfNode(
+                        expression="skip_flag",
+                        then_body=[
+                            SetNode(variable="skip_flag", value=""),
+                            ContinueNode(message="skipping once"),
+                        ],
+                        else_body=[],
+                    ),
+                    TaskNode(task_id="extra", goal="Extra work.", expose=[]),
+                ],
+            ),
+        ]
+    )
+    await runtime.execute(workflow)
+    # 3 decrement calls + 2 extra calls (first iteration skips extra via continue)
+    assert mock_agent.query.call_count == 5
+
+
+@pytest.mark.asyncio
+async def test_break_in_while(mock_agent, runtime):
+    call_count = 0
+
+    async def mock_query(prompt, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        return f'{{"val": "v{call_count}"}}'
+
+    mock_agent.query = AsyncMock(side_effect=mock_query)
+    workflow = WorkflowNode(
+        body=[
+            SetNode(variable="go", value="true"),
+            WhileNode(
+                expression="go",
+                max_iterations=100,
+                body=[
+                    TaskNode(task_id="work", goal="Do work.", expose=["val"]),
+                    BreakNode(message="done after first iteration"),
+                ],
+            ),
+        ]
+    )
+    await runtime.execute(workflow)
+    assert mock_agent.query.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_continue_outside_loop_raises(runtime):
+    workflow = WorkflowNode(body=[ContinueNode(message="nowhere to continue")])
+    with pytest.raises(AWLRuntimeError, match="@continue outside loop"):
+        await runtime.execute(workflow)
+
+
+@pytest.mark.asyncio
+async def test_break_outside_loop_raises(runtime):
+    workflow = WorkflowNode(body=[BreakNode(message="nowhere to break")])
+    with pytest.raises(AWLRuntimeError, match="@break outside loop"):
+        await runtime.execute(workflow)

@@ -3,6 +3,8 @@
 import pytest
 
 from ai_assist.awl_ast import (
+    BreakNode,
+    ContinueNode,
     FailNode,
     GoalNode,
     IfNode,
@@ -522,6 +524,56 @@ def test_parse_fail_inside_if():
 def test_parse_fail_missing_message():
     with pytest.raises(ParseError):
         AWLParser("@start\n@fail\n@end\n").parse()
+
+
+# ── @continue / @break directive tests ──────────────────────────
+
+
+def test_parse_continue_basic():
+    script = "@start\n@continue skipping this item\n@end\n"
+    result = AWLParser(script).parse()
+    assert len(result.body) == 1
+    assert isinstance(result.body[0], ContinueNode)
+    assert result.body[0].message == "skipping this item"
+
+
+def test_parse_continue_inside_loop():
+    script = "@start\n@loop items as item\n@if item == 'skip'\n@continue item is bad\n@end\n@end\n@end\n"
+    result = AWLParser(script).parse()
+    loop = result.body[0]
+    assert isinstance(loop, LoopNode)
+    if_node = loop.body[0]
+    assert isinstance(if_node, IfNode)
+    assert if_node.expression == "item == 'skip'"
+    assert isinstance(if_node.then_body[0], ContinueNode)
+    assert if_node.then_body[0].message == "item is bad"
+
+
+def test_parse_continue_missing_message():
+    with pytest.raises(ParseError):
+        AWLParser("@start\n@continue\n@end\n").parse()
+
+
+def test_parse_break_basic():
+    script = "@start\n@break no more items\n@end\n"
+    result = AWLParser(script).parse()
+    assert len(result.body) == 1
+    assert isinstance(result.body[0], BreakNode)
+    assert result.body[0].message == "no more items"
+
+
+def test_parse_break_inside_while():
+    script = "@start\n@while counter > 0\n@break done early\n@end\n@end\n"
+    result = AWLParser(script).parse()
+    while_node = result.body[0]
+    assert isinstance(while_node, WhileNode)
+    assert isinstance(while_node.body[0], BreakNode)
+    assert while_node.body[0].message == "done early"
+
+
+def test_parse_break_missing_message():
+    with pytest.raises(ParseError):
+        AWLParser("@start\n@break\n@end\n").parse()
 
 
 # ── @goal directive tests ────────────────────────────────────────
