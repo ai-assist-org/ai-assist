@@ -1,10 +1,15 @@
 """Shared AWL script execution for action engine, task runner, CLI, and agent tools."""
 
 import atexit
+import fcntl
+import hashlib
+import json
 import logging
+import os
 import shutil
 import tempfile
 from datetime import UTC, datetime
+from io import TextIOWrapper
 from pathlib import Path
 from typing import Any
 
@@ -98,6 +103,28 @@ def load_awl_workflow(prompt: str):
     return AWLParser(source).parse(), awl_path
 
 
+def _try_lock_script(resolved_path: Path) -> TextIOWrapper | None:
+    """Try to acquire a cross-process exclusive lock for an AWL script.
+
+    Returns the open file handle (keeping the lock alive) on success,
+    or None if the script is already locked by another execution.
+    """
+    locks_dir = get_config_dir() / "locks"
+    locks_dir.mkdir(parents=True, exist_ok=True)
+
+    path_hash = hashlib.sha256(str(resolved_path).encode()).hexdigest()[:16]
+    lock_file = locks_dir / f"{path_hash}.lock"
+
+    try:
+        fh = lock_file.open("w")
+        fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fh.write(str(resolved_path))
+        fh.flush()
+        return fh
+    except OSError:
+        return None
+
+
 def get_missing_variables(workflow, variables: dict[str, Any] | None = None) -> set[str]:
     """Return input variables required by the workflow but absent from the provided dict."""
     from .awl_runtime import _compute_input_variables
@@ -128,34 +155,70 @@ async def run_awl_script(
     merged = _merge_all_variables(variables)
 
     workflow, _awl_path = load_awl_workflow(prompt)
-    has_goal = any(isinstance(n, GoalNode) for n in workflow.body)
 
-    if has_goal:
-        from .goal_runner import GoalRunner
-        from .goal_state import GoalStateManager
-
-        state_manager = GoalStateManager(get_config_dir() / "state")
-        runner = GoalRunner(_awl_path, agent, state_manager, initial_variables=merged)
-        runner.load()
-        await runner.run_cycle()
-
-        lines = [f"Goal '{runner.goal_id}' cycle completed."]
-        state = state_manager.load(runner.goal_id)
-        lines.append(f"Status: {state.status} | Cycles: {state.cycle_count}")
-        if state.success_reason:
-            lines.append(f"Success: {state.success_reason}")
-        return "\n".join(lines)
-
-    from .awl_runtime import AWLRuntime, AWLRuntimeError
-
-    runtime = AWLRuntime(agent, verbose=verbose)
-    try:
-        result = await runtime.execute(workflow, variables=merged)
-    except AWLRuntimeError as e:
-        logger.error("AWL workflow aborted: %s", e)
-        raise RuntimeError(f"AWL workflow aborted: {e}") from e
-    if not result.success:
-        raise RuntimeError(
-            f"AWL workflow failed: {result.task_outcomes[-1].summary if result.task_outcomes else 'unknown error'}"
+    lock_fh = _try_lock_script(_awl_path)
+    if lock_fh is None:
+        logger.warning(
+            "AWL script lock rejected: %s",
+            json.dumps(
+                {
+                    "event": "awl_lock_rejected",
+                    "script": prompt,
+                    "resolved_path": str(_awl_path),
+                    "pid": os.getpid(),
+                }
+            ),
         )
-    return result.return_value or "Workflow completed successfully."
+        return f"Skipped: '{prompt}' is already running in another session."
+
+    import time
+
+    _lock_log_ctx = {
+        "script": prompt,
+        "resolved_path": str(_awl_path),
+        "pid": os.getpid(),
+    }
+    logger.info(
+        "AWL script lock acquired: %s",
+        json.dumps({"event": "awl_lock_acquired", **_lock_log_ctx}),
+    )
+    _lock_start = time.monotonic()
+    try:
+        has_goal = any(isinstance(n, GoalNode) for n in workflow.body)
+
+        if has_goal:
+            from .goal_runner import GoalRunner
+            from .goal_state import GoalStateManager
+
+            state_manager = GoalStateManager(get_config_dir() / "state")
+            runner = GoalRunner(_awl_path, agent, state_manager, initial_variables=merged)
+            runner.load()
+            await runner.run_cycle()
+
+            lines = [f"Goal '{runner.goal_id}' cycle completed."]
+            state = state_manager.load(runner.goal_id)
+            lines.append(f"Status: {state.status} | Cycles: {state.cycle_count}")
+            if state.success_reason:
+                lines.append(f"Success: {state.success_reason}")
+            return "\n".join(lines)
+
+        from .awl_runtime import AWLRuntime, AWLRuntimeError
+
+        runtime = AWLRuntime(agent, verbose=verbose)
+        try:
+            result = await runtime.execute(workflow, variables=merged)
+        except AWLRuntimeError as e:
+            logger.error("AWL workflow aborted: %s", e)
+            raise RuntimeError(f"AWL workflow aborted: {e}") from e
+        if not result.success:
+            raise RuntimeError(
+                f"AWL workflow failed: {result.task_outcomes[-1].summary if result.task_outcomes else 'unknown error'}"
+            )
+        return result.return_value or "Workflow completed successfully."
+    finally:
+        duration = round(time.monotonic() - _lock_start, 2)
+        lock_fh.close()
+        logger.info(
+            "AWL script lock released: %s",
+            json.dumps({"event": "awl_lock_released", "duration_s": duration, **_lock_log_ctx}),
+        )
