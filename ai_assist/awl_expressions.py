@@ -23,6 +23,81 @@ def _parse_str_to_collection(val: str) -> Any:
     return val
 
 
+_TWO_CHAR_OPS = frozenset({">=", "<=", "!=", "=="})
+_ONE_CHAR_OPS = frozenset({">", "<"})
+_OP_CHARS = frozenset({"!", ">", "<", "="})
+
+NOT = "NOT"
+OP = "OP"
+STR = "STR"
+VALUE = "VALUE"
+
+
+_SMART_QUOTE_MAP = str.maketrans(
+    {
+        "‘": "'",
+        "’": "'",  # smart single quotes
+        "“": '"',
+        "”": '"',  # smart double quotes
+    }
+)
+
+
+def _tokenize(expression: str) -> list[tuple[str, str]]:
+    """Tokenize an AWL expression into (type, value) pairs."""
+    expression = expression.translate(_SMART_QUOTE_MAP)
+    tokens: list[tuple[str, str]] = []
+    i = 0
+    n = len(expression)
+
+    while i < n:
+        if expression[i].isspace():
+            i += 1
+            continue
+
+        # Quoted string literal
+        if expression[i] in ("'", '"'):
+            quote = expression[i]
+            j = i + 1
+            while j < n and expression[j] != quote:
+                j += 1
+            if j >= n:
+                raise ValueError(f"Unterminated string literal starting at position {i}")
+            tokens.append((STR, expression[i : j + 1]))
+            i = j + 1
+            continue
+
+        # Two-char operator
+        if i + 1 < n and expression[i : i + 2] in _TWO_CHAR_OPS:
+            tokens.append((OP, expression[i : i + 2]))
+            i += 2
+            continue
+
+        # One-char operator
+        if expression[i] in _ONE_CHAR_OPS:
+            tokens.append((OP, expression[i]))
+            i += 1
+            continue
+
+        # Value token: consume until whitespace, operator char, or quote
+        j = i
+        while (
+            j < n and not expression[j].isspace() and expression[j] not in _OP_CHARS and expression[j] not in ("'", '"')
+        ):
+            j += 1
+        if j == i:
+            # Unrecognized char (e.g. bare '=' or '!') — consume it so we don't loop forever
+            j += 1
+        tokens.append((VALUE, expression[i:j]))
+        i = j
+
+    # Convert leading "not" value to NOT token
+    if tokens and tokens[0] == (VALUE, "not"):
+        tokens[0] = (NOT, "not")
+
+    return tokens
+
+
 class AWLExpressionEvaluator:
     def is_truthy(self, value: Any) -> bool:
         if value is None:
@@ -50,37 +125,45 @@ class AWLExpressionEvaluator:
     }
 
     def evaluate(self, expression: str, variables: dict[str, Any]) -> Any:
-        expression = expression.strip()
+        tokens = _tokenize(expression.strip())
 
-        if expression.startswith("not "):
-            inner = expression[4:].strip()
-            return not self.is_truthy(self.evaluate(inner, variables))
+        if not tokens:
+            return None
 
-        for op in [">=", "<=", "!=", "==", ">", "<"]:
-            if op in expression:
-                left_str, right_str = expression.split(op, 1)
-                left_val = self._resolve_value(left_str.strip(), variables)
-                right_val = self._resolve_value(right_str.strip(), variables)
+        # not <sub-expression>
+        if tokens[0][0] == NOT:
+            rest = expression.strip()[4:].strip()
+            return not self.is_truthy(self.evaluate(rest, variables))
 
-                if isinstance(left_val, int | float) and isinstance(right_val, str):
-                    try:
-                        right_val = type(left_val)(right_val)
-                    except ValueError, TypeError:
-                        pass
-                elif isinstance(right_val, int | float) and isinstance(left_val, str):
-                    try:
-                        left_val = type(right_val)(left_val)
-                    except ValueError, TypeError:
-                        pass
+        # <value> <op> <value>
+        if len(tokens) == 3 and tokens[1][0] == OP:
+            left_val = self._resolve_value(tokens[0], variables)
+            right_val = self._resolve_value(tokens[2], variables)
+            op = tokens[1][1]
 
-                if left_val is None or right_val is None:
-                    if op in ("==", "!="):
-                        return self._OPS[op](left_val, right_val)
-                    return False
+            if isinstance(left_val, int | float) and not isinstance(left_val, bool) and isinstance(right_val, str):
+                try:
+                    right_val = type(left_val)(right_val)
+                except ValueError, TypeError:
+                    pass
+            elif isinstance(right_val, int | float) and not isinstance(right_val, bool) and isinstance(left_val, str):
+                try:
+                    left_val = type(right_val)(left_val)
+                except ValueError, TypeError:
+                    pass
 
-                return self._OPS[op](left_val, right_val)
+            if left_val is None or right_val is None:
+                if op in ("==", "!="):
+                    return self._OPS[op](left_val, right_val)
+                return False
 
-        return self._resolve_value(expression, variables)
+            return self._OPS[op](left_val, right_val)
+
+        # Single value
+        if len(tokens) == 1:
+            return self._resolve_value(tokens[0], variables)
+
+        return None
 
     @staticmethod
     def _strip_quotes(val: Any) -> Any:
@@ -91,7 +174,13 @@ class AWLExpressionEvaluator:
                 return stripped[1:-1]
         return val
 
-    def _resolve_value(self, expr: str, variables: dict[str, Any]) -> Any:
+    def _resolve_value(self, token: tuple[str, str], variables: dict[str, Any]) -> Any:  # noqa: PLR0911
+        tok_type, expr = token
+
+        # String literal — return inner content
+        if tok_type == STR:
+            return expr[1:-1]
+
         expr = expr.strip()
 
         len_match = re.match(r"len\((\w+)\)", expr)
@@ -130,53 +219,58 @@ class AWLExpressionEvaluator:
 
         return self._strip_quotes(variables.get(expr))
 
-    # Valid token: variable, len(var), var[N], var.prop, or numeric literal
-    _TOKEN_RE = re.compile(r"^(len\(\w+\)|\w+\[\d+\]|\w+\.\w+|\w+|\d+(\.\d+)?)$")
+    # Valid token: variable, len(var), var[N], var.prop, numeric literal, or string literal
+    _TOKEN_RE = re.compile(r"^(len\(\w+\)|\w+\[\d+\]|\w+\.\w+|\w+|\d+(\.\d+)?|'[^']*'|\"[^\"]*\")$")
 
-    def _validate_token(self, token: str) -> None:
-        if not self._TOKEN_RE.match(token):
-            raise ValueError(f"Invalid expression token: '{token}'")
+    def _validate_token(self, token: tuple[str, str]) -> None:
+        if token[0] == STR:
+            return
+        if not self._TOKEN_RE.match(token[1]):
+            raise ValueError(f"Invalid expression token: '{token[1]}'")
 
     def validate_expression(self, expression: str) -> None:
         expression = expression.strip()
         if not expression:
             raise ValueError("Empty expression")
 
-        if expression.startswith("not "):
-            inner = expression[4:].strip()
-            self.validate_expression(inner)
+        tokens = _tokenize(expression)
+
+        # not <sub-expression>
+        if tokens and tokens[0][0] == NOT:
+            rest = expression[4:].strip()
+            self.validate_expression(rest)
             return
 
-        for op in [">=", "<=", "!=", "==", ">", "<"]:
-            if op in expression:
-                left, right = expression.split(op, 1)
-                left, right = left.strip(), right.strip()
-                if not left:
-                    raise ValueError(f"Missing left operand before '{op}'")
-                if not right:
-                    raise ValueError(f"Missing right operand after '{op}'")
-                self._validate_token(left)
-                self._validate_token(right)
-                return
+        # <value> <op> <value>
+        if len(tokens) == 3 and tokens[1][0] == OP:
+            self._validate_token(tokens[0])
+            self._validate_token(tokens[2])
+            return
 
-        self._validate_token(expression)
+        # Single value
+        if len(tokens) == 1:
+            self._validate_token(tokens[0])
+            return
+
+        raise ValueError(f"Invalid expression: '{expression}'")
 
     def extract_variables(self, expression: str) -> set[str]:
         """Extract variable names referenced in an expression."""
         expression = expression.strip()
+        tokens = _tokenize(expression)
         variables: set[str] = set()
 
-        if expression.startswith("not "):
+        if not tokens:
+            return variables
+
+        # not <sub-expression>
+        if tokens[0][0] == NOT:
             return self.extract_variables(expression[4:].strip())
 
-        for op in [">=", "<=", "!=", "==", ">", "<"]:
-            if op in expression:
-                left, right = expression.split(op, 1)
-                variables |= self._extract_token_variable(left.strip())
-                variables |= self._extract_token_variable(right.strip())
-                return variables
+        for token in tokens:
+            if token[0] == VALUE:
+                variables |= self._extract_token_variable(token[1])
 
-        variables |= self._extract_token_variable(expression)
         return variables
 
     def _extract_token_variable(self, token: str) -> set[str]:
@@ -217,7 +311,7 @@ class AWLExpressionEvaluator:
     def interpolate(self, text: str, variables: dict[str, Any]) -> str:
         def replacer(match: re.Match) -> str:
             expr = match.group(1)
-            val = self._resolve_value(expr, variables)
+            val = self._resolve_value((VALUE, expr), variables)
             if val is None:
                 return match.group(0)
             return str(val)

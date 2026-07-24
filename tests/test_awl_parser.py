@@ -538,12 +538,13 @@ def test_parse_continue_basic():
 
 
 def test_parse_continue_inside_loop():
-    script = "@start\n@loop items as item\n@if not item\n@continue item is bad\n@end\n@end\n@end\n"
+    script = "@start\n@loop items as item\n@if item == 'skip'\n@continue item is bad\n@end\n@end\n@end\n"
     result = AWLParser(script).parse()
     loop = result.body[0]
     assert isinstance(loop, LoopNode)
     if_node = loop.body[0]
     assert isinstance(if_node, IfNode)
+    assert if_node.expression == "item == 'skip'"
     assert isinstance(if_node.then_body[0], ContinueNode)
     assert if_node.then_body[0].message == "item is bad"
 

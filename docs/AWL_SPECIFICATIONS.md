@@ -473,6 +473,11 @@ Supported operations:
 | index | handlers[0] |
 | length | len(handlers) |
 | comparison | len(handlers) > 0 |
+| string literal | status == 'unknown' |
+
+String literals use single or double quotes (`'value'` or `"value"`). Smart/curly
+quotes are automatically normalized to straight quotes. Comparison operators:
+`==`, `!=`, `>`, `<`, `>=`, `<=`.
 
 ---
 

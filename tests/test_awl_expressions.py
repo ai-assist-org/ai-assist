@@ -281,3 +281,49 @@ class TestJsonStringHandling:
         """len() on a single dict string returns key count"""
         result = evaluator.evaluate("len(item)", {"item": "{'id': 'abc', 'name': 'test'}"})
         assert result == 2
+
+
+class TestStringLiterals:
+    def test_equality_single_quotes(self, evaluator):
+        result = evaluator.evaluate("status == 'unknown'", {"status": "unknown"})
+        assert result is True
+
+    def test_equality_single_quotes_false(self, evaluator):
+        result = evaluator.evaluate("status == 'unknown'", {"status": "ready"})
+        assert result is False
+
+    def test_equality_double_quotes(self, evaluator):
+        result = evaluator.evaluate('status == "unknown"', {"status": "unknown"})
+        assert result is True
+
+    def test_not_equals_string(self, evaluator):
+        result = evaluator.evaluate("status != 'done'", {"status": "running"})
+        assert result is True
+
+    def test_string_with_operator_chars(self, evaluator):
+        """String literals containing operator characters don't break parsing"""
+        result = evaluator.evaluate("msg == 'a>=b'", {"msg": "a>=b"})
+        assert result is True
+
+    def test_validate_string_literal(self, evaluator):
+        evaluator.validate_expression("status == 'unknown'")
+
+    def test_validate_double_quoted(self, evaluator):
+        evaluator.validate_expression('status == "running"')
+
+    def test_extract_variables_ignores_string(self, evaluator):
+        result = evaluator.extract_variables("status == 'unknown'")
+        assert result == {"status"}
+
+    def test_smart_quotes_normalized(self, evaluator):
+        result = evaluator.evaluate("status == ‘unknown’", {"status": "unknown"})
+        assert result is True
+
+    def test_bool_not_coerced_to_string(self, evaluator):
+        """Boolean True should not match string 'unknown' via bool('unknown') coercion"""
+        result = evaluator.evaluate("branch_ready == 'unknown'", {"branch_ready": True})
+        assert result is False
+
+    def test_unterminated_string_raises(self, evaluator):
+        with pytest.raises(ValueError, match="Unterminated string"):
+            evaluator.validate_expression("status == 'oops")
