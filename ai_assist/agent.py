@@ -446,6 +446,9 @@ class AiAssistAgent:
         # Current query text for KG context injection
         self._current_query_text: str = ""
 
+        # Top-level script path for cost attribution (set by run_awl_script / execute_mcp_prompt)
+        self._current_script_path: str = ""
+
     def get_max_tokens(self) -> int:
         """Get max output tokens for the current model
 
@@ -1123,6 +1126,7 @@ class AiAssistAgent:
             duration_seconds=round(time.time() - start_time, 2),
             model=self.config.model,
             tools_available_count=len(self.available_tools),
+            script_path=self._current_script_path,
             duplicate_tool_calls=getattr(self, "_duplicate_tool_call_count", 0),
             pid=os.getpid(),
         )
@@ -1729,6 +1733,9 @@ class AiAssistAgent:
         query_text = prompt or ""
         start_time = time.time()
         result = ""
+        # Save per-query state so nested calls don't clobber the outer query's tracking
+        saved_token_usage = self._turn_token_usage
+        saved_tool_calls = self.last_tool_calls
         try:
             if max_time_seconds:
                 result = await asyncio.wait_for(
@@ -1743,10 +1750,13 @@ class AiAssistAgent:
             result = f"Task timeout after {max_time_seconds} seconds (max: {max_time_seconds}s)"
             return result
         finally:
+            self._auto_capture_trace(query_text, result, start_time)
             self._query_depth -= 1
             if is_outermost:
                 self._query_deadline = None
-                self._auto_capture_trace(query_text, result, start_time)
+            else:
+                self._turn_token_usage = saved_token_usage
+                self.last_tool_calls = saved_tool_calls
 
     async def _query_inner(
         self,
@@ -2091,6 +2101,9 @@ class AiAssistAgent:
         query_text = prompt or ""
         start_time = time.time()
         accumulated_text = []
+        # Save per-query state so nested calls don't clobber the outer query's tracking
+        saved_token_usage = self._turn_token_usage
+        saved_tool_calls = self.last_tool_calls
         try:
             # Capture current query text for KG context injection
             if prompt:
@@ -2370,9 +2383,11 @@ class AiAssistAgent:
             logger.warning("Tool budget exhausted: reached maximum %d turns without final answer", max_turns)
             yield {"type": "error", "message": "Maximum turns reached without final answer"}
         finally:
+            self._auto_capture_trace(query_text, "".join(accumulated_text), start_time)
             self._query_depth -= 1
-            if is_outermost:
-                self._auto_capture_trace(query_text, "".join(accumulated_text), start_time)
+            if not is_outermost:
+                self._turn_token_usage = saved_token_usage
+                self.last_tool_calls = saved_tool_calls
 
     async def execute_mcp_prompt(
         self,
@@ -2421,56 +2436,65 @@ class AiAssistAgent:
         if hasattr(prompt_def, "arguments") and prompt_def.arguments:
             self._validate_prompt_arguments(prompt_def, arguments or {})
 
+        # Track top-level script for cost attribution (nested prompts inherit)
+        _set_script = not self._current_script_path
+        if _set_script:
+            self._current_script_path = f"{server_name}/{prompt_name}"
+
         # Retrieve prompt from MCP server
         session = self.sessions[server_name]
         result = await session.get_prompt(prompt_name, arguments=arguments)
 
-        # Convert MCP prompt messages to Claude API format
-        messages = []
-        for msg in result.messages:
-            if hasattr(msg.content, "text"):
-                content = msg.content.text
-            else:
-                content = str(msg.content)
-            # Sanitize prompt message content for injection
-            content, injection_warnings = sanitize_tool_result(content, f"prompt:{server_name}/{prompt_name}")
-            if injection_warnings:
-                logger.warning(
-                    "Suspicious content in MCP prompt %s/%s: %s",
-                    server_name,
-                    prompt_name,
-                    ", ".join(injection_warnings),
-                )
-            messages.append({"role": msg.role, "content": content})
+        try:
+            # Convert MCP prompt messages to Claude API format
+            messages = []
+            for msg in result.messages:
+                if hasattr(msg.content, "text"):
+                    content = msg.content.text
+                else:
+                    content = str(msg.content)
+                # Sanitize prompt message content for injection
+                content, injection_warnings = sanitize_tool_result(content, f"prompt:{server_name}/{prompt_name}")
+                if injection_warnings:
+                    logger.warning(
+                        "Suspicious content in MCP prompt %s/%s: %s",
+                        server_name,
+                        prompt_name,
+                        ", ".join(injection_warnings),
+                    )
+                messages.append({"role": msg.role, "content": content})
 
-        # Feed the prompt to Claude for execution (with tools available)
-        # Use streaming to allow inner execution visibility via callback
-        # Forward active cancel_event so Escape works during inner execution
-        # Inherit remaining time from outer query deadline if no explicit timeout
-        effective_timeout = max_time_seconds
-        if effective_timeout is None and self._query_deadline is not None:
-            effective_timeout = max(1, int(self._query_deadline - time.time()))
-        full_response = ""
-        async for chunk in self.query_streaming(
-            messages=messages,
-            max_turns=max_turns,
-            cancel_event=self._cancel_event,
-            max_time_seconds=effective_timeout,
-        ):
-            if isinstance(chunk, str):
-                full_response += chunk
-                if self.on_inner_execution:
-                    self.on_inner_execution(chunk)
-            elif isinstance(chunk, dict):
-                if chunk.get("type") == "tool_use" and self.on_inner_execution:
-                    self.on_inner_execution(chunk)
-                elif chunk.get("type") in ("error", "cancelled"):
+            # Feed the prompt to Claude for execution (with tools available)
+            # Use streaming to allow inner execution visibility via callback
+            # Forward active cancel_event so Escape works during inner execution
+            # Inherit remaining time from outer query deadline if no explicit timeout
+            effective_timeout = max_time_seconds
+            if effective_timeout is None and self._query_deadline is not None:
+                effective_timeout = max(1, int(self._query_deadline - time.time()))
+            full_response = ""
+            async for chunk in self.query_streaming(
+                messages=messages,
+                max_turns=max_turns,
+                cancel_event=self._cancel_event,
+                max_time_seconds=effective_timeout,
+            ):
+                if isinstance(chunk, str):
+                    full_response += chunk
                     if self.on_inner_execution:
                         self.on_inner_execution(chunk)
-                    break
-                elif chunk.get("type") == "done":
-                    break
-        return full_response
+                elif isinstance(chunk, dict):
+                    if chunk.get("type") == "tool_use" and self.on_inner_execution:
+                        self.on_inner_execution(chunk)
+                    elif chunk.get("type") in ("error", "cancelled"):
+                        if self.on_inner_execution:
+                            self.on_inner_execution(chunk)
+                        break
+                    elif chunk.get("type") == "done":
+                        break
+            return full_response
+        finally:
+            if _set_script:
+                self._current_script_path = ""
 
     async def read_mcp_resource(self, server_name: str, uri: str) -> dict:
         """Read an MCP resource by server name and URI

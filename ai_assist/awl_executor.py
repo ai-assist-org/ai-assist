@@ -183,6 +183,10 @@ async def run_awl_script(
         json.dumps({"event": "awl_lock_acquired", **_lock_log_ctx}),
     )
     _lock_start = time.monotonic()
+    # Track top-level script for cost attribution (nested scripts inherit)
+    _set_script = hasattr(agent, "_current_script_path") and not getattr(agent, "_current_script_path", "")
+    if _set_script:
+        setattr(agent, "_current_script_path", prompt)  # noqa: B010
     try:
         has_goal = any(isinstance(n, GoalNode) for n in workflow.body)
 
@@ -216,6 +220,8 @@ async def run_awl_script(
             )
         return result.return_value or "Workflow completed successfully."
     finally:
+        if _set_script:
+            setattr(agent, "_current_script_path", "")  # noqa: B010
         duration = round(time.monotonic() - _lock_start, 2)
         lock_fh.close()
         logger.info(

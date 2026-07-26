@@ -24,7 +24,7 @@ def _partition_by_age(lines: list[str], cutoff: datetime) -> tuple[list[str], in
                 kept.append(stripped)
             else:
                 removed += 1
-        except json.JSONDecodeError, KeyError, ValueError:
+        except Exception:
             kept.append(stripped)
     return kept, removed
 
@@ -58,6 +58,9 @@ class QueryTrace:
     model: str = ""
     tools_available_count: int = 0
     pid: int = 0
+
+    # Script context (top-level AWL script or MCP prompt that triggered this query)
+    script_path: str = ""
 
     # Dedup
     duplicate_tool_calls: int = 0
@@ -98,7 +101,7 @@ class TraceStore:
                     try:
                         data = json.loads(stripped)
                         traces.append(QueryTrace.from_json(data))
-                    except json.JSONDecodeError, TypeError:
+                    except Exception:
                         pass  # Skip malformed lines
         return traces
 
@@ -220,6 +223,8 @@ class CostSummary:
     total_output_tokens: int
     cost_by_model: dict[str, float]
     queries_by_model: dict[str, int]
+    cost_by_script: dict[str, float] = field(default_factory=dict)
+    queries_by_script: dict[str, int] = field(default_factory=dict)
 
 
 def compute_cost_summary(period: str | None = None) -> CostSummary | str:
@@ -247,9 +252,14 @@ def compute_cost_summary(period: str | None = None) -> CostSummary | str:
 
     cost_by_model: dict[str, float] = defaultdict(float)
     queries_by_model: dict[str, int] = defaultdict(int)
+    cost_by_script: dict[str, float] = defaultdict(float)
+    queries_by_script: dict[str, int] = defaultdict(int)
     for t in traces:
         cost_by_model[t.model] += t.total_cost_usd
         queries_by_model[t.model] += 1
+        script_key = t.script_path or "(interactive)"
+        cost_by_script[script_key] += t.total_cost_usd
+        queries_by_script[script_key] += 1
 
     return CostSummary(
         label=f"last {period}" if period else "all time",
@@ -260,4 +270,6 @@ def compute_cost_summary(period: str | None = None) -> CostSummary | str:
         total_output_tokens=total_output,
         cost_by_model=dict(cost_by_model),
         queries_by_model=dict(queries_by_model),
+        cost_by_script=dict(cost_by_script),
+        queries_by_script=dict(queries_by_script),
     )
