@@ -58,6 +58,16 @@ class FailNode:
 
 
 @dataclass
+class ContinueNode:
+    message: str
+
+
+@dataclass
+class BreakNode:
+    message: str
+
+
+@dataclass
 class GoalNode:
     goal_id: str
     success_criteria: str
@@ -90,6 +100,8 @@ ASTNode = (
     | LoopNode
     | ReturnNode
     | FailNode
+    | ContinueNode
+    | BreakNode
     | GoalNode
     | WaitNode
     | WhileNode

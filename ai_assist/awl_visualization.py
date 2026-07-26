@@ -8,6 +8,8 @@ from typing import Any
 
 from .awl_ast import (
     ASTNode,
+    BreakNode,
+    ContinueNode,
     FailNode,
     GoalNode,
     IfNode,
@@ -33,6 +35,8 @@ NODE_STYLES = {
     "set": {"color": "#1abc9c", "bg": "#1a4c4c", "icon": "←", "label": "Set"},
     "return": {"color": "#2ecc71", "bg": "#1a5c3a", "icon": "↵", "label": "Return"},
     "fail": {"color": "#e74c3c", "bg": "#5c1a1a", "icon": "✘", "label": "Fail"},
+    "continue": {"color": "#f39c12", "bg": "#5c4c1a", "icon": "↷", "label": "Continue"},
+    "break": {"color": "#e74c3c", "bg": "#5c2a1a", "icon": "⏏", "label": "Break"},
     "goal": {"color": "#f1c40f", "bg": "#5c4c1a", "icon": "⚑", "label": "Goal"},
     "merge": {"color": "#888888", "bg": "#333333", "icon": "", "label": "Merge"},
 }
@@ -173,6 +177,8 @@ class _GraphBuilder:
             NotifyNode: "_process_notify",
             ReturnNode: "_process_return",
             FailNode: "_process_fail",
+            ContinueNode: "_process_continue",
+            BreakNode: "_process_break",
             IfNode: "_process_if",
             LoopNode: "_process_loop",
             WhileNode: "_process_while",
@@ -251,6 +257,28 @@ class _GraphBuilder:
             nid,
             "fail",
             label="fail",
+            sublabel=_truncate(node.message, 60),
+            parent_cluster=pcid,
+        )
+        return (nid, nid, [])
+
+    def _process_continue(self, node: ContinueNode, pcid: str | None) -> tuple[str, str, list[str]]:
+        nid = self._next_id("continue")
+        self._add_node(
+            nid,
+            "continue",
+            label="continue",
+            sublabel=_truncate(node.message, 60),
+            parent_cluster=pcid,
+        )
+        return (nid, nid, [])
+
+    def _process_break(self, node: BreakNode, pcid: str | None) -> tuple[str, str, list[str]]:
+        nid = self._next_id("break")
+        self._add_node(
+            nid,
+            "break",
+            label="break",
             sublabel=_truncate(node.message, 60),
             parent_cluster=pcid,
         )

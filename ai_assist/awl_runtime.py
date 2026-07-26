@@ -9,6 +9,8 @@ from typing import Any
 
 from .awl_ast import (
     ASTNode,
+    BreakNode,
+    ContinueNode,
     FailNode,
     GoalNode,
     IfNode,
@@ -40,6 +42,16 @@ class _TaskFailedError(Exception):
     """Internal signal: top-level task failed, stop workflow."""
 
     pass
+
+
+class _ContinueSignal(Exception):
+    def __init__(self, message: str):
+        self.message = message
+
+
+class _BreakSignal(Exception):
+    def __init__(self, message: str):
+        self.message = message
 
 
 @dataclass
@@ -205,6 +217,8 @@ def _compute_input_variables(workflow: WorkflowNode) -> set[str]:
                 _walk(node.body)
             elif isinstance(node, NotifyNode):
                 _collect_from_text(node.message)
+            elif isinstance(node, (ContinueNode, BreakNode)):
+                _collect_from_text(node.message)
 
     _walk(workflow.body)
     return used - defined
@@ -305,6 +319,10 @@ def validate_workflow_variables(workflow: WorkflowNode, initial_variables: set[s
                 _walk(node.body)
             elif isinstance(node, NotifyNode):
                 _check_used(node.message, "@notify")
+            elif isinstance(node, ContinueNode):
+                _check_used(node.message, "@continue")
+            elif isinstance(node, BreakNode):
+                _check_used(node.message, "@break")
 
     _walk(workflow.body)
     return warnings
@@ -414,6 +432,16 @@ class AWLRuntime:
             await self._execute_notify(node)
         elif isinstance(node, FailNode):
             raise AWLRuntimeError(node.message)
+        elif isinstance(node, ContinueNode):
+            if self._loop_depth == 0:
+                raise AWLRuntimeError(f"@continue outside loop: {node.message}")
+            message = self._expr.interpolate(node.message, self._variables)
+            raise _ContinueSignal(message)
+        elif isinstance(node, BreakNode):
+            if self._loop_depth == 0:
+                raise AWLRuntimeError(f"@break outside loop: {node.message}")
+            message = self._expr.interpolate(node.message, self._variables)
+            raise _BreakSignal(message)
 
     async def _execute_task(self, task: TaskNode):
         prompt = self._build_task_prompt(task)
@@ -846,7 +874,16 @@ class AWLRuntime:
                 logger.info("AWL @loop iteration %d/%d: %s = %s", i, len(items), node.item_var, item_full)
                 self._variables[node.item_var] = item
                 outcomes_before = len(self._task_outcomes)
-                await self._execute_body(node.body)
+                try:
+                    await self._execute_body(node.body)
+                except _ContinueSignal as sig:
+                    logger.info("AWL @loop @continue: %s", sig.message)
+                    print(f"    [~] continue: {sig.message}")
+                    continue
+                except _BreakSignal as sig:
+                    logger.info("AWL @loop @break: %s", sig.message)
+                    print(f"    [~] break: {sig.message}")
+                    break
 
                 if node.collect is not None:
                     new_outcomes = self._task_outcomes[outcomes_before:]
@@ -923,7 +960,16 @@ class AWLRuntime:
                     f"  while [{iteration}/{node.max_iterations}]: {node.expression} = {value}",
                     flush=True,
                 )
-                await self._execute_body(node.body)
+                try:
+                    await self._execute_body(node.body)
+                except _ContinueSignal as sig:
+                    logger.info("AWL @while @continue: %s", sig.message)
+                    print(f"    [~] continue: {sig.message}")
+                    continue
+                except _BreakSignal as sig:
+                    logger.info("AWL @while @break: %s", sig.message)
+                    print(f"    [~] break: {sig.message}")
+                    break
         finally:
             self._loop_depth -= 1
 
