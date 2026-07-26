@@ -427,6 +427,28 @@ Example — stop processing after finding the first match:
   @end
 @end
 
+### Nested loops
+
+`@continue` and `@break` only affect the **innermost enclosing loop** (same
+semantics as Python). To exit an outer loop from inside a nested loop, use a
+variable:
+
+@set done = false
+@loop repos as repo
+  @if not done
+    @loop branches as branch
+      @task check
+        Goal: Check ${repo} ${branch}.
+        Expose: found
+      @end
+      @if found
+        @set done = true
+        @break found target in ${repo}/${branch}
+      @end
+    @end
+  @end
+@end
+
 ---
 
 # Conditional Execution

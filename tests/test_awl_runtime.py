@@ -1761,3 +1761,39 @@ async def test_break_outside_loop_raises(runtime):
     workflow = WorkflowNode(body=[BreakNode(message="nowhere to break")])
     with pytest.raises(AWLRuntimeError, match="@break outside loop"):
         await runtime.execute(workflow)
+
+
+@pytest.mark.asyncio
+async def test_break_in_nested_loop_only_breaks_inner(mock_agent, runtime):
+    """@break inside a nested loop should only exit the inner loop."""
+    call_count = 0
+
+    async def mock_query(prompt, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        return f'{{"result": "ok_{call_count}"}}'
+
+    mock_agent.query = AsyncMock(side_effect=mock_query)
+    workflow = WorkflowNode(
+        body=[
+            LoopNode(
+                collection="outer",
+                item_var="o",
+                collect="results",
+                body=[
+                    LoopNode(
+                        collection="inner",
+                        item_var="i",
+                        body=[
+                            TaskNode(task_id="work", goal="Do ${o} ${i}.", expose=["result"]),
+                            BreakNode(message="break inner after first"),
+                        ],
+                    ),
+                    TaskNode(task_id="after", goal="After inner loop for ${o}.", expose=["result"]),
+                ],
+            ),
+        ]
+    )
+    await runtime.execute(workflow, variables={"outer": ["a", "b"], "inner": ["x", "y", "z"]})
+    # For each outer item: 1 inner task (then break) + 1 after task = 2 per outer, 4 total
+    assert mock_agent.query.call_count == 4

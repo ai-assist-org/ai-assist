@@ -12,13 +12,13 @@ def _parse_str_to_collection(val: str) -> Any:
         parsed = json.loads(val)
         if isinstance(parsed, list | dict):
             return parsed
-    except json.JSONDecodeError, ValueError:
+    except ValueError:
         pass
     try:
         parsed = ast.literal_eval(val)
         if isinstance(parsed, list | dict):
             return parsed
-    except ValueError, SyntaxError:
+    except Exception:
         pass
     return val
 
@@ -144,12 +144,12 @@ class AWLExpressionEvaluator:
             if isinstance(left_val, int | float) and not isinstance(left_val, bool) and isinstance(right_val, str):
                 try:
                     right_val = type(left_val)(right_val)
-                except ValueError, TypeError:
+                except Exception:
                     pass
             elif isinstance(right_val, int | float) and not isinstance(right_val, bool) and isinstance(left_val, str):
                 try:
                     left_val = type(right_val)(left_val)
-                except ValueError, TypeError:
+                except Exception:
                     pass
 
             if left_val is None or right_val is None:
