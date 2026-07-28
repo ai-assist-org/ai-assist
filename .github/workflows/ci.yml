@@ -31,3 +31,39 @@ jobs:
         run: |
           uv run python -m coverage run --source=ai_assist -m pytest -p no:xdist -o addopts="-v --strict-markers --tb=short"
           uv run python -m coverage report --fail-under=71
+
+  container-build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - containerfile: sandbox/ai-assist/Dockerfile
+            image: ai-assist-sandbox
+            context: .
+          - containerfile: sandbox/profiles/dev/Dockerfile
+            image: ai-assist-sandbox-dev
+            context: sandbox/profiles/dev
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Build base image (for dev profile)
+        if: matrix.image == 'ai-assist-sandbox-dev'
+        run: docker build -t ai-assist-sandbox -f sandbox/ai-assist/Dockerfile .
+
+      - name: Build container image (${{ matrix.containerfile }})
+        run: docker build -t ${{ matrix.image }} -f ${{ matrix.containerfile }} ${{ matrix.context }}
+
+      - name: Smoke-test container image
+        if: matrix.image == 'ai-assist-sandbox'
+        run: |
+          docker run --rm ${{ matrix.image }} /help
+
+      - name: Scan container image for vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        with:
+          image-ref: ${{ matrix.image }}
+          format: 'table'
+          exit-code: '1'
+          severity: 'CRITICAL,HIGH'
+          ignore-unfixed: true
