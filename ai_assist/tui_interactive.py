@@ -1365,6 +1365,15 @@ async def handle_cost_command(console: Console, period: str | None = None):
             model_table.add_row(model, f"${result.cost_by_model[model]:.4f}", str(result.queries_by_model[model]))
         console.print(model_table)
 
+    if result.cost_by_script:
+        script_table = Table(title="Cost by Script")
+        script_table.add_column("Script", style="cyan")
+        script_table.add_column("Cost", style="green")
+        script_table.add_column("Queries", style="yellow")
+        for script in sorted(result.cost_by_script, key=lambda s: result.cost_by_script[s], reverse=True):
+            script_table.add_row(script, f"${result.cost_by_script[script]:.4f}", str(result.queries_by_script[script]))
+        console.print(script_table)
+
     console.print()
 
 

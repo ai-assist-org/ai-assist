@@ -407,3 +407,122 @@ class TestCostFields:
         metrics = QueryEvaluator.evaluate_traces(traces)
         assert abs(metrics.total_cost_usd - 0.04) < 1e-10
         assert abs(metrics.avg_cost_per_query_usd - 0.02) < 1e-10
+
+    def test_query_trace_script_path_default(self):
+        trace = QueryTrace(query_text="test", timestamp="2026-01-01T00:00:00")
+        assert trace.script_path == ""
+
+    def test_query_trace_script_path_roundtrip(self):
+        trace = QueryTrace(
+            query_text="test",
+            timestamp="2026-01-01T00:00:00",
+            script_path="weekly-report.awl",
+        )
+        line = trace.to_jsonl_line()
+        data = json.loads(line)
+        restored = QueryTrace.from_json(data)
+        assert restored.script_path == "weekly-report.awl"
+
+    def test_backward_compat_no_script_path(self):
+        data = {
+            "query_text": "old trace",
+            "timestamp": "2025-01-01T00:00:00",
+        }
+        trace = QueryTrace.from_json(data)
+        assert trace.script_path == ""
+
+
+class TestCostByScript:
+    """Tests for per-script cost aggregation in compute_cost_summary"""
+
+    def test_cost_by_script_aggregation(self, tmp_path):
+        from ai_assist.eval import TraceStore, compute_cost_summary
+
+        store = TraceStore(trace_dir=tmp_path)
+        store.append(
+            QueryTrace(
+                query_text="q1",
+                timestamp="2026-01-01T00:00:00",
+                total_cost_usd=0.05,
+                script_path="weekly-report.awl",
+                model="claude-sonnet-4-6",
+            )
+        )
+        store.append(
+            QueryTrace(
+                query_text="q2",
+                timestamp="2026-01-01T01:00:00",
+                total_cost_usd=0.03,
+                script_path="weekly-report.awl",
+                model="claude-sonnet-4-6",
+            )
+        )
+        store.append(
+            QueryTrace(
+                query_text="q3",
+                timestamp="2026-01-01T02:00:00",
+                total_cost_usd=0.10,
+                script_path="tpci/ci-duty",
+                model="claude-sonnet-4-6",
+            )
+        )
+        store.append(
+            QueryTrace(
+                query_text="q4",
+                timestamp="2026-01-01T03:00:00",
+                total_cost_usd=0.02,
+                script_path="",
+                model="claude-sonnet-4-6",
+            )
+        )
+
+        # Patch TraceStore to use our tmp_path
+        import ai_assist.eval as eval_mod
+
+        orig_init = TraceStore.__init__
+
+        def patched_init(self_store, trace_dir=None):
+            orig_init(self_store, trace_dir=tmp_path)
+
+        eval_mod.TraceStore.__init__ = patched_init
+        try:
+            result = compute_cost_summary()
+        finally:
+            eval_mod.TraceStore.__init__ = orig_init
+
+        assert len(result.cost_by_script) == 3
+        assert abs(result.cost_by_script["weekly-report.awl"] - 0.08) < 1e-10
+        assert abs(result.cost_by_script["tpci/ci-duty"] - 0.10) < 1e-10
+        assert abs(result.cost_by_script["(interactive)"] - 0.02) < 1e-10
+        assert result.queries_by_script["weekly-report.awl"] == 2
+        assert result.queries_by_script["tpci/ci-duty"] == 1
+        assert result.queries_by_script["(interactive)"] == 1
+
+    def test_no_scripts_empty_dict(self, tmp_path):
+        from ai_assist.eval import TraceStore, compute_cost_summary
+
+        store = TraceStore(trace_dir=tmp_path)
+        store.append(
+            QueryTrace(
+                query_text="interactive",
+                timestamp="2026-01-01T00:00:00",
+                total_cost_usd=0.01,
+                model="claude-sonnet-4-6",
+            )
+        )
+
+        import ai_assist.eval as eval_mod
+
+        orig_init = TraceStore.__init__
+
+        def patched_init(self_store, trace_dir=None):
+            orig_init(self_store, trace_dir=tmp_path)
+
+        eval_mod.TraceStore.__init__ = patched_init
+        try:
+            result = compute_cost_summary()
+        finally:
+            eval_mod.TraceStore.__init__ = orig_init
+
+        assert list(result.cost_by_script.keys()) == ["(interactive)"]
+        assert result.queries_by_script["(interactive)"] == 1

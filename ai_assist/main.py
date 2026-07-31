@@ -610,6 +610,11 @@ def cost_command(period: str | None = None):
         print("\n  By model:")
         for model in sorted(result.cost_by_model, key=lambda m: result.cost_by_model[m], reverse=True):
             print(f"    {model}: ${result.cost_by_model[model]:.4f} ({result.queries_by_model[model]} queries)")
+
+    if result.cost_by_script:
+        print("\n  By script:")
+        for script in sorted(result.cost_by_script, key=lambda s: result.cost_by_script[s], reverse=True):
+            print(f"    {script}: ${result.cost_by_script[script]:.4f} ({result.queries_by_script[script]} queries)")
     print()
 
 
