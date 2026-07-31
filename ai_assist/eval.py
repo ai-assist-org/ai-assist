@@ -9,6 +9,17 @@ from pathlib import Path
 
 from .config import get_config_dir
 
+_HOME = Path.home()
+
+
+def _normalize_script_path(path: str) -> str:
+    """Collapse absolute home paths to ~ so aggregation keys are consistent."""
+    if path.startswith(str(_HOME) + "/"):
+        return "~/" + path[len(str(_HOME)) + 1 :]
+    if path.startswith("~/"):
+        return path
+    return path
+
 
 def _partition_by_age(lines: list[str], cutoff: datetime) -> tuple[list[str], int]:
     """Split JSONL lines into kept/removed based on timestamp age."""
@@ -257,7 +268,7 @@ def compute_cost_summary(period: str | None = None) -> CostSummary | str:
     for t in traces:
         cost_by_model[t.model] += t.total_cost_usd
         queries_by_model[t.model] += 1
-        script_key = t.script_path or "(interactive)"
+        script_key = _normalize_script_path(t.script_path) if t.script_path else "(interactive)"
         cost_by_script[script_key] += t.total_cost_usd
         queries_by_script[script_key] += 1
 
