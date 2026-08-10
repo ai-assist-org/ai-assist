@@ -126,6 +126,7 @@ async def consume_streaming_response(
     cancel_event: threading.Event,
     prompt: str | None = None,
     messages: list[dict] | None = None,
+    *,
     progress_callback: Any = None,
 ) -> str:
     """Consume an agent streaming response, dispatching chunks to a renderer.

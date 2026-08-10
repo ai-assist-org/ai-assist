@@ -243,7 +243,7 @@ def score_case(case_dir, judges, config):
 # ── Pipeline ──────────────────────────────────────────────────────
 
 
-def execute_cases(all_cases, config, runner, model, run_output, run_id, parallelism):
+def execute_cases(all_cases, config, runner, model, run_output, run_id, *, parallelism):
     timeout = config.execution.timeout or 300
     max_budget = config.execution.max_budget_usd or 5.0
     args_template = config.execution.arguments or ""
@@ -414,7 +414,7 @@ def run_pipeline(config_path, model, run_id=None, cases=None, parallelism=1, no_
         sys.exit(1)
     runner = RUNNERS[runner_type].from_config(config)
 
-    execute_cases(all_cases, config, runner, model, run_output, run_id, parallelism)
+    execute_cases(all_cases, config, runner, model, run_output, run_id, parallelism=parallelism)
 
     print("\nScoring...")
     judges = load_judges(config, no_llm_judges=no_llm_judges)

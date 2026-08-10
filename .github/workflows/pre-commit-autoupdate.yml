@@ -19,11 +19,17 @@ jobs:
         with:
           python-version: "3.14"
 
-      - name: Install pre-commit
-        run: pip install pre-commit
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9  # v9.0.0
+
+      - name: Install dependencies
+        run: uv sync --extra dev --group dev
 
       - name: Run autoupdate
-        run: pre-commit autoupdate --freeze
+        run: uv run pre-commit autoupdate --freeze
+
+      - name: Run pre-commit with updated hooks
+        run: uv run pre-commit run --all-files
 
       - name: Create pull request
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1  # v8.1.1

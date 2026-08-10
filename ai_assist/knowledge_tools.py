@@ -349,6 +349,7 @@ Returns:
         tags: list[str] | None = None,
         limit: int = 10,
         since: str | None = None,
+        *,
         include_future: bool = False,
     ) -> str:
         """Search stored knowledge"""

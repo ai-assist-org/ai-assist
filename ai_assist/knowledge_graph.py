@@ -288,6 +288,7 @@ class KnowledgeGraph:
         tx_from: datetime | None = None,
         entity_id: str | None = None,
         valid_to: datetime | None = None,
+        *,
         tx_to: datetime | None = None,
     ) -> Entity:
         """Insert a new entity into the knowledge graph
@@ -351,6 +352,7 @@ class KnowledgeGraph:
         tx_from: datetime | None = None,
         entity_id: str | None = None,
         valid_to: datetime | None = None,
+        *,
         tx_to: datetime | None = None,
     ) -> Entity:
         """Insert or update an entity in the knowledge graph.
@@ -466,6 +468,7 @@ class KnowledgeGraph:
         valid_from: datetime,
         tx_from: datetime | None = None,
         properties: dict[str, Any] | None = None,
+        *,
         rel_id: str | None = None,
         valid_to: datetime | None = None,
         tx_to: datetime | None = None,
@@ -780,6 +783,7 @@ class KnowledgeGraph:
         since: datetime | None = None,
         min_confidence: float = 0.0,
         limit: int = 20,
+        *,
         include_future: bool = False,
     ) -> list[dict]:
         """Search knowledge entities
@@ -1046,6 +1050,7 @@ class KnowledgeGraph:
         min_confidence: float = 0.0,
         min_score: float = 0.0,
         include_future: bool = False,
+        *,
         valid_from_after: datetime | None = None,
         valid_from_before: datetime | None = None,
     ) -> list[dict]:
@@ -1167,6 +1172,7 @@ class KnowledgeGraph:
         include_future: bool = False,
         valid_from_after: datetime | None = None,
         valid_from_before: datetime | None = None,
+        *,
         match_all: bool = False,
     ) -> list[dict]:
         """Search entities by FTS5 keyword matching.
@@ -1235,6 +1241,7 @@ class KnowledgeGraph:
         min_score: float = 0.0,
         include_future: bool = False,
         valid_from_after: datetime | None = None,
+        *,
         valid_from_before: datetime | None = None,
     ) -> list[dict]:
         """Combined keyword + vector search with Reciprocal Rank Fusion."""
