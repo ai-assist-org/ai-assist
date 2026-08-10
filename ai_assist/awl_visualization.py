@@ -117,6 +117,7 @@ class _GraphBuilder:
         sublabel: str = "",
         style_key: str | None = None,
         parent_cluster: str | None = None,
+        *,
         tooltip_data: dict[str, Any] | None = None,
         shape: str = "rect",
     ) -> None:
