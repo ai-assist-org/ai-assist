@@ -735,7 +735,7 @@ class AWLRuntime:
         result: dict[str, Any] = {}
         for report_file in sorted(reports_dir.glob("*.md")):
             stem = report_file.stem
-            if stem not in goal:
+            if not re.search(r"\b" + re.escape(stem) + r"\b", goal):
                 continue
             try:
                 content = report_file.read_text()

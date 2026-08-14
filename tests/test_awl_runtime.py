@@ -1797,3 +1797,31 @@ async def test_break_in_nested_loop_only_breaks_inner(mock_agent, runtime):
     await runtime.execute(workflow, variables={"outer": ["a", "b"], "inner": ["x", "y", "z"]})
     # For each outer item: 1 inner task (then break) + 1 after task = 2 per outer, 4 total
     assert mock_agent.query.call_count == 4
+
+
+@pytest.mark.asyncio
+async def test_pre_extract_no_substring_collision(mock_agent, tmp_path):
+    """Stale report pr-analysis-101.md must NOT match goal mentioning pr-analysis-1014."""
+    reports_dir = tmp_path / "reports"
+    reports_dir.mkdir(exist_ok=True)
+
+    stale = reports_dir / "pr-analysis-101.md"
+    stale.write_text("=== NEEDS CODE CHANGES ===\nfalse\n\n=== ABANDON REQUESTED ===\nfalse\n")
+
+    correct = reports_dir / "pr-analysis-1014.md"
+    correct.write_text("=== NEEDS CODE CHANGES ===\ntrue\n\n=== ABANDON REQUESTED ===\nfalse\n")
+
+    mock_agent.report_tools = MagicMock()
+    mock_agent.report_tools.reports_dir = reports_dir
+    mock_agent.query = AsyncMock(return_value="fallback")
+
+    runtime = AWLRuntime(mock_agent)
+    task = TaskNode(
+        task_id="extract",
+        goal='Read report "pr-analysis-1014".',
+        expose=["needs_code_changes", "abandon_requested"],
+    )
+    result = runtime._pre_extract_from_reports(task)
+
+    assert result["needs_code_changes"] is True
+    assert result["abandon_requested"] is False
