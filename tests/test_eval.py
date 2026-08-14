@@ -497,6 +497,8 @@ class TestCostByScript:
         assert result.queries_by_script["weekly-report.awl"] == 2
         assert result.queries_by_script["tpci/ci-duty"] == 1
         assert result.queries_by_script["(interactive)"] == 1
+        assert result.num_days == 1
+        assert abs(result.cost_per_day - 0.20) < 1e-10
 
     def test_no_scripts_empty_dict(self, tmp_path):
         from ai_assist.eval import TraceStore, compute_cost_summary
@@ -526,3 +528,62 @@ class TestCostByScript:
 
         assert list(result.cost_by_script.keys()) == ["(interactive)"]
         assert result.queries_by_script["(interactive)"] == 1
+        assert result.num_days == 1
+        assert abs(result.cost_per_day - 0.01) < 1e-10
+
+
+class TestCostPerDay:
+    """Tests for cost_per_day in compute_cost_summary"""
+
+    def test_cost_per_day_multiple_days(self, tmp_path):
+        from ai_assist.eval import TraceStore, compute_cost_summary
+
+        store = TraceStore(trace_dir=tmp_path)
+        store.append(
+            QueryTrace(
+                query_text="q1",
+                timestamp="2026-01-01T10:00:00",
+                total_cost_usd=0.10,
+                model="claude-sonnet-4-6",
+            )
+        )
+        store.append(
+            QueryTrace(
+                query_text="q2",
+                timestamp="2026-01-01T14:00:00",
+                total_cost_usd=0.10,
+                model="claude-sonnet-4-6",
+            )
+        )
+        store.append(
+            QueryTrace(
+                query_text="q3",
+                timestamp="2026-01-02T09:00:00",
+                total_cost_usd=0.30,
+                model="claude-sonnet-4-6",
+            )
+        )
+        store.append(
+            QueryTrace(
+                query_text="q4",
+                timestamp="2026-01-03T12:00:00",
+                total_cost_usd=0.10,
+                model="claude-sonnet-4-6",
+            )
+        )
+
+        import ai_assist.eval as eval_mod
+
+        orig_init = TraceStore.__init__
+
+        def patched_init(self_store, trace_dir=None):
+            orig_init(self_store, trace_dir=tmp_path)
+
+        eval_mod.TraceStore.__init__ = patched_init
+        try:
+            result = compute_cost_summary()
+        finally:
+            eval_mod.TraceStore.__init__ = orig_init
+
+        assert result.num_days == 3
+        assert abs(result.cost_per_day - 0.20) < 1e-10

@@ -1351,6 +1351,7 @@ async def handle_cost_command(console: Console, period: str | None = None):
 
     table.add_row("Total cost", f"${result.total_cost:.4f}")
     table.add_row("Avg cost/query", f"${result.avg_cost:.4f}")
+    table.add_row("Cost/day", f"${result.cost_per_day:.4f} ({result.num_days} days)")
     table.add_row("Total input tokens", f"{result.total_input_tokens:,}")
     table.add_row("Total output tokens", f"{result.total_output_tokens:,}")
 
