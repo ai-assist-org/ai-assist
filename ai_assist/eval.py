@@ -234,6 +234,8 @@ class CostSummary:
     total_output_tokens: int
     cost_by_model: dict[str, float]
     queries_by_model: dict[str, int]
+    cost_per_day: float = 0.0
+    num_days: int = 0
     cost_by_script: dict[str, float] = field(default_factory=dict)
     queries_by_script: dict[str, int] = field(default_factory=dict)
 
@@ -261,6 +263,10 @@ def compute_cost_summary(period: str | None = None) -> CostSummary | str:
     total_input = sum(t.total_input_tokens for t in traces)
     total_output = sum(t.total_output_tokens for t in traces)
 
+    distinct_days = {t.timestamp[:10] for t in traces}
+    num_days = len(distinct_days)
+    cost_per_day = total_cost / num_days if num_days else 0.0
+
     cost_by_model: dict[str, float] = defaultdict(float)
     queries_by_model: dict[str, int] = defaultdict(int)
     cost_by_script: dict[str, float] = defaultdict(float)
@@ -279,6 +285,8 @@ def compute_cost_summary(period: str | None = None) -> CostSummary | str:
         avg_cost=total_cost / len(traces),
         total_input_tokens=total_input,
         total_output_tokens=total_output,
+        cost_per_day=cost_per_day,
+        num_days=num_days,
         cost_by_model=dict(cost_by_model),
         queries_by_model=dict(queries_by_model),
         cost_by_script=dict(cost_by_script),

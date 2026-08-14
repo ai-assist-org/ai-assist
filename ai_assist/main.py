@@ -603,6 +603,7 @@ def cost_command(period: str | None = None):
     print("=" * 50)
     print(f"  Total cost:         ${result.total_cost:.4f}")
     print(f"  Avg cost/query:     ${result.avg_cost:.4f}")
+    print(f"  Cost/day:           ${result.cost_per_day:.4f} ({result.num_days} days)")
     print(f"  Total input tokens: {result.total_input_tokens:,}")
     print(f"  Total output tokens:{result.total_output_tokens:,}")
 
