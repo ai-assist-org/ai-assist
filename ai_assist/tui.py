@@ -34,22 +34,10 @@ class AiAssistCompleter(Completer):
     """Command completer for ai-assist interactive mode"""
 
     def __init__(self, agent=None):
-        from .commands import INTERACTIVE_COMMANDS
+        from .commands import get_interactive_commands
 
         self.agent = agent
-        self.commands = list(INTERACTIVE_COMMANDS) + [
-            "/prompts",
-            "/search",
-            "/skill/install",
-            "/skill/uninstall",
-            "/skill/list",
-            "/skill/search",
-            "/skill/add_env",
-            "/skill/remove_env",
-            "/skill/list_env",
-            "/bg cancel",
-            "/mcp/restart",
-        ]
+        self.commands = [c.name for c in get_interactive_commands()]
 
     @staticmethod
     def _is_path_prefix(word: str) -> bool:
@@ -240,29 +228,7 @@ class AiAssistCompleter(Completer):
 
     def _get_command_description(self, command: str) -> str:
         """Get description for a command"""
-        descriptions = {
-            "/status": "Show state statistics",
-            "/history": "Show recent monitoring history",
-            "/clear-cache": "Clear expired cache",
-            "/clear": "Clear conversation memory",
-            "/kg-save": "Toggle knowledge graph auto-save",
-            "/kg-viz": "Visualize knowledge graph in browser",
-            "/awl-viz": "Visualize an AWL workflow in browser",
-            "/prompts": "List available MCP prompts",
-            "/search": "Search conversation history",
-            "/skill/install": "Install an Agent Skill from git, local path, or ClawHub",
-            "/skill/uninstall": "Uninstall an installed Agent Skill",
-            "/skill/list": "List all installed Agent Skills",
-            "/skill/search": "Search ClawHub and skills.sh for skills",
-            "/skill/add_env": "Allow an env var for a skill's scripts",
-            "/skill/remove_env": "Remove an allowed env var from a skill",
-            "/skill/list_env": "Show allowed env vars for skills",
-            "/bg": "List background tasks (or /bg <id>, /bg cancel [id])",
-            "/bg cancel": "Cancel background task(s)",
-            "/mcp/restart": "Restart an MCP server",
-            "/plan": "Plan a task before executing (explore, approve, execute)",
-            "/exit": "Exit interactive mode",
-            "/quit": "Exit interactive mode",
-            "/help": "Show help message",
-        }
-        return descriptions.get(command, "")
+        from .commands import get_command
+
+        cmd = get_command(command)
+        return cmd.description if cmd else ""

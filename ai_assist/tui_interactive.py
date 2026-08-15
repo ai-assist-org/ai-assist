@@ -1499,36 +1499,22 @@ async def handle_plan_command(
 
 async def handle_help_command(console: Console):
     """Handle /help command"""
-    help_text = """
+    from .commands import get_interactive_commands
+
+    cmd_lines = []
+    for cmd in get_interactive_commands():
+        if cmd.hidden:
+            continue
+        arg_display = f" {cmd.args}" if cmd.args else ""
+        cmd_lines.append(f"- `{cmd.name}{arg_display}` - {cmd.description}")
+    cmd_section = "\n".join(sorted(cmd_lines))
+
+    help_text = f"""
 # ai-assist Interactive Mode Help
 
 ## Commands
-- `/status` - Show state statistics
-- `/history` - Show recent monitoring history
-- `/clear-cache` - Clear expired cache
-- `/clear` - Clear conversation memory (start fresh)
-- `/kg-save [on|off]` - Toggle knowledge graph auto-save
-- `/kg-viz` - Visualize knowledge graph in browser
-- `/awl-viz [script.awl]` - Visualize an AWL workflow in browser
-- `/prompts` - List available MCP prompts
-- `/prompt-info <server/prompt>` - Show detailed prompt info
+{cmd_section}
 - `/server/prompt` - Load an MCP prompt (e.g., `/dci/rca`)
-- `/skill/install <source>@<branch>` - Install an Agent Skill
-- `/skill/uninstall <name>` - Uninstall an Agent Skill
-- `/skill/list` - List installed Agent Skills
-- `/skill/search <query>` - Search ClawHub and skills.sh registries
-- `/skill/add_env <skill> <VAR>` - Allow an env var for a skill's scripts
-- `/skill/remove_env <skill> <VAR>` - Remove an allowed env var
-- `/skill/list_env [skill]` - Show allowed env vars for skills
-- `/bg` - List background tasks
-- `/bg <id>` - Show details of a background task
-- `/bg cancel [id]` - Cancel a background task (or all if no id)
-- `/plan <task>` - Plan a task before executing (explore → approve → execute)
-- `/eval-stats` - Show evaluation metrics from query traces
-- `/cost [period]` - Show token cost summary (e.g. `/cost 7d`, `/cost 30d`)
-- `/mcp/restart <server>` - Restart an MCP server (picks up binary updates)
-- `/exit` or `/quit` - Exit interactive mode
-- `/help` - Show this help
 
 ## Agent Skills 🚀
 Install specialized skills from git repositories, local paths, or ClawHub:
