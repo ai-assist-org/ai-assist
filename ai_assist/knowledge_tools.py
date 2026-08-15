@@ -28,6 +28,9 @@ Use this for immediate, explicit saves (not synthesis).
 For broader reflection, use internal__trigger_synthesis instead.
 
 SAVE when you notice:
+- User explicitly asks you to remember/note/store something ("remember that…",
+  "note that…", "keep in mind…") — this ALWAYS requires a save_knowledge call,
+  never just a conversational acknowledgement
 - User stated a preference about workflows/tools/style
 - User corrected you (save the correction as a lesson)
 - You learned a pattern or best practice from discussion
@@ -40,8 +43,10 @@ DO NOT SAVE:
 - Raw data from tool results (these are auto-captured separately)
 - Anything you're not confident about (use confidence < 0.5 if uncertain)
 
-PREFER updating existing entries over creating duplicates — use the same key
-to upsert. Check with internal__search_knowledge first if unsure.
+This tool UPSERTS by key: saving with an existing key overwrites that entry,
+so you never create duplicates and do NOT need to search first. When the user
+explicitly asks you to remember something, call save_knowledge directly — always
+complete the save even if you think the fact may already be known.
 
 Args:
     entity_type: Type of knowledge (user_preference, lesson_learned, project_context, decision_rationale)
