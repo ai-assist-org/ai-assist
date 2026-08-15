@@ -1235,6 +1235,60 @@ class TestExtractExposed:
         assert result == {}
 
 
+class TestParseSectionMarkers:
+    """Tests for _parse_section_markers JSON and boolean extraction."""
+
+    def _make_runtime(self, mock_agent):
+        return AWLRuntime(mock_agent)
+
+    def test_json_array_in_section(self, mock_agent):
+        """A JSON array on the first line of a section is parsed, not stored as string."""
+        rt = self._make_runtime(mock_agent)
+        text = '=== COMPANION REPOS ===\n["org/repo1", "org/repo2"]\n'
+        result = rt._parse_section_markers(text, ["companion_repos"])
+        assert result == {"companion_repos": ["org/repo1", "org/repo2"]}
+
+    def test_empty_json_array_in_section(self, mock_agent):
+        """An empty JSON array is parsed correctly."""
+        rt = self._make_runtime(mock_agent)
+        text = "=== COMPANION REPOS ===\n[]\n"
+        result = rt._parse_section_markers(text, ["companion_repos"])
+        assert result == {"companion_repos": []}
+
+    def test_json_object_in_section(self, mock_agent):
+        """A JSON object on the first line is parsed."""
+        rt = self._make_runtime(mock_agent)
+        text = '=== CONFIG ===\n{"key": "value"}\n'
+        result = rt._parse_section_markers(text, ["config"])
+        assert result == {"config": {"key": "value"}}
+
+    def test_boolean_true_in_section(self, mock_agent):
+        rt = self._make_runtime(mock_agent)
+        text = "=== NEEDS CODE CHANGES ===\ntrue\n"
+        result = rt._parse_section_markers(text, ["needs_code_changes"])
+        assert result == {"needs_code_changes": True}
+
+    def test_boolean_false_in_section(self, mock_agent):
+        rt = self._make_runtime(mock_agent)
+        text = "=== NEEDS CODE CHANGES ===\nfalse\n"
+        result = rt._parse_section_markers(text, ["needs_code_changes"])
+        assert result == {"needs_code_changes": False}
+
+    def test_plain_text_in_section(self, mock_agent):
+        """Non-JSON, non-boolean text is stored as raw string."""
+        rt = self._make_runtime(mock_agent)
+        text = "=== FIX PLAN ===\nUpdate the parser to handle edge cases.\n"
+        result = rt._parse_section_markers(text, ["fix_plan"])
+        assert result == {"fix_plan": "Update the parser to handle edge cases."}
+
+    def test_invalid_json_falls_back_to_string(self, mock_agent):
+        """Malformed JSON starting with [ falls back to raw string."""
+        rt = self._make_runtime(mock_agent)
+        text = "=== COMPANION REPOS ===\n[not valid json\n"
+        result = rt._parse_section_markers(text, ["companion_repos"])
+        assert result == {"companion_repos": "[not valid json"}
+
+
 @pytest.mark.asyncio
 async def test_expose_fails_when_model_ends_after_think(mock_agent, runtime, capsys):
     """Expose fails when the model describes values in prose but omits the JSON block.

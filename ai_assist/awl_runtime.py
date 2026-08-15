@@ -706,16 +706,19 @@ class AWLRuntime:
             end_match = section_end_pattern.search(text, start)
             section_text = text[start : end_match.start() if end_match else len(text)].strip()
 
-            # If the first non-empty line is a simple value, use only that line
-            # (ignore trailing commentary/notes that the model may have added)
-            first_line = section_text.split("\n", 1)[0].strip().lower()
-            if first_line in ("true", "false", "[]"):
-                if first_line == "true":
-                    result[var_name] = True
-                elif first_line == "false":
-                    result[var_name] = False
-                else:
-                    result[var_name] = []
+            # Try the first non-empty line as a typed value before falling
+            # back to raw text (ignore trailing commentary the model may add)
+            first_line = section_text.split("\n", 1)[0].strip()
+            first_lower = first_line.lower()
+            if first_lower == "true":
+                result[var_name] = True
+            elif first_lower == "false":
+                result[var_name] = False
+            elif first_line.startswith(("[", "{")):
+                try:
+                    result[var_name] = json.loads(first_line)
+                except json.JSONDecodeError:
+                    result[var_name] = section_text
             else:
                 result[var_name] = section_text
 
