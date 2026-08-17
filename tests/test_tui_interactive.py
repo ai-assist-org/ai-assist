@@ -408,8 +408,15 @@ async def test_query_streaming_cancel_event():
 
     mock_config = MagicMock(spec=AiAssistConfig)
     mock_config.use_vertex = False
+    mock_config.use_custom_endpoint = False
     mock_config.anthropic_api_key = "test-key"
+    mock_config.anthropic_base_url = None
     mock_config.model = "claude-3-5-sonnet-20241022"
+    mock_config.synthesis_model = None
+    mock_config.compaction_model = None
+    mock_config.enable_prompt_caching = True
+    mock_config.model_max_output_tokens = None
+    mock_config.model_context_window = None
     mock_config.mcp_servers = {}
     mock_config.allow_skill_script_execution = False
     mock_config.allowed_commands = ["grep", "find", "wc", "sort", "head", "tail", "ls", "cat", "diff", "file", "stat"]

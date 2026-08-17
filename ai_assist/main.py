@@ -710,7 +710,20 @@ async def main_async():
         watcher = CodeWatcher(Path(__file__).parent)
         watcher.start()
 
+    # Check for --model <id> flag to override the configured model
+    model_override = None
+    if "--model" in sys.argv:
+        idx = sys.argv.index("--model")
+        if idx + 1 < len(sys.argv):
+            model_override = sys.argv[idx + 1]
+            del sys.argv[idx : idx + 2]
+        else:
+            print("Error: --model requires a model id")
+            sys.exit(1)
+
     config = get_config()
+    if model_override:
+        config.model = model_override
 
     # Initialize event-schedules.json (migrate from legacy formats if needed)
     from .action_loader import ActionLoader
@@ -759,12 +772,12 @@ async def main_async():
 
     needs_agent = command not in no_agent_commands
 
-    if needs_agent and not config.anthropic_api_key and not config.vertex_project_id:
+    if needs_agent and not config.anthropic_api_key and not config.vertex_project_id and not config.anthropic_base_url:
         print("\n" + "=" * 60)
-        print("ERROR: No Anthropic credentials configured")
+        print("ERROR: No LLM credentials configured")
         print("=" * 60)
-        print("\nai-assist requires Anthropic API access to function.")
-        print("\nYou have TWO options:")
+        print("\nai-assist requires access to an Anthropic-Messages-compatible model.")
+        print("\nYou have THREE options:")
         print("\n1. VERTEX AI (Google Cloud) - Recommended for enterprise:")
         print("   • Set environment variables:")
         print("     export ANTHROPIC_VERTEX_PROJECT_ID='your-gcp-project-id'")
@@ -776,6 +789,13 @@ async def main_async():
         print("   • Create an account and get your API key")
         print("   • Add to .env file: ANTHROPIC_API_KEY=your-key-here")
         print("   • Free tier: $5 credit for new accounts")
+        print("\n3. CUSTOM ENDPOINT (OpenRouter / self-hosted vLLM, Ollama, llama.cpp / proxy):")
+        print("   • Set environment variables:")
+        print("     export ANTHROPIC_BASE_URL='https://openrouter.ai/api'  # or http://localhost:11434")
+        print("     export AI_ASSIST_API_KEY='your-key'  # e.g. OpenRouter key, or 'ollama' placeholder")
+        print("     export AI_ASSIST_MODEL='anthropic/claude-sonnet-4.6'  # provider-specific model id")
+        print("   • Endpoint must speak the Anthropic Messages API. For OpenAI-only backends,")
+        print("     front them with a proxy (LiteLLM proxy or claude-code-router).")
         print("\nFor more info, see: https://docs.anthropic.com/")
         print("=" * 60 + "\n")
         sys.exit(1)
