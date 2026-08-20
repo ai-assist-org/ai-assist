@@ -201,12 +201,50 @@ class AiAssistConfig(BaseModel):
     vertex_project_id: str | None = Field(default_factory=lambda: os.getenv("ANTHROPIC_VERTEX_PROJECT_ID"))
     vertex_region: str | None = Field(default_factory=lambda: os.getenv("ANTHROPIC_VERTEX_REGION"))
 
+    # Custom Anthropic-Messages-compatible endpoint (OpenRouter, self-hosted vLLM/Ollama/llama.cpp,
+    # or a proxy like LiteLLM/claude-code-router). Takes precedence over Vertex and direct API key.
+    anthropic_base_url: str | None = Field(default_factory=lambda: os.getenv("ANTHROPIC_BASE_URL"))
+    # Generic API key for custom endpoints (falls back to anthropic_api_key).
+    llm_api_key: str | None = Field(default_factory=lambda: os.getenv("AI_ASSIST_API_KEY"))
+
     model: str = Field(default="claude-sonnet-4-6")
+
+    # Optional per-role model overrides (fall back to `model` when unset)
+    synthesis_model: str | None = Field(default_factory=lambda: os.getenv("AI_ASSIST_SYNTHESIS_MODEL"))
+    compaction_model: str | None = Field(default_factory=lambda: os.getenv("AI_ASSIST_COMPACTION_MODEL"))
+
+    # Prompt caching (Anthropic ephemeral cache). Disable for endpoints that don't support it.
+    enable_prompt_caching: bool = Field(
+        default_factory=lambda: os.getenv("AI_ASSIST_ENABLE_CACHE", "true").lower() == "true",
+    )
+
+    # Capability overrides for models not in the built-in tables (custom/self-hosted endpoints)
+    model_max_output_tokens: int | None = Field(
+        default_factory=lambda: (
+            int(os.environ["AI_ASSIST_MODEL_MAX_TOKENS"]) if os.getenv("AI_ASSIST_MODEL_MAX_TOKENS") else None
+        ),
+    )
+    model_context_window: int | None = Field(
+        default_factory=lambda: (
+            int(os.environ["AI_ASSIST_MODEL_CONTEXT_WINDOW"]) if os.getenv("AI_ASSIST_MODEL_CONTEXT_WINDOW") else None
+        ),
+    )
+
+    @property
+    def use_custom_endpoint(self) -> bool:
+        """Check if a custom Anthropic-compatible endpoint is configured"""
+        return bool(self.anthropic_base_url)
+
+    @property
+    def effective_api_key(self) -> str:
+        """API key to use for the LLM client (generic key wins, else Anthropic key)"""
+        return self.llm_api_key or self.anthropic_api_key
 
     @property
     def use_vertex(self) -> bool:
         """Check if using Vertex AI instead of direct API"""
-        return bool(self.vertex_project_id and not self.anthropic_api_key)
+        # A custom endpoint always takes precedence over Vertex.
+        return bool(self.vertex_project_id and not self.anthropic_api_key and not self.use_custom_endpoint)
 
     # MCP servers configuration
     mcp_servers: dict[str, MCPServerConfig] = Field(default_factory=dict)
@@ -312,7 +350,20 @@ class AiAssistConfig(BaseModel):
             anthropic_api_key=os.getenv("ANTHROPIC_API_KEY", ""),
             vertex_project_id=os.getenv("ANTHROPIC_VERTEX_PROJECT_ID"),
             vertex_region=os.getenv("ANTHROPIC_VERTEX_REGION"),
+            anthropic_base_url=os.getenv("ANTHROPIC_BASE_URL"),
+            llm_api_key=os.getenv("AI_ASSIST_API_KEY"),
             model=os.getenv("AI_ASSIST_MODEL", "claude-sonnet-4-6"),
+            synthesis_model=os.getenv("AI_ASSIST_SYNTHESIS_MODEL"),
+            compaction_model=os.getenv("AI_ASSIST_COMPACTION_MODEL"),
+            enable_prompt_caching=os.getenv("AI_ASSIST_ENABLE_CACHE", "true").lower() == "true",
+            model_max_output_tokens=(
+                int(os.environ["AI_ASSIST_MODEL_MAX_TOKENS"]) if os.getenv("AI_ASSIST_MODEL_MAX_TOKENS") else None
+            ),
+            model_context_window=(
+                int(os.environ["AI_ASSIST_MODEL_CONTEXT_WINDOW"])
+                if os.getenv("AI_ASSIST_MODEL_CONTEXT_WINDOW")
+                else None
+            ),
             mcp_servers=mcp_servers,
         )
 

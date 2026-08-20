@@ -13,8 +13,15 @@ def mock_config():
     """Create mock config"""
     config = MagicMock(spec=AiAssistConfig)
     config.use_vertex = False
+    config.use_custom_endpoint = False
     config.anthropic_api_key = "test-key"
+    config.anthropic_base_url = None
     config.model = "claude-3-5-sonnet-20241022"
+    config.synthesis_model = None
+    config.compaction_model = None
+    config.enable_prompt_caching = True
+    config.model_max_output_tokens = None
+    config.model_context_window = None
     config.mcp_servers = {}
     config.allow_skill_script_execution = False
     config.allowed_commands = ["grep", "find", "wc", "sort", "head", "tail", "ls", "cat", "diff", "file", "stat"]

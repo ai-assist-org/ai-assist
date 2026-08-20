@@ -933,7 +933,7 @@ async def tui_interactive_mode(agent: AiAssistAgent, state_manager: StateManager
                                 # Compact conversation memory if threshold reached
                                 if conversation_memory.needs_compaction():
                                     try:
-                                        if conversation_memory.compact(agent.anthropic, agent.config.model):
+                                        if conversation_memory.compact(agent.anthropic, agent._model_for("compaction")):
                                             console.print("[dim]Compacted conversation history[/dim]")
                                     except Exception:
                                         pass
@@ -1083,7 +1083,7 @@ async def tui_interactive_mode(agent: AiAssistAgent, state_manager: StateManager
                         # Compact conversation memory if threshold reached
                         if conversation_memory.needs_compaction():
                             try:
-                                if conversation_memory.compact(agent.anthropic, agent.config.model):
+                                if conversation_memory.compact(agent.anthropic, agent._model_for("compaction")):
                                     console.print("[dim]Compacted conversation history[/dim]")
                             except Exception:
                                 pass

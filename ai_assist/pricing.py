@@ -29,6 +29,11 @@ _SUFFIX_RE = re.compile(r"[-@](20\d{6}|default|latest)$")
 _DEFAULT_FAMILY = "claude-sonnet-4-6"
 
 
+def is_known_model(model: str) -> bool:
+    """Return True if the model has a known pricing entry (directly or after suffix stripping)."""
+    return model in MODEL_PRICING or _SUFFIX_RE.sub("", model) in MODEL_PRICING
+
+
 def get_pricing(model: str) -> tuple[float, float, float, float]:
     """Get per-million-token pricing for a model.
 
@@ -46,16 +51,21 @@ def get_pricing(model: str) -> tuple[float, float, float, float]:
     return MODEL_PRICING[_DEFAULT_FAMILY]
 
 
-def compute_turn_cost(model: str, token_entry: dict) -> float:
+def compute_turn_cost(model: str, token_entry: dict, zero_if_unknown: bool = False) -> float:
     """Compute USD cost for a single turn's token usage.
 
     Args:
         model: Model identifier (e.g. "claude-opus-4-6-20260205")
         token_entry: Dict with input_tokens, output_tokens, and optional cache fields
+        zero_if_unknown: If True, report $0 for models with no known pricing entry
+            (e.g. self-hosted models behind a custom endpoint) instead of guessing.
 
     Returns:
         Cost in USD
     """
+    if zero_if_unknown and not is_known_model(model):
+        return 0.0
+
     input_rate, output_rate, cache_write_rate, cache_read_rate = get_pricing(model)
 
     def _safe_int(val):

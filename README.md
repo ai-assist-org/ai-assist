@@ -33,6 +33,7 @@ Works with skills like:
 Choose ONE authentication method:
 - **Vertex AI** (Google Cloud): Enterprise/company Claude access
 - **Direct API** (Anthropic): Personal use with free tier
+- **Custom endpoint**: OpenRouter or self-hosted models via any Anthropic-Messages-compatible endpoint
 
 ### Installation
 
@@ -67,6 +68,27 @@ gcloud auth application-default login
 ```bash
 export ANTHROPIC_API_KEY='sk-ant-...'  # Get from console.anthropic.com
 ```
+
+**Custom endpoint** (OpenRouter / self-hosted — takes precedence over the above):
+
+The endpoint must speak the Anthropic Messages API. OpenRouter (Claude models) and
+self-hosted vLLM/Ollama/llama.cpp expose it natively; front OpenAI-only backends with a
+proxy (LiteLLM proxy or claude-code-router).
+```bash
+# OpenRouter
+export ANTHROPIC_BASE_URL='https://openrouter.ai/api'
+export AI_ASSIST_API_KEY='sk-or-...'
+export AI_ASSIST_MODEL='anthropic/claude-sonnet-4.6'
+
+# Self-hosted Ollama (disable Anthropic ephemeral caching)
+export ANTHROPIC_BASE_URL='http://localhost:11434'
+export AI_ASSIST_API_KEY='ollama'
+export AI_ASSIST_MODEL='<local-model>'
+export AI_ASSIST_ENABLE_CACHE='false'
+```
+Optional per-role overrides (`AI_ASSIST_SYNTHESIS_MODEL`, `AI_ASSIST_COMPACTION_MODEL`) and
+capability overrides for unknown models (`AI_ASSIST_MODEL_MAX_TOKENS`,
+`AI_ASSIST_MODEL_CONTEXT_WINDOW`) are documented in `.env.example`.
 
 📖 **Vertex AI setup:** See [VERTEX_AI_SETUP.md](VERTEX_AI_SETUP.md)
 
@@ -853,10 +875,18 @@ uv run ai-assist --dev /interactive
 
 This is useful during development to see code changes immediately.
 
+### Overriding the Model per Run
+
+Use the `--model` flag to override `AI_ASSIST_MODEL` for a single invocation:
+
+```bash
+uv run ai-assist --model anthropic/claude-sonnet-4.6 /query "say hi"
+```
+
 ## Requirements
 
 - Python 3.12+
-- Anthropic API access (Vertex AI or Direct API)
+- Anthropic API access (Vertex AI, Direct API, or a custom Anthropic-compatible endpoint)
 - MCP servers (optional but recommended)
 - `jq` (optional, enables `internal__json_query` tool for efficient JSON processing)
 
