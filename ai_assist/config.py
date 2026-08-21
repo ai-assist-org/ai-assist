@@ -218,6 +218,14 @@ class AiAssistConfig(BaseModel):
         default_factory=lambda: os.getenv("AI_ASSIST_ENABLE_CACHE", "true").lower() == "true",
     )
 
+    # MLflow tracing (optional GenAI observability). Requires ai-assist[mlflow].
+    enable_mlflow: bool = Field(
+        default_factory=lambda: os.getenv("AI_ASSIST_ENABLE_MLFLOW", "false").lower() == "true",
+    )
+    # Standard MLflow tracking URI; unset falls back to a local file store under the config dir.
+    mlflow_tracking_uri: str | None = Field(default_factory=lambda: os.getenv("MLFLOW_TRACKING_URI"))
+    mlflow_experiment: str = Field(default_factory=lambda: os.getenv("AI_ASSIST_MLFLOW_EXPERIMENT", "ai-assist"))
+
     # Capability overrides for models not in the built-in tables (custom/self-hosted endpoints)
     model_max_output_tokens: int | None = Field(
         default_factory=lambda: (
@@ -356,6 +364,9 @@ class AiAssistConfig(BaseModel):
             synthesis_model=os.getenv("AI_ASSIST_SYNTHESIS_MODEL"),
             compaction_model=os.getenv("AI_ASSIST_COMPACTION_MODEL"),
             enable_prompt_caching=os.getenv("AI_ASSIST_ENABLE_CACHE", "true").lower() == "true",
+            enable_mlflow=os.getenv("AI_ASSIST_ENABLE_MLFLOW", "false").lower() == "true",
+            mlflow_tracking_uri=os.getenv("MLFLOW_TRACKING_URI"),
+            mlflow_experiment=os.getenv("AI_ASSIST_MLFLOW_EXPERIMENT", "ai-assist"),
             model_max_output_tokens=(
                 int(os.environ["AI_ASSIST_MODEL_MAX_TOKENS"]) if os.getenv("AI_ASSIST_MODEL_MAX_TOKENS") else None
             ),

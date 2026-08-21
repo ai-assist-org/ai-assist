@@ -22,6 +22,7 @@ def mock_config():
     config.synthesis_model = None
     config.compaction_model = None
     config.enable_prompt_caching = True
+    config.enable_mlflow = False
     config.model_max_output_tokens = None
     config.model_context_window = None
     config.mcp_servers = {}
