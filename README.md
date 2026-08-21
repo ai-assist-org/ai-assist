@@ -883,6 +883,38 @@ Use the `--model` flag to override `AI_ASSIST_MODEL` for a single invocation:
 uv run ai-assist --model anthropic/claude-sonnet-4.6 /query "say hi"
 ```
 
+### MLflow Tracing (optional)
+
+In addition to the built-in query traces (`/eval-stats`, `/cost`), ai-assist can
+emit [MLflow Traces](https://mlflow.org/docs/latest/llms/tracing/index.html) for
+GenAI observability — a `query → tool-call` span tree with LLM spans, inputs/
+outputs, token usage, and cost, viewable in the MLflow UI.
+
+```bash
+# Install the optional dependency (lightweight client + tracing, plus SQLAlchemy
+# for the local SQLite backend)
+uv sync --extra mlflow            # or: pip install 'ai-assist[mlflow]'
+
+# Enable it (env-driven backend; unset MLFLOW_TRACKING_URI => local SQLite store)
+export AI_ASSIST_ENABLE_MLFLOW=true
+# export MLFLOW_TRACKING_URI=http://localhost:5000   # optional remote server
+uv run ai-assist /query "list files in /tmp"
+
+# View locally (the UI needs the full mlflow package):
+pip install mlflow
+mlflow ui --backend-store-uri sqlite:///~/.ai-assist/mlflow.db   # "Traces" tab
+```
+
+The local default is a SQLite store at `~/.ai-assist/mlflow.db`. A SQL backend
+(rather than a file store) is used because the Traces UI's metrics endpoint
+requires one; point `mlflow ui` at the **same** URI. For a shared/remote setup,
+run an MLflow tracking server and set `MLFLOW_TRACKING_URI` to it.
+
+Tracing captures **all** models (Claude or non-Claude endpoints), since every
+call goes through the Anthropic Messages client. It is a no-op when disabled or
+when the extra isn't installed; the JSONL traces behind `/eval-stats` and `/cost`
+are unaffected.
+
 ## Requirements
 
 - Python 3.12+

@@ -40,12 +40,14 @@ def test_standalone_escape_sets_event(cancel_event, fake_stdin):
 
             # Write bare escape
             os.write(write_fd, b"\x1b")
-            # Wait for detection (50ms escape timeout + margin)
-            time.sleep(0.15)
+            # Wait for detection (50ms escape timeout). Poll instead of a fixed
+            # sleep so the test doesn't flake when the watcher thread is slow to
+            # be scheduled under heavy parallel load.
+            detected = cancel_event.wait(timeout=2.0)
 
             watcher.stop()
 
-    assert cancel_event.is_set()
+    assert detected
 
 
 def test_special_key_sequence_ignored(cancel_event, fake_stdin):
