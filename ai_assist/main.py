@@ -1,22 +1,26 @@
 """Main entry point for ai-assist"""
 
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
 import os
 import sys
 from datetime import datetime
+from typing import TYPE_CHECKING
 
-from .agent import AiAssistAgent
 from .commands import get_command_suggestion, is_valid_cli_command, is_valid_interactive_command
 from .config import get_config, get_config_dir
 from .identity import AssistantIdentity, Identity, UserIdentity, get_identity
 from .kg_queries import KnowledgeGraphQueries
 from .knowledge_graph import KnowledgeGraph
-from .monitors import MonitoringScheduler
 from .prompt_utils import extract_prompt_messages
 from .service import SUBCOMMANDS, install_service, remove_service, service_logs, service_status, service_systemctl
 from .state import StateManager
+
+if TYPE_CHECKING:
+    from .agent import AiAssistAgent
 
 logger = logging.getLogger(__name__)
 
@@ -385,6 +389,8 @@ async def basic_interactive_mode(agent: AiAssistAgent, state_manager: StateManag
 
 async def monitoring_mode(agent: AiAssistAgent, config, state_manager: StateManager, knowledge_graph: KnowledgeGraph):
     """Run in monitoring mode"""
+    from .monitors import MonitoringScheduler
+
     scheduler = MonitoringScheduler(agent, config, state_manager, knowledge_graph)
 
     try:
@@ -804,8 +810,14 @@ async def main_async():
     state_manager = StateManager()
     knowledge_graph = KnowledgeGraph()
 
-    # Only initialize agent if needed (with knowledge graph for interactive learning)
-    agent = AiAssistAgent(config, knowledge_graph=knowledge_graph) if needs_agent else None
+    # Only initialize agent if needed (with knowledge graph for interactive learning).
+    # Import lazily so no-agent commands (help, kg-*, service, etc.) avoid the heavy
+    # anthropic/mcp import chain and keep the CLI cold-start fast.
+    agent = None
+    if needs_agent:
+        from .agent import AiAssistAgent
+
+        agent = AiAssistAgent(config, knowledge_graph=knowledge_graph)
 
     from .awl_executor import cleanup_session_tmpdir, init_session_tmpdir
 
