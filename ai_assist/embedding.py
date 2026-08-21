@@ -38,7 +38,14 @@ class EmbeddingModel:
             return
         from fastembed import TextEmbedding
 
-        self._model = TextEmbedding(self._model_name)
+        # Use a single ONNX runtime thread by default. This app only ever encodes one
+        # short text at a time, which gains nothing from multi-threading but otherwise
+        # burns ~10x the CPU -- and oversubscribes badly when many processes (e.g. the
+        # pytest-xdist test workers) each spin up an all-cores pool. Override with
+        # AI_ASSIST_EMBEDDING_THREADS (set it empty to restore fastembed's all-cores default).
+        threads_env = os.getenv("AI_ASSIST_EMBEDDING_THREADS", "1")
+        kwargs: dict[str, Any] = {"threads": int(threads_env)} if threads_env else {}
+        self._model = TextEmbedding(self._model_name, **kwargs)
         self._dimensions = self._model.embedding_size
         logging.info("Embedding model loaded (%s, %d dims)", self._model_name, self._dimensions)
 
