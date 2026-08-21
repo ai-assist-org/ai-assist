@@ -284,6 +284,8 @@ Files: `background_tasks.py`, `background_task_tools.py`
 - Costs are recorded per-turn in `_track_token_usage()` and aggregated per-query in `QueryTrace.total_cost_usd`.
 - Commands: `/cost [period]` for cost summary, `/eval-stats` for aggregate metrics including cost.
 
+**MLflow tracing** (`mlflow_tracing.py`): optional GenAI observability — optional dep `mlflow-skinny` + `sqlalchemy` (`pip install ai-assist[mlflow]`), enabled with `AI_ASSIST_ENABLE_MLFLOW=true`. Backend via `MLFLOW_TRACKING_URI`; unset => local SQLite store at `<config dir>/mlflow.db` (SQL backend needed for the Traces UI metrics). Emits a `query → tool` span tree (autolog for LLM spans + manual spans in `agent.py`), mirroring `QueryTrace` metrics onto the root span. No-op when disabled/uninstalled; the JSONL cost tracking above is unaffected.
+
 Files: `config.py`, `state.py`, `config_watcher.py`, `file_watchdog.py`
 
 ### Tools Architecture
