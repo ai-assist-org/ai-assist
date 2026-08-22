@@ -12,6 +12,7 @@ import json
 import os
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
 import yaml
@@ -88,6 +89,26 @@ async def run(workspace: Path, output_dir: Path, model: str, timeout: int):
             print(f"ERROR: replay mode but no cassette at {cassette_path}", file=sys.stderr)
             sys.exit(1)
         agent.anthropic = FakeAnthropicClient(load_cassette(cassette_path))  # type: ignore[assignment]
+
+        # Replay must NOT execute tools. In replay the next assistant turn always
+        # comes from the cassette, so tool *outputs* are irrelevant; executing
+        # real tools (execute_command, write_file, ...) driven by committed
+        # cassette data would be a code-execution risk. Record the tool
+        # selection (what the judges check) but skip every side effect.
+        async def _replay_execute_tool(tool_name, arguments):
+            original = tool_name.split("__", 1)[-1]
+            agent.last_tool_calls.append(
+                {
+                    "tool_name": tool_name,
+                    "original_tool_name": original,
+                    "arguments": dict(arguments),
+                    "result": "[replay: tool not executed]",
+                    "timestamp": datetime.now(),
+                }
+            )
+            return "[replay: tool not executed]"
+
+        agent._execute_tool = _replay_execute_tool  # type: ignore[method-assign]
     elif mode == "record":
         recorder = RecordingClient(agent.anthropic)
         agent.anthropic = recorder  # type: ignore[assignment]

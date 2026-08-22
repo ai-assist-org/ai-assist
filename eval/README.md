@@ -121,10 +121,14 @@ AI_ASSIST_EVAL_MODE=replay uv run --extra eval python eval/run_eval.py \
   --config eval/eval.yaml --model claude-sonnet-4-6 --cases kg-stats
 ```
 
-A cassette records only the assistant turns (text + tool_use blocks); internal
-tools still execute for real against the isolated per-case KG, so tool selection
-is exercised honestly. Replay of a case with no `cassette.json` fails fast. See
-`ai_assist/testing/` and `AGENTS.md` (Snapshot/replay testing) for the format.
+A cassette records only the assistant turns (text + tool_use blocks). During
+replay the tool *selection* is recorded for the judges but the tools are **not
+executed** — the next turn always comes from the cassette, so tool outputs are
+irrelevant, and running cassette-driven tools (e.g. `execute_command`) would be
+a code-execution risk since cassettes are committed data editable in any PR.
+Replay therefore has no side effects and needs no API key. Replay of a case with
+no `cassette.json` fails fast. See `ai_assist/testing/` and `AGENTS.md`
+(Snapshot/replay testing) for the format.
 
 ## Prerequisites
 

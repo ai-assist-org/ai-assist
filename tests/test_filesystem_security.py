@@ -89,6 +89,23 @@ async def test_user_rejects_command(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_find_exec_blocked_despite_allowlisted_find(tmp_path, monkeypatch):
+    """find is allowlisted, but -exec must not smuggle arbitrary command execution"""
+    monkeypatch.setattr("ai_assist.filesystem_tools.get_config_dir", lambda: tmp_path)
+    config = AiAssistConfig(anthropic_api_key="test")
+    tools = FilesystemTools(config, load_user_config=False)
+    # No confirmation_callback: non-interactive, allowlist-only.
+
+    result = await tools.execute_tool(
+        "execute_command",
+        {"command": "find /tmp -maxdepth 0 -exec sh -c 'echo PWNED' {} +"},
+    )
+
+    assert "not allowed" in result.lower()
+    assert "PWNED" not in result
+
+
+@pytest.mark.asyncio
 async def test_user_approves_command():
     """When user approves via callback, command runs"""
     config = AiAssistConfig(anthropic_api_key="test")
@@ -1085,6 +1102,16 @@ class TestExtractCommandArgumentPaths:
     def test_find_dot_path(self):
         result = _extract_command_argument_paths("find . -name '*.txt'")
         assert ("find", ".") in result
+
+    def test_find_exec_flagged_dangerous(self):
+        """find -exec (and friends) must be flagged so validation can reject them"""
+        for primary in ("-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprintf"):
+            result = _extract_command_argument_paths(f"find /tmp -maxdepth 0 {primary} sh -c 'x' {{}} +")
+            assert ("find", "<dangerous-find>") in result, primary
+
+    def test_find_without_dangerous_primary_not_flagged(self):
+        result = _extract_command_argument_paths("find /tmp -type f -name '*.log'")
+        assert ("find", "<dangerous-find>") not in result
 
     def test_python_script(self):
         result = _extract_command_argument_paths("python3 /tmp/script.py")

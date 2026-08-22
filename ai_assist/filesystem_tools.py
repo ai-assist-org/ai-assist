@@ -95,6 +95,13 @@ SHELL_BUILTINS = frozenset(
 
 PYTHON_COMMANDS = frozenset({"python", "python3"})
 
+# find primaries that run arbitrary commands or write/delete files. These
+# bypass the command allowlist (the executed program is find's argument, not a
+# separate allowlisted command), so they must be rejected explicitly.
+FIND_DANGEROUS_PRIMARIES = frozenset(
+    {"-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprintf", "-fprint", "-fprint0", "-fls"}
+)
+
 TRANSPARENT_WRAPPERS = frozenset({"env", "nohup", "nice", "ionice", "timeout", "stdbuf", "script"})
 
 PRIVILEGE_WRAPPERS = frozenset({"sudo", "su", "doas"})
@@ -442,6 +449,8 @@ def _extract_command_argument_paths(command: str) -> list[tuple[str, str]]:
                 results.append(("cd", target))
 
         elif cmd_name == "find":
+            if any(arg in FIND_DANGEROUS_PRIMARIES for arg in args):
+                results.append(("find", "<dangerous-find>"))
             for arg in args:
                 if arg.startswith("-") or arg.startswith("(") or arg == "!":
                     break
@@ -1221,6 +1230,11 @@ class FilesystemTools:
         for cmd_name, path_or_marker in pairs:
             if cmd_name == "cd":
                 continue
+            if path_or_marker == "<dangerous-find>":
+                return (
+                    "Error: find with -exec/-execdir/-ok/-okdir/-delete/-fprintf is not allowed "
+                    "(these run arbitrary commands or modify files, bypassing the command allowlist)."
+                )
             if path_or_marker in ("<inline-code>", "<stdin>", "<interactive>"):
                 if not was_auto_allowed:
                     continue

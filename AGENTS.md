@@ -401,8 +401,8 @@ The agent loop can be driven offline and deterministically by swapping the singl
 LLM seam (`AiAssistAgent.anthropic`) for a **cassette-driven fake client**. A
 cassette is a JSON file listing the assistant turns for one query; the Nth
 `messages.create`/`messages.stream` call returns the Nth recorded turn
-(turn-index matching, so it is robust to prompt/token drift). Internal tools run
-for real against an isolated temp KG — only the LLM is faked.
+(turn-index matching, so it is robust to prompt/token drift). Only the LLM is
+faked; how tools behave depends on the caller (see below).
 
 - **Unit / loop tests**: use the `make_replay_agent` fixture (`tests/conftest.py`):
   ```python
@@ -415,9 +415,14 @@ for real against an isolated temp KG — only the LLM is faked.
       assert await agent.query(prompt="do it") == "Done"
   ```
   Examples in `tests/test_snapshot_replay.py`; hand-written cassettes in `tests/snapshots/`.
+  Here internal tools run for real against an isolated temp KG (cassettes are
+  trusted, in-repo, and only call safe tools).
 - **Eval cassettes**: `AI_ASSIST_EVAL_MODE=record` wraps the real client and writes
   `eval/dataset/cases/<case>/cassette.json`; `AI_ASSIST_EVAL_MODE=replay` runs each
   case offline against its cassette. `eval/eval_wrapper.py` handles the swap.
+  Because these cassettes are committed data editable in any PR, eval replay does
+  **not** execute tools — it records the tool *selection* the judges check but
+  skips every side effect (no `execute_command`, no file writes, no network).
 
 ### 2. DRY - Don't Repeat Yourself
 
