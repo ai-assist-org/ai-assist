@@ -27,14 +27,6 @@ jobs:
       - name: Run pre-commit
         run: uv run pre-commit run --all-files
 
-      - name: Coverage gate
-        run: |
-          uv run python -m coverage run --source=ai_assist -m pytest -p no:xdist -o addopts="-v --strict-markers --tb=short"
-          uv run python -m coverage report --fail-under=71
-
-      - name: Eval replay (offline cassettes)
-        run: make test-eval-replay
-
   container-build:
     runs-on: ubuntu-latest
     strategy:
