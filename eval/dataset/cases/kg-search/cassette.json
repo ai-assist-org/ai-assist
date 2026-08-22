@@ -1,0 +1,34 @@
+{
+  "turns": [
+    {
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_vrtx_01PmV8tGAoTPkvWe5arH6XMT",
+          "name": "internal__search_knowledge",
+          "input": {
+            "semantic_query": "testing practices"
+          }
+        }
+      ],
+      "stop_reason": "tool_use",
+      "usage": {
+        "input_tokens": 332,
+        "output_tokens": 59
+      }
+    },
+    {
+      "content": [
+        {
+          "type": "text",
+          "text": "The knowledge graph returned **no results** for testing practices. \ud83d\udd0d\n\nThis means I haven't yet learned or stored any information about your testing preferences, frameworks, workflows, or conventions from past conversations.\n\nIf you'd like, you can:\n- **Tell me your preferences** (e.g., preferred test framework, conventions, CI setup) and I'll remember them for future sessions.\n- **Ask a specific question** about testing and I'll help based on general knowledge."
+        }
+      ],
+      "stop_reason": "end_turn",
+      "usage": {
+        "input_tokens": 412,
+        "output_tokens": 105
+      }
+    }
+  ]
+}

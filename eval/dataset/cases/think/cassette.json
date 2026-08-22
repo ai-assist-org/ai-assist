@@ -1,0 +1,34 @@
+{
+  "turns": [
+    {
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_vrtx_017n7GdCGCUU1wA8ugeEqkgZ",
+          "name": "internal__think",
+          "input": {
+            "thought": "The user wants me to think step by step about organizing a weekly team meeting agenda. This is a general knowledge question that doesn't require tool calls. I'll reason through the key elements of building an effective weekly meeting agenda and present them clearly."
+          }
+        }
+      ],
+      "stop_reason": "tool_use",
+      "usage": {
+        "input_tokens": 335,
+        "output_tokens": 100
+      }
+    },
+    {
+      "content": [
+        {
+          "type": "text",
+          "text": "Here's a structured approach to organizing a weekly team meeting agenda:\n\n---\n\n## \ud83d\udccb Step-by-Step: Weekly Team Meeting Agenda\n\n### Step 1 \u2014 Define the Meeting's Purpose\nBefore writing anything, answer:\n- **Why does this meeting exist?** (Sync, decisions, problem-solving, or all three?)\n- **What does \"success\" look like?** Everyone aligned and clear on next steps.\n\n---\n\n### Step 2 \u2014 Set a Fixed Structure\nUse a repeatable template so the team knows what to expect every week:\n\n| Time | Section | Owner |\n|------|---------|-------|\n| 5 min | **Opening / Check-in** | Facilitator |\n| 10 min | **Previous action items review** | All |\n| 20 min | **Core topics / updates** | Rotating |\n| 10 min | **Blockers & decisions needed** | All |\n| 5 min | **Next steps & action items** | Facilitator |\n\n---\n\n### Step 3 \u2014 Collect Topics in Advance\n- Share an editable doc (e.g., Confluence, Google Doc) **24\u201348 hours before** the meeting.\n- Let anyone add items, but tag them with:\n  - \ud83d\udd34 **Decision needed**\n  - \ud83d\udfe1 **FYI / update**\n  - \ud83d\udfe2 **Discussion**\n\n---\n\n### Step 4 \u2014 Prioritize & Time-Box\n- **Sort by priority**, not by who submitted first.\n- Assign a time box to each item. If it can be an email, remove it.\n- Put high-stakes items **early** \u2014 people are more focused.\n\n---\n\n### Step 5 \u2014 Assign Owners\nEvery agenda item should have:\n- A **presenter/owner** responsible for the content.\n- A **clear outcome** (decision, awareness, or task assignment).\n\n---\n\n### Step 6 \u2014 Share the Agenda Ahead of Time\n- Send the final agenda **at least 24 hours before**.\n- Include any pre-read documents so the meeting isn't spent reading slides.\n\n---\n\n### Step 7 \u2014 Facilitate Tightly During the Meeting\n- Start on time, end on time. \u23f1\ufe0f\n- Park off-topic discussions in a **\"parking lot\"** section.\n- Summarize decisions and action items **before closing**.\n\n---\n\n### Step 8 \u2014 Send Meeting Notes After\nWithin **1\u20132 hours** of the meeting, distribute:\n- \u2705 Decisions made\n- \ud83d\udccc Action items (owner + due date)\n- \ud83c\udd7f\ufe0f Parking lot items for follow-up\n\n---\n\n## \ud83d\udd11 Key Principles\n\n- **Less is more** \u2014 3\u20135 focused topics beat 10 rushed ones.\n- **No standing updates** that could be an async message.\n- **Rotate the facilitator** to build team ownership.\n- **Review the format quarterly** \u2014 what worked 6 months ago may not work now.\n\n---\n\nA well-structured agenda transforms a meeting from a time sink into a productive ritual. \ud83d\ude80 Want me to create a reusable template or schedule a recurring reminder for it?"
+        }
+      ],
+      "stop_reason": "end_turn",
+      "usage": {
+        "input_tokens": 451,
+        "output_tokens": 744
+      }
+    }
+  ]
+}

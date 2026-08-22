@@ -1,0 +1,54 @@
+{
+  "turns": [
+    {
+      "content": [
+        {
+          "type": "text",
+          "text": "I'll run all three commands in parallel since they're independent!"
+        },
+        {
+          "type": "tool_use",
+          "id": "toolu_vrtx_01KfjCt3YPxwt8EUyNEqssxz",
+          "name": "internal__execute_command",
+          "input": {
+            "command": "gh api repos/octocat/Hello-World/pulls/1/comments"
+          }
+        },
+        {
+          "type": "tool_use",
+          "id": "toolu_vrtx_0154aVR7LCXcom6rXJKLzYTD",
+          "name": "internal__execute_command",
+          "input": {
+            "command": "gh api repos/octocat/Hello-World/pulls/1/reviews"
+          }
+        },
+        {
+          "type": "tool_use",
+          "id": "toolu_vrtx_01Xu8xZMQTyibYVBqr6PQPas",
+          "name": "internal__execute_command",
+          "input": {
+            "command": "gh pr view 1 --repo octocat/Hello-World --json mergeable --jq .mergeable"
+          }
+        }
+      ],
+      "stop_reason": "tool_use",
+      "usage": {
+        "input_tokens": 855,
+        "output_tokens": 201
+      }
+    },
+    {
+      "content": [
+        {
+          "type": "text",
+          "text": "Here's a summary of all three results for **octocat/Hello-World PR #1**:\n\n---\n\n### \ud83d\udcac Inline Comments (25 total)\nA highly active PR with comments spanning years! Highlights include:\n\n| User | Comment | Date |\n|------|---------|------|\n| daaaabeen | \"hi\" | Apr 2016 |\n| masud-technope | \"Lets create another comment and see the position.\" | Jun 2016 |\n| pedrorijo91 | \"4?\" | May 2017 |\n| nan-yu | \"Great stuff!\" | Nov 2022 |\n| tanay-jagadeesh | \"[nitpick] style: Missing space between command and description.\" | Mar 2026 |\n| Uday-sidagana | \"Test comment via API\" / unicode test | Aug 2025 |\n| composio-partner-123 | Detailed multi-section review comment | Feb 2026 |\n\n---\n\n### \ud83d\udd0d Reviews (30 total)\n| State | Count | Notable Reviewers |\n|-------|-------|-------------------|\n| \u2705 APPROVED | 5 | gracevivi523, Alexandrag88, Zappy66, RafaelEdwards, cristianpalomino |\n| \ud83d\udcac COMMENTED | 25 | Many users over the years |\n\nNo **CHANGES_REQUESTED** reviews found.\n\n---\n\n### \ud83d\udd00 Mergeability\n**`CONFLICTING`** \u2014 The PR currently has merge conflicts and cannot be merged as-is."
+        }
+      ],
+      "stop_reason": "end_turn",
+      "usage": {
+        "input_tokens": 46420,
+        "output_tokens": 370
+      }
+    }
+  ]
+}

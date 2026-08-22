@@ -8,7 +8,7 @@ Evaluates whether the ai-assist agent selects the correct internal tools given n
 # Install with eval dependency
 uv sync --extra eval
 
-# Run all 15 test cases
+# Run all 17 test cases
 uv run --extra eval python eval/run_eval.py --config eval/eval.yaml --model claude-sonnet-4-6
 
 # Run specific cases
@@ -27,7 +27,7 @@ The process exits with code 0 on all-pass, 1 on any failure.
 
 The eval suite tests **tool selection from natural language** — the gap not covered by unit tests (which mock the LLM). Each case provides a prompt and checks whether the agent calls the expected internal tool.
 
-### Tool Categories (15 cases)
+### Tool Categories (17 cases)
 
 | Category | Cases | Tools Tested |
 |----------|-------|-------------|
@@ -35,7 +35,7 @@ The eval suite tests **tool selection from natural language** — the gap not co
 | Reports | `report-write`, `report-list`, `report-read` | `write_report`, `list_reports`, `read_report` |
 | Schedules | `schedule-list`, `schedule-create`, `action-schedule` | `list_schedules`, `create_monitor`/`create_task`, `schedule_action` |
 | Filesystem | `fs-read`, `fs-list`, `fs-search` | `read_file`, `list_directory`, `search_in_file` |
-| Misc | `think`, `tool-help` | `think`, `get_tool_help` |
+| Misc | `think`, `tool-help`, `jq-filter-json`, `shell-command` | `think`, `get_tool_help`, `json_query`, `execute_command` |
 
 ### Judges
 
@@ -104,6 +104,28 @@ eval/runs/ai-assist-internal-tools/2026-06-02-claude-sonnet-4-6/
       stderr.log
 ```
 
+## Offline replay (cassettes)
+
+Eval cases can run **offline and deterministically** by replaying a recorded
+cassette of LLM turns instead of calling the API:
+
+```bash
+# Record cassettes from real API runs (writes dataset/cases/<case>/cassette.json)
+make eval-record                                    # requires API key
+AI_ASSIST_EVAL_MODE=record uv run --extra eval python eval/run_eval.py \
+  --config eval/eval.yaml --model claude-sonnet-4-6 --cases kg-stats
+
+# Replay offline — no API key, deterministic across runs
+make test-eval-replay
+AI_ASSIST_EVAL_MODE=replay uv run --extra eval python eval/run_eval.py \
+  --config eval/eval.yaml --model claude-sonnet-4-6 --cases kg-stats
+```
+
+A cassette records only the assistant turns (text + tool_use blocks); internal
+tools still execute for real against the isolated per-case KG, so tool selection
+is exercised honestly. Replay of a case with no `cassette.json` fails fast. See
+`ai_assist/testing/` and `AGENTS.md` (Snapshot/replay testing) for the format.
+
 ## Prerequisites
 
 - `ANTHROPIC_API_KEY` or Vertex AI credentials configured in `~/.ai-assist/.env`
@@ -112,6 +134,6 @@ eval/runs/ai-assist-internal-tools/2026-06-02-claude-sonnet-4-6/
 
 ## Cost
 
-Each case makes 1-3 LLM API calls (agent query). With `claude-sonnet-4-6`, a full 15-case run costs approximately $0.10-0.30 depending on tool call complexity.
+Each case makes 1-3 LLM API calls (agent query). With `claude-sonnet-4-6`, a full 17-case run costs approximately $0.10-0.30 depending on tool call complexity.
 
 Token costs are automatically tracked in query traces (`~/.ai-assist/traces/query_traces.jsonl`) with per-turn `cost_usd` and per-query `total_cost_usd` fields. Use `/cost` or `/cost 30d` to view cost summaries, or `/eval-stats` for aggregate metrics including cost.

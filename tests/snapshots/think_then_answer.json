@@ -1,0 +1,19 @@
+{
+  "turns": [
+    {
+      "content": [
+        {"type": "text", "text": "Let me plan this."},
+        {"type": "tool_use", "id": "t1", "name": "internal__think", "input": {"thought": "Break the task into steps."}}
+      ],
+      "stop_reason": "tool_use",
+      "usage": {"input_tokens": 120, "output_tokens": 30}
+    },
+    {
+      "content": [
+        {"type": "text", "text": "The answer is 42."}
+      ],
+      "stop_reason": "end_turn",
+      "usage": {"input_tokens": 160, "output_tokens": 12}
+    }
+  ]
+}

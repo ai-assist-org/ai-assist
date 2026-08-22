@@ -24,6 +24,22 @@ async def run(workspace: Path, output_dir: Path, model: str, timeout: int):
     os.environ["AI_ASSIST_CONFIG_DIR"] = str(eval_config_dir)
     os.environ["AI_ASSIST_REPORTS_DIR"] = str(workspace / "reports")
 
+    # Record/replay mode: "live" (default, real API), "record" (real API +
+    # capture cassette), or "replay" (offline, deterministic; no API key).
+    mode = os.environ.get("AI_ASSIST_EVAL_MODE", "live").lower()
+    if mode == "replay":
+        # Replay never calls the API. Force a dummy key so the run is hermetic:
+        # a non-empty ANTHROPIC_API_KEY makes config.use_vertex False (config.py
+        # line 247), so the plain Anthropic client is selected with an
+        # unusable key. Even if the fake-client swap were bypassed, no real API
+        # call could succeed (no accidental cost/network). Set before importing
+        # config so its .env load (override=False) cannot overwrite it.
+        os.environ["ANTHROPIC_API_KEY"] = "replay-dummy"
+    cassette_path = Path(
+        os.environ.get("AI_ASSIST_EVAL_CASSETTE")
+        or (Path(__file__).resolve().parent / "dataset" / "cases" / workspace.name / "cassette.json")
+    )
+
     # Resolve {workspace} placeholders in installed-skills.json cache paths
     skills_file = eval_config_dir / "installed-skills.json"
     if skills_file.exists():
@@ -34,6 +50,7 @@ async def run(workspace: Path, output_dir: Path, model: str, timeout: int):
     from ai_assist.agent import AiAssistAgent
     from ai_assist.config import AiAssistConfig
     from ai_assist.knowledge_graph import KnowledgeGraph
+    from ai_assist.testing import FakeAnthropicClient, RecordingClient, load_cassette
 
     # Read input
     input_file = workspace / "input.yaml"
@@ -64,6 +81,17 @@ async def run(workspace: Path, output_dir: Path, model: str, timeout: int):
     # Register internal tools (connect_to_servers populates available_tools)
     await agent.connect_to_servers()
 
+    # Swap the LLM client for record/replay if requested.
+    recorder = None
+    if mode == "replay":
+        if not cassette_path.exists():
+            print(f"ERROR: replay mode but no cassette at {cassette_path}", file=sys.stderr)
+            sys.exit(1)
+        agent.anthropic = FakeAnthropicClient(load_cassette(cassette_path))  # type: ignore[assignment]
+    elif mode == "record":
+        recorder = RecordingClient(agent.anthropic)
+        agent.anthropic = recorder  # type: ignore[assignment]
+
     # Build messages: optional history + current prompt
     history = input_data.get("history", [])
     messages = [{"role": m["role"], "content": m["content"]} for m in history]
@@ -93,6 +121,10 @@ async def run(workspace: Path, output_dir: Path, model: str, timeout: int):
         "model": trace.model,
     }
     (output_dir / "metrics.json").write_text(json.dumps(metrics))
+
+    # Persist the captured cassette for later offline replay.
+    if recorder is not None:
+        recorder.save(cassette_path)
 
     # Print response to stdout (captured by harness)
     print(response)

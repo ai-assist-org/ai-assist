@@ -22,7 +22,7 @@ jobs:
           python-version: "3.14"
 
       - name: Install dependencies
-        run: uv sync --extra dev --group dev
+        run: uv sync --extra dev --extra eval --group dev
 
       - name: Run pre-commit
         run: uv run pre-commit run --all-files
@@ -31,6 +31,9 @@ jobs:
         run: |
           uv run python -m coverage run --source=ai_assist -m pytest -p no:xdist -o addopts="-v --strict-markers --tb=short"
           uv run python -m coverage report --fail-under=71
+
+      - name: Eval replay (offline cassettes)
+        run: make test-eval-replay
 
   container-build:
     runs-on: ubuntu-latest

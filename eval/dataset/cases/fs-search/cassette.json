@@ -1,0 +1,35 @@
+{
+  "turns": [
+    {
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_vrtx_01R6rsuHkjfCZnFkkLSa3inL",
+          "name": "internal__search_in_file",
+          "input": {
+            "path": "/tmp/test-eval-file.txt",
+            "pattern": "error"
+          }
+        }
+      ],
+      "stop_reason": "tool_use",
+      "usage": {
+        "input_tokens": 343,
+        "output_tokens": 84
+      }
+    },
+    {
+      "content": [
+        {
+          "type": "text",
+          "text": "\u26a0\ufe0f The search couldn't be completed. The file `/tmp/test-eval-file.txt` is outside the allowed directory. For security reasons, file access is restricted to `/tmp/ai-assist` and its subdirectories.\n\nIf you'd like, you can:\n1. **Move the file** to `/tmp/ai-assist/test-eval-file.txt` and I'll search it there.\n2. **Provide the file contents directly**, and I can search for the word `error` within them."
+        }
+      ],
+      "stop_reason": "end_turn",
+      "usage": {
+        "input_tokens": 475,
+        "output_tokens": 120
+      }
+    }
+  ]
+}

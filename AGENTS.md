@@ -387,9 +387,37 @@ make test-eval               # Eval suite with check judges only
 make test-eval-full          # Eval suite with LLM judges (slower, requires claude CLI)
 uv run --extra eval python eval/run_eval.py --config eval/eval.yaml --model claude-sonnet-4-6 --cases case-name  # Single case
 
+# Eval snapshot replay (offline, deterministic — no API key)
+make test-eval-replay        # Replay recorded cassettes (fails cases lacking a cassette.json)
+make eval-record             # Record cassettes from real API runs (requires API key)
+
 # Pre-commit (runs all hooks: black, ruff, mypy, bandit, pylint, pytest)
 pre-commit run --all-files
 ```
+
+##### Snapshot/replay testing (`ai_assist/testing/`)
+
+The agent loop can be driven offline and deterministically by swapping the single
+LLM seam (`AiAssistAgent.anthropic`) for a **cassette-driven fake client**. A
+cassette is a JSON file listing the assistant turns for one query; the Nth
+`messages.create`/`messages.stream` call returns the Nth recorded turn
+(turn-index matching, so it is robust to prompt/token drift). Internal tools run
+for real against an isolated temp KG — only the LLM is faked.
+
+- **Unit / loop tests**: use the `make_replay_agent` fixture (`tests/conftest.py`):
+  ```python
+  async def test_something(make_replay_agent):
+      agent = await make_replay_agent([
+          {"content": [{"type": "tool_use", "id": "t1", "name": "internal__think",
+                        "input": {"thought": "plan"}}], "stop_reason": "tool_use"},
+          {"content": [{"type": "text", "text": "Done"}], "stop_reason": "end_turn"},
+      ])
+      assert await agent.query(prompt="do it") == "Done"
+  ```
+  Examples in `tests/test_snapshot_replay.py`; hand-written cassettes in `tests/snapshots/`.
+- **Eval cassettes**: `AI_ASSIST_EVAL_MODE=record` wraps the real client and writes
+  `eval/dataset/cases/<case>/cassette.json`; `AI_ASSIST_EVAL_MODE=replay` runs each
+  case offline against its cassette. `eval/eval_wrapper.py` handles the swap.
 
 ### 2. DRY - Don't Repeat Yourself
 

@@ -1,0 +1,34 @@
+{
+  "turns": [
+    {
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_vrtx_01RoUCr9pLdW7yrj6Xeup6GF",
+          "name": "internal__read_file",
+          "input": {
+            "path": "/tmp/test-eval-file.txt"
+          }
+        }
+      ],
+      "stop_reason": "tool_use",
+      "usage": {
+        "input_tokens": 336,
+        "output_tokens": 65
+      }
+    },
+    {
+      "content": [
+        {
+          "type": "text",
+          "text": "I'm unable to read that file. The path `/tmp/test-eval-file.txt` is outside the allowed directory. I only have access to files within `/tmp/ai-assist/`. \ud83d\udd12\n\nIf you'd like, you could move the file to `/tmp/ai-assist/test-eval-file.txt` and I can read it from there."
+        }
+      ],
+      "stop_reason": "end_turn",
+      "usage": {
+        "input_tokens": 449,
+        "output_tokens": 84
+      }
+    }
+  ]
+}
