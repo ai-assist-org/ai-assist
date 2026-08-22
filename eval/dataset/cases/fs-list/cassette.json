@@ -1,0 +1,55 @@
+{
+  "turns": [
+    {
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_vrtx_01T9eW4G5gTaB2Zc4Gxs1k1E",
+          "name": "internal__list_directory",
+          "input": {
+            "path": "/tmp"
+          }
+        }
+      ],
+      "stop_reason": "tool_use",
+      "usage": {
+        "input_tokens": 328,
+        "output_tokens": 57
+      }
+    },
+    {
+      "content": [
+        {
+          "type": "text",
+          "text": "I only have access to the `/tmp/ai-assist` directory. Let me list that instead:"
+        },
+        {
+          "type": "tool_use",
+          "id": "toolu_vrtx_013VAcN6vKbGXC1GMgEL2sEN",
+          "name": "internal__list_directory",
+          "input": {
+            "path": "/tmp/ai-assist"
+          }
+        }
+      ],
+      "stop_reason": "tool_use",
+      "usage": {
+        "input_tokens": 425,
+        "output_tokens": 82
+      }
+    },
+    {
+      "content": [
+        {
+          "type": "text",
+          "text": "The directory `/tmp/ai-assist` doesn't exist yet \u2014 it's empty or hasn't been created. My filesystem access is restricted to `/tmp/ai-assist`, so I'm unable to list the broader `/tmp` directory. \ud83d\udd12"
+        }
+      ],
+      "stop_reason": "end_turn",
+      "usage": {
+        "input_tokens": 539,
+        "output_tokens": 56
+      }
+    }
+  ]
+}

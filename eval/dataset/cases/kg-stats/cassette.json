@@ -1,0 +1,32 @@
+{
+  "turns": [
+    {
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_vrtx_01PGC6VWWMNmfuThkvmWUDgN",
+          "name": "internal__kg_stats",
+          "input": {}
+        }
+      ],
+      "stop_reason": "tool_use",
+      "usage": {
+        "input_tokens": 331,
+        "output_tokens": 39
+      }
+    },
+    {
+      "content": [
+        {
+          "type": "text",
+          "text": "Your knowledge graph is currently **empty** \u2014 it contains **0 entities** and **0 relationships**. \ud83d\uddc2\ufe0f\n\nThis means no lessons, preferences, project context, or decision rationale have been stored yet. As we work together, I can start building it up by saving useful information!"
+        }
+      ],
+      "stop_reason": "end_turn",
+      "usage": {
+        "input_tokens": 465,
+        "output_tokens": 67
+      }
+    }
+  ]
+}

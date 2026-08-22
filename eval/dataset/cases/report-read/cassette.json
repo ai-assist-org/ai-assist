@@ -1,0 +1,34 @@
+{
+  "turns": [
+    {
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_vrtx_01TJVNVJgScBdcJdWgXsV8FB",
+          "name": "internal__read_report",
+          "input": {
+            "name": "status"
+          }
+        }
+      ],
+      "stop_reason": "tool_use",
+      "usage": {
+        "input_tokens": 330,
+        "output_tokens": 56
+      }
+    },
+    {
+      "content": [
+        {
+          "type": "text",
+          "text": "Here's the **status** report \ud83d\udccb:\n\n---\n\n# Status Report\n\nAll systems operational. No incidents reported.\n\n- **CI pipelines:** \ud83d\udfe2 Green\n- **Jira backlog:** 12 open tickets\n- **Last deploy:** 2026-06-01"
+        }
+      ],
+      "stop_reason": "end_turn",
+      "usage": {
+        "input_tokens": 482,
+        "output_tokens": 69
+      }
+    }
+  ]
+}

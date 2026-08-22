@@ -1,0 +1,42 @@
+{
+  "turns": [
+    {
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_vrtx_01VRtWZtKUBKBSL1ni9Fisa6",
+          "name": "internal__save_knowledge",
+          "input": {
+            "entity_type": "user_preference",
+            "key": "testing_framework",
+            "content": "The team prefers pytest over unittest for all new tests.",
+            "tags": [
+              "testing",
+              "pytest",
+              "unittest",
+              "python"
+            ]
+          }
+        }
+      ],
+      "stop_reason": "tool_use",
+      "usage": {
+        "input_tokens": 335,
+        "output_tokens": 134
+      }
+    },
+    {
+      "content": [
+        {
+          "type": "text",
+          "text": "Got it! \u2705 I've saved the preference \u2014 **pytest over unittest** for all new tests. I'll keep this in mind whenever testing frameworks come up in our conversations."
+        }
+      ],
+      "stop_reason": "end_turn",
+      "usage": {
+        "input_tokens": 573,
+        "output_tokens": 41
+      }
+    }
+  ]
+}

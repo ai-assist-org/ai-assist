@@ -1,0 +1,60 @@
+{
+  "turns": [
+    {
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_vrtx_01NBznizU8f7FpwPQ1ZEYL58",
+          "name": "internal__think",
+          "input": {
+            "thought": "The user wants to create a daily monitor named 'eval-test-syscheck' that runs every morning at 9am to check system status. I'll use internal__create_action with an interval_range trigger that fires every day between 9:00 and 9:00 (or I could use a schedule trigger). \n\nActually, for a daily monitor at a specific time, I should use internal__create_action with an interval_range trigger with every: '24h', between: '09:00', and: '09:00'. Or I could use a schedule trigger.\n\nLet me think about this - the tool description says:\n- 'interval_range' (every: '1h', between: '9:00', and: '18:00')\n\nFor a daily check at 9am, I should set it to run every 24h between 9:00 and 9:00. But that might be tricky. Let me use interval_range with every: '24h' between '09:00' and '10:00' to ensure it fires around 9am.\n\nActually, the best approach for a daily 9am monitor would be to use internal__create_action with a schedule-type trigger, or use interval_range. Since the description mentions interval_range supports 'between' and 'and' for time windows, I'll use every: '24h' between '09:00' and '09:30' to constrain it to fire once per day around 9am.\n\nWait - actually I should re-read. The trigger types available are: 'mqtt', 'dbus', 'interval_range'. For a simple daily/hourly recurring monitor it says to prefer internal__create_monitor - but there's no such tool available. So I'll use internal__create_action with interval_range trigger.\n\nFor every 24 hours between 9:00 and 9:30 should work for a daily 9am check."
+          }
+        }
+      ],
+      "stop_reason": "tool_use",
+      "usage": {
+        "input_tokens": 347,
+        "output_tokens": 486
+      }
+    },
+    {
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_vrtx_017TNZpFfDr7DtUeBsVjBVy5",
+          "name": "internal__create_action",
+          "input": {
+            "name": "eval-test-syscheck",
+            "trigger": {
+              "type": "interval_range",
+              "every": "24h",
+              "between": "09:00",
+              "and": "09:30"
+            },
+            "prompt": "Check system status: report CPU usage, memory usage, disk space, system load, and any critical services or issues.",
+            "notify": true,
+            "description": "Daily system health check every morning at 9am"
+          }
+        }
+      ],
+      "stop_reason": "tool_use",
+      "usage": {
+        "input_tokens": 848,
+        "output_tokens": 190
+      }
+    },
+    {
+      "content": [
+        {
+          "type": "text",
+          "text": "\u2705 Done! The **`eval-test-syscheck`** monitor has been created with the following configuration:\n\n| Setting | Value |\n|---|---|\n| **Name** | `eval-test-syscheck` |\n| **Schedule** | Daily, every morning between **9:00\u20139:30 AM** |\n| **Task** | System status check (CPU, memory, disk, load, critical services) |\n| **Notifications** | Enabled |\n\nIt will automatically run each morning and notify you with a system health summary. \ud83d\udda5\ufe0f Let me know if you'd like to adjust anything \u2014 such as the time window, check scope, or notification settings!"
+        }
+      ],
+      "stop_reason": "end_turn",
+      "usage": {
+        "input_tokens": 1071,
+        "output_tokens": 156
+      }
+    }
+  ]
+}

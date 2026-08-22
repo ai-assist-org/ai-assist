@@ -1,4 +1,4 @@
-.PHONY: help install install-dev test test-cov lint format clean pre-commit-install pre-commit-run sandbox-build
+.PHONY: help install install-dev test test-cov lint format clean pre-commit-install pre-commit-run sandbox-build test-eval test-eval-full test-eval-replay eval-record
 
 help:  ## Show this help message
 	@echo "Available targets:"
@@ -65,6 +65,12 @@ test-eval:  ## Run agent behavior eval suite (requires API key)
 
 test-eval-full:  ## Run eval suite with LLM judges (slower, requires claude CLI)
 	uv run --extra eval python eval/run_eval.py --config eval/eval.yaml --model claude-sonnet-4-6
+
+test-eval-replay:  ## Replay recorded eval cassettes offline (no API key, deterministic)
+	AI_ASSIST_EVAL_MODE=replay uv run --extra eval python eval/run_eval.py --config eval/eval.yaml --model claude-sonnet-4-6 --no-llm-judges
+
+eval-record:  ## Record eval cassettes from real API runs (requires API key)
+	AI_ASSIST_EVAL_MODE=record uv run --extra eval python eval/run_eval.py --config eval/eval.yaml --model claude-sonnet-4-6 --no-llm-judges
 
 test-integration: sandbox-build-dev  ## Run sandbox integration tests (builds images first)
 	pytest tests/test_sandbox_integration.py -v -m integration --override-ini="addopts="

@@ -1,0 +1,38 @@
+{
+  "turns": [
+    {
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_vrtx_01AGZwCYuLnHjjyhJkPVeM1k",
+          "name": "internal__schedule_action",
+          "input": {
+            "prompt": "Reminder: Time to review the PR! \ud83d\udd0d",
+            "time_spec": "tomorrow at 2pm",
+            "execute_query": false,
+            "notify": true,
+            "description": "Reminder to review the PR"
+          }
+        }
+      ],
+      "stop_reason": "tool_use",
+      "usage": {
+        "input_tokens": 334,
+        "output_tokens": 149
+      }
+    },
+    {
+      "content": [
+        {
+          "type": "text",
+          "text": "Done! \u2705 You'll get a reminder to **review the PR** tomorrow, **Sunday Aug 23 at 2:00 PM**."
+        }
+      ],
+      "stop_reason": "end_turn",
+      "usage": {
+        "input_tokens": 608,
+        "output_tokens": 36
+      }
+    }
+  ]
+}

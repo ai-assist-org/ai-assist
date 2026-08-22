@@ -1,0 +1,32 @@
+{
+  "turns": [
+    {
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_vrtx_01J55gdRYXHUEWotwDm7PVXc",
+          "name": "internal__list_actions",
+          "input": {}
+        }
+      ],
+      "stop_reason": "tool_use",
+      "usage": {
+        "input_tokens": 329,
+        "output_tokens": 39
+      }
+    },
+    {
+      "content": [
+        {
+          "type": "text",
+          "text": "You have **no scheduled actions** configured at the moment. \ud83d\udced\n\nWould you like me to set one up? I can create:\n- \u23f0 **One-time schedules** (e.g., \"remind me at 9am tomorrow\")\n- \ud83d\udd01 **Recurring monitors** (e.g., \"check DCI jobs every hour\")\n- \ud83d\udce1 **Event-driven actions** (e.g., triggered by MQTT or system signals)"
+        }
+      ],
+      "stop_reason": "end_turn",
+      "usage": {
+        "input_tokens": 383,
+        "output_tokens": 110
+      }
+    }
+  ]
+}
