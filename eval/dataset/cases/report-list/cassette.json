@@ -1,0 +1,32 @@
+{
+  "turns": [
+    {
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_vrtx_016My1uP3xASApFm7A4zVYbG",
+          "name": "internal__list_reports",
+          "input": {}
+        }
+      ],
+      "stop_reason": "tool_use",
+      "usage": {
+        "input_tokens": 329,
+        "output_tokens": 39
+      }
+    },
+    {
+      "content": [
+        {
+          "type": "text",
+          "text": "You currently have **no reports** available. \ud83d\udccb\n\nReports are created when analyses or workflows generate output \u2014 for example, from running MCP prompts, AWL scripts, or manual report writes. Would you like me to generate one?"
+        }
+      ],
+      "stop_reason": "end_turn",
+      "usage": {
+        "input_tokens": 381,
+        "output_tokens": 53
+      }
+    }
+  ]
+}

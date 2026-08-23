@@ -1,0 +1,35 @@
+{
+  "turns": [
+    {
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_vrtx_01T9zDYqWGvgLsHTzwLYhBTs",
+          "name": "internal__write_report",
+          "input": {
+            "name": "weekly-status",
+            "content": "All systems operational, no incidents this week."
+          }
+        }
+      ],
+      "stop_reason": "tool_use",
+      "usage": {
+        "input_tokens": 345,
+        "output_tokens": 82
+      }
+    },
+    {
+      "content": [
+        {
+          "type": "text",
+          "text": "\u2705 Report **'weekly-status'** has been created successfully! It contains:\n\n> *All systems operational, no incidents this week.*\n\nThe report is saved at `reports/weekly-status.md`. Let me know if you'd like to update or add anything to it!"
+        }
+      ],
+      "stop_reason": "end_turn",
+      "usage": {
+        "input_tokens": 489,
+        "output_tokens": 64
+      }
+    }
+  ]
+}

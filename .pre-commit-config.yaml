@@ -92,3 +92,14 @@ repos:
         pass_filenames: false
         always_run: true
         verbose: true
+
+  # Replay recorded eval cassettes offline (no API key; never calls the real API).
+  - repo: local
+    hooks:
+      - id: eval-replay
+        name: eval-replay
+        entry: make test-eval-replay
+        language: system
+        pass_filenames: false
+        always_run: true
+        verbose: true

@@ -1,0 +1,110 @@
+{
+  "turns": [
+    {
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_vrtx_014BDjFRN6WJ8QJCzpq6fRfJ",
+          "name": "internal__execute_command",
+          "input": {
+            "command": "echo '[{\"name\":\"alpha\",\"score\":10},{\"name\":\"beta\",\"score\":20},{\"name\":\"gamma\",\"score\":30}]'"
+          }
+        }
+      ],
+      "stop_reason": "tool_use",
+      "usage": {
+        "input_tokens": 366,
+        "output_tokens": 86
+      }
+    },
+    {
+      "content": [
+        {
+          "type": "text",
+          "text": "Now I'll save the output to a temp file and extract the names using `internal__json_query`. Actually, I can parse it inline \u2014 let me write it to a temp file first, then query it. \ud83d\udd04"
+        },
+        {
+          "type": "tool_use",
+          "id": "toolu_vrtx_01H51VY2aBvnLovhaX7V7K8Q",
+          "name": "internal__write_file",
+          "input": {
+            "path": "/tmp/scores.json",
+            "content": "[{\"name\":\"alpha\",\"score\":10},{\"name\":\"beta\",\"score\":20},{\"name\":\"gamma\",\"score\":30}]"
+          }
+        }
+      ],
+      "stop_reason": "tool_use",
+      "usage": {
+        "input_tokens": 538,
+        "output_tokens": 154
+      }
+    },
+    {
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_vrtx_01NeKk7S7yDtePCsYykHxPYS",
+          "name": "internal__write_file",
+          "input": {
+            "path": "~/scores.json",
+            "content": "[{\"name\":\"alpha\",\"score\":10},{\"name\":\"beta\",\"score\":20},{\"name\":\"gamma\",\"score\":30}]"
+          }
+        }
+      ],
+      "stop_reason": "tool_use",
+      "usage": {
+        "input_tokens": 736,
+        "output_tokens": 103
+      }
+    },
+    {
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_vrtx_01BAB9LJfcnJvRgca1A9KVGT",
+          "name": "internal__write_file",
+          "input": {
+            "path": "/tmp/ai-assist/scores.json",
+            "content": "[{\"name\":\"alpha\",\"score\":10},{\"name\":\"beta\",\"score\":20},{\"name\":\"gamma\",\"score\":30}]"
+          }
+        }
+      ],
+      "stop_reason": "tool_use",
+      "usage": {
+        "input_tokens": 887,
+        "output_tokens": 109
+      }
+    },
+    {
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_vrtx_01JBRKvBEGZLJFfGW3D5rBR5",
+          "name": "internal__json_query",
+          "input": {
+            "file": "/tmp/ai-assist/scores.json",
+            "filter": "[.[] | .name]"
+          }
+        }
+      ],
+      "stop_reason": "tool_use",
+      "usage": {
+        "input_tokens": 1025,
+        "output_tokens": 87
+      }
+    },
+    {
+      "content": [
+        {
+          "type": "text",
+          "text": "Here are the extracted names from the JSON output: \u2705\n\n| # | Name  |\n|---|-------|\n| 1 | alpha |\n| 2 | beta  |\n| 3 | gamma |\n\n**Steps performed:**\n1. **Ran `echo`** to produce the JSON array.\n2. **Saved the output** to a temp file for processing.\n3. **Applied the `jq` filter** `[.[] | .name]` to extract only the `name` fields from each object."
+        }
+      ],
+      "stop_reason": "end_turn",
+      "usage": {
+        "input_tokens": 1142,
+        "output_tokens": 123
+      }
+    }
+  ]
+}
