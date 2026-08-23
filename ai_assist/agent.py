@@ -21,6 +21,7 @@ from .identity import get_identity
 from .introspection_tools import IntrospectionTools
 from .json_tools import JsonTools
 from .mcp_stdio_fix import stdio_client_fixed
+from .mlflow_tracing import end_span, record_query_trace, setup_mlflow, start_query_span, start_tool_span
 from .report_tools import ReportTools
 from .script_execution_tools import ScriptExecutionTools
 from .security import ToolDefinitionRegistry, sanitize_tool_result, validate_tool_description
@@ -304,6 +305,7 @@ class AiAssistAgent:
         self._no_kg = False  # Per-query flag: @no-kg prefix suppresses KG injection
         self._no_history = False  # Per-query flag: @no-history prefix strips conversation history
         self._query_depth = 0  # Track nesting depth for _no_kg reset
+        self._mlflow_root_span = None  # Root query span; tool spans parent to it
         self.interactive_mode = False
         self.plan_mode = False
 
@@ -377,6 +379,10 @@ class AiAssistAgent:
             self.anthropic = AnthropicVertex(**vertex_kwargs, max_retries=5)
         else:
             self.anthropic = Anthropic(api_key=config.anthropic_api_key, max_retries=5)
+
+        # Optional MLflow tracing (autolog patches the Anthropic client created above)
+        if config.enable_mlflow:
+            setup_mlflow(config)
 
         # Display model configuration
         max_tokens = self.get_max_tokens()
@@ -1161,14 +1167,20 @@ class AiAssistAgent:
         )
 
     def _auto_capture_trace(self, query_text: str, response_text: str, start_time: float):
-        """Persist a trace after query/query_streaming completes."""
+        """Persist a trace after query/query_streaming completes.
+
+        Returns the built QueryTrace (or None on failure) so callers can also
+        mirror it to MLflow.
+        """
         try:
             from .eval import TraceStore
 
             trace = self.capture_trace(query_text, response_text, start_time)
             TraceStore().append(trace)
+            return trace
         except Exception:
             logger.debug("Failed to auto-capture trace", exc_info=True)
+            return None
 
     @staticmethod
     def _mask_old_observations(messages: list, keep_recent: int = 10) -> None:
@@ -1771,6 +1783,12 @@ class AiAssistAgent:
         # Save per-query state so nested calls don't clobber the outer query's tracking
         saved_token_usage = self._turn_token_usage
         saved_tool_calls = self.last_tool_calls
+        # Root MLflow span only for the outermost query so nested calls nest under a
+        # single trace. Context-free (see mlflow_tracing); tool spans parent to it
+        # via self._mlflow_root_span.
+        span = start_query_span(query_text, self.config.model) if is_outermost else None
+        if is_outermost:
+            self._mlflow_root_span = span
         try:
             if max_time_seconds:
                 result = await asyncio.wait_for(
@@ -1785,7 +1803,11 @@ class AiAssistAgent:
             result = f"Task timeout after {max_time_seconds} seconds (max: {max_time_seconds}s)"
             return result
         finally:
-            self._auto_capture_trace(query_text, result, start_time)
+            trace = self._auto_capture_trace(query_text, result, start_time)
+            if is_outermost:
+                record_query_trace(span, trace)
+                end_span(span)
+                self._mlflow_root_span = None
             self._query_depth -= 1
             if is_outermost:
                 self._query_deadline = None
@@ -2139,6 +2161,12 @@ class AiAssistAgent:
         # Save per-query state so nested calls don't clobber the outer query's tracking
         saved_token_usage = self._turn_token_usage
         saved_tool_calls = self.last_tool_calls
+        # Root MLflow span for the outermost streaming query. Context-free (see
+        # mlflow_tracing) so it can stay open across the generator's yields and be
+        # ended from any context without the OTel cross-context detach error.
+        span = start_query_span(query_text, self.config.model) if is_outermost else None
+        if is_outermost:
+            self._mlflow_root_span = span
         try:
             # Capture current query text for KG context injection
             if prompt:
@@ -2418,7 +2446,11 @@ class AiAssistAgent:
             logger.warning("Tool budget exhausted: reached maximum %d turns without final answer", max_turns)
             yield {"type": "error", "message": "Maximum turns reached without final answer"}
         finally:
-            self._auto_capture_trace(query_text, "".join(accumulated_text), start_time)
+            trace = self._auto_capture_trace(query_text, "".join(accumulated_text), start_time)
+            if is_outermost:
+                record_query_trace(span, trace)
+                end_span(span)
+                self._mlflow_root_span = None
             self._query_depth -= 1
             if not is_outermost:
                 self._turn_token_usage = saved_token_usage
@@ -2911,6 +2943,17 @@ class AiAssistAgent:
         return f"Collected {total_collected} items to report '{name}' ({page_count} {page_label})"
 
     async def _execute_tool(self, tool_name: str, arguments: dict) -> str:
+        """Execute a tool call, wrapped in an MLflow child span (no-op when disabled)."""
+        span = start_tool_span(tool_name, arguments, self._mlflow_root_span)
+        try:
+            result = await self._execute_tool_impl(tool_name, arguments)
+            end_span(span, outputs=result)
+            return result
+        except BaseException:
+            end_span(span)
+            raise
+
+    async def _execute_tool_impl(self, tool_name: str, arguments: dict) -> str:
         """Execute a tool call on the appropriate MCP server, introspection, or internal tool
 
         Args:

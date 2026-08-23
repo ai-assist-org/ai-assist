@@ -415,6 +415,7 @@ async def test_query_streaming_cancel_event():
     mock_config.synthesis_model = None
     mock_config.compaction_model = None
     mock_config.enable_prompt_caching = True
+    mock_config.enable_mlflow = False
     mock_config.model_max_output_tokens = None
     mock_config.model_context_window = None
     mock_config.mcp_servers = {}
