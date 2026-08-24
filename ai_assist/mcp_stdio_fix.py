@@ -89,7 +89,7 @@ async def stdio_client_fixed(server: StdioServerParameters, errlog: TextIO = sys
 
                         logger.debug(f"[FIX] Processing line: {line[:100]}")
                         try:
-                            message = types.JSONRPCMessage.model_validate_json(line)
+                            message = types.jsonrpc_message_adapter.validate_json(line)
                             session_message = SessionMessage(message)
                         except Exception as exc:
                             logger.error(f"Failed to parse JSONRPC message: {line[:100]}")
@@ -129,9 +129,11 @@ async def stdio_client_fixed(server: StdioServerParameters, errlog: TextIO = sys
             logger.error(f"stdin_writer error: {e}")
             raise
 
+    # On POSIX `process` is an anyio ``Process`` (an async context manager); the
+    # Windows-only ``FallbackProcess`` returned on that platform is not.
     async with (
         anyio.create_task_group() as tg,
-        process,
+        process,  # type: ignore[union-attr]
     ):
         tg.start_soon(stdout_reader)
         tg.start_soon(stdin_writer)

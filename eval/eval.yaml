@@ -1,6 +1,5 @@
-skill: ai-assist-internal-tools
-
 execution:
+  skill: ai-assist-internal-tools
   mode: case
   arguments: "{prompt}"
   timeout: 120
@@ -100,6 +99,7 @@ judges:
 
   - name: response_quality
     description: Evaluate if the response is coherent and addresses the prompt
+    feedback_type: bool
     prompt: |
       The user asked the AI assistant: {{ inputs.prompt }}
 

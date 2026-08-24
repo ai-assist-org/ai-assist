@@ -653,9 +653,9 @@ class AiAssistAgent:
             transport = "sse"
         if transport == "streamablehttp":
             assert config.url is not None
-            from mcp.client.streamable_http import streamablehttp_client
+            from mcp.client.streamable_http import streamable_http_client
 
-            return streamablehttp_client(config.url)
+            return streamable_http_client(config.url)
         if transport == "sse":
             assert config.url is not None
             from mcp.client.sse import sse_client
@@ -693,7 +693,7 @@ class AiAssistAgent:
                                 "name": full_name,
                                 "description": desc,
                                 "_full_description": desc,
-                                "input_schema": tool.inputSchema,
+                                "input_schema": tool.input_schema,
                                 "_server": name,
                                 "_original_name": tool.name,
                             }
@@ -761,8 +761,8 @@ class AiAssistAgent:
 
                         try:
                             templates_result = await session.list_resource_templates()
-                            if templates_result.resourceTemplates:
-                                self.available_resource_templates[name] = templates_result.resourceTemplates
+                            if templates_result.resource_templates:
+                                self.available_resource_templates[name] = templates_result.resource_templates
                         except Exception:
                             pass
 
@@ -2573,24 +2573,22 @@ class AiAssistAgent:
             available = ", ".join(self.sessions.keys())
             raise ValueError(f"MCP server '{server_name}' not connected. Available servers: {available}")
 
-        from pydantic import AnyUrl
-
         session = self.sessions[server_name]
-        result = await session.read_resource(AnyUrl(uri))
+        result = await session.read_resource(uri)
 
         contents = []
         for item in result.contents:
             if hasattr(item, "text") and item.text is not None:
                 text, _ = sanitize_tool_result(str(item.text), f"resource:{server_name}/{uri}")
                 contents.append(
-                    {"text": text, "mimeType": item.mimeType, "uri": str(item.uri) if hasattr(item, "uri") else uri}
+                    {"text": text, "mimeType": item.mime_type, "uri": str(item.uri) if hasattr(item, "uri") else uri}
                 )
             elif hasattr(item, "blob") and item.blob is not None:
                 contents.append(
                     {
                         "type": "blob",
-                        "summary": f"Binary resource (base64-encoded, mimeType={item.mimeType})",
-                        "mimeType": item.mimeType,
+                        "summary": f"Binary resource (base64-encoded, mimeType={item.mime_type})",
+                        "mimeType": item.mime_type,
                         "uri": str(item.uri) if hasattr(item, "uri") else uri,
                     }
                 )

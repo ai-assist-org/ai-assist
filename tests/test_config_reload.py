@@ -329,7 +329,7 @@ async def test_run_server_retries_on_failure():
         return MagicMock(resources=[])
 
     async def fake_list_resource_templates():
-        return MagicMock(resourceTemplates=[])
+        return MagicMock(resource_templates=[])
 
     mock_session = MagicMock()
     mock_session.initialize = fake_init

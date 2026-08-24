@@ -961,7 +961,7 @@ Do NOT compact if you still need the old tool results for your current task.
                         "name": getattr(res, "name", None),
                         "uri": str(res.uri),
                         "description": res.description,
-                        "mimeType": res.mimeType,
+                        "mimeType": res.mime_type,
                         "size": getattr(res, "size", None),
                     }
                 )
@@ -975,9 +975,9 @@ Do NOT compact if you still need the old tool results for your current task.
                     {
                         "server": server_name,
                         "name": getattr(tpl, "name", None),
-                        "uri_template": tpl.uriTemplate,
+                        "uri_template": tpl.uri_template,
                         "description": tpl.description,
-                        "mimeType": tpl.mimeType,
+                        "mimeType": tpl.mime_type,
                     }
                 )
 
