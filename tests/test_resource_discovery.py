@@ -42,7 +42,7 @@ def _make_resource(
     res.uri = uri
     res.name = name
     res.description = description
-    res.mimeType = mime_type
+    res.mime_type = mime_type
     res.size = size
     res.annotations = None
     return res
@@ -52,10 +52,10 @@ def _make_resource_template(
     uri_template="dci://jobs/{job_id}", name="get_job", description="Get a job by ID", mime_type="application/json"
 ):
     tpl = MagicMock()
-    tpl.uriTemplate = uri_template
+    tpl.uri_template = uri_template
     tpl.name = name
     tpl.description = description
-    tpl.mimeType = mime_type
+    tpl.mime_type = mime_type
     tpl.annotations = None
     return tpl
 
@@ -104,7 +104,7 @@ def test_agent_stores_resource_templates(agent_with_resources):
     assert len(agent_with_resources.available_resource_templates["dci"]) == 1
 
     tpl = agent_with_resources.available_resource_templates["dci"][0]
-    assert tpl.uriTemplate == "dci://jobs/{job_id}"
+    assert tpl.uri_template == "dci://jobs/{job_id}"
     assert tpl.name == "get_job"
 
 
@@ -149,7 +149,7 @@ async def test_list_mcp_resources_filter_by_server(agent_with_resources):
 async def test_read_mcp_resource_text(agent_with_resources):
     mock_content = MagicMock()
     mock_content.text = '{"mappings": {"properties": {"id": {"type": "keyword"}}}}'
-    mock_content.mimeType = "text/plain"
+    mock_content.mime_type = "text/plain"
     type(mock_content).blob = property(lambda self: (_ for _ in ()).throw(AttributeError))
 
     mock_result = MagicMock()
@@ -172,7 +172,7 @@ async def test_read_mcp_resource_text(agent_with_resources):
 async def test_read_mcp_resource_blob(agent_with_resources):
     mock_content = MagicMock()
     mock_content.blob = "base64data=="
-    mock_content.mimeType = "application/octet-stream"
+    mock_content.mime_type = "application/octet-stream"
     mock_content.text = None
 
     mock_result = MagicMock()

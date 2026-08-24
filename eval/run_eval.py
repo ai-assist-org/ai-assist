@@ -27,7 +27,7 @@ from agent_eval.config import EvalConfig
 
 
 def discover_cases(config):
-    dataset_dir = config.resolve_path(config.dataset_path)
+    dataset_dir = config.resolve_path(config.dataset.path)
     if not dataset_dir.is_dir():
         print(f"ERROR: dataset directory not found: {dataset_dir}", file=sys.stderr)
         sys.exit(1)
@@ -35,7 +35,7 @@ def discover_cases(config):
 
 
 def create_workspace(case_id, config, run_id):
-    dataset_dir = config.resolve_path(config.dataset_path)
+    dataset_dir = config.resolve_path(config.dataset.path)
     workspace = Path(f"/tmp/agent-eval/{run_id}/cases/{case_id}")  # noqa: S108
     workspace.mkdir(parents=True, exist_ok=True)
     shutil.copy2(dataset_dir / case_id / "input.yaml", workspace / "input.yaml")
@@ -74,7 +74,7 @@ def load_case_record(case_dir, config):
     case_dir = Path(case_dir)
     record = {"files": {}, "case_dir": str(case_dir)}
     case_id = case_dir.name
-    dataset_dir = config.resolve_path(config.dataset_path)
+    dataset_dir = config.resolve_path(config.dataset.path)
 
     ann_path = dataset_dir / case_id / "annotations.yaml"
     if ann_path.is_file():
@@ -257,8 +257,8 @@ def execute_cases(all_cases, config, runner, model, run_output, run_id, *, paral
         for k, v in input_data.items():
             args = args.replace(f"{{{k}}}", str(v) if v is not None else "")
 
-        result = runner.run_skill(
-            skill_name=config.skill,
+        result = runner.execute(
+            target=config.resolve_skill(),
             args=args,
             workspace=workspace,
             model=model,
@@ -342,7 +342,7 @@ def score_and_report(run_output, config, judges):
 
 def print_results(config, run_id, per_case, aggregated, judges, run_output):
     print("\n" + "=" * 70)
-    print(f"Results: {config.skill} / {run_id}")
+    print(f"Results: {config.resolve_skill()} / {run_id}")
     print("=" * 70)
     for name, agg in aggregated.items():
         if agg.get("pass_rate") is not None:
@@ -400,9 +400,9 @@ def run_pipeline(config_path, model, run_id=None, cases=None, parallelism=1, no_
         sys.exit(1)
 
     runs_dir = Path(os.environ.get("AGENT_EVAL_RUNS_DIR", "eval/runs"))
-    run_output = runs_dir / config.skill / run_id
+    run_output = runs_dir / config.resolve_skill() / run_id
 
-    print(f"Eval: {config.skill}")
+    print(f"Eval: {config.resolve_skill()}")
     print(f"Run ID: {run_id}")
     print(f"Model: {model}")
     print(f"Cases: {len(all_cases)}")
