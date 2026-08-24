@@ -4,6 +4,8 @@ import asyncio
 import json
 import logging
 import os
+import re
+import shlex
 import sys
 import threading
 from datetime import datetime
@@ -516,6 +518,76 @@ async def handle_prompt_command(
     return True
 
 
+def substitute_skill_args(body: str, args: str) -> str:
+    """Substitute argument placeholders in a skill body.
+
+    - ``$ARGUMENTS`` -> the full raw argument string (verbatim).
+    - ``$1``..``$9`` -> positional args parsed with ``shlex`` so quoted segments
+      stay grouped (e.g. ``"us east"``). Missing positions become empty strings.
+      Falls back to whitespace-split on unbalanced quotes.
+    - If the body has no placeholder and args were given, append them.
+    """
+    try:
+        positional = shlex.split(args)
+    except ValueError:
+        positional = args.split()
+
+    has_placeholder = "$ARGUMENTS" in body or re.search(r"\$[1-9]", body) is not None
+
+    def replace_positional(match: re.Match) -> str:
+        idx = int(match.group(0)[1:])
+        return positional[idx - 1] if idx - 1 < len(positional) else ""
+
+    result = re.sub(r"\$[1-9]", replace_positional, body)
+    result = result.replace("$ARGUMENTS", args)
+
+    if not has_placeholder and args:
+        result = f"{result}\n\nArguments: {args}"
+
+    return result
+
+
+async def handle_skill_invocation(
+    user_input: str,
+    agent: AiAssistAgent,
+    console: Console,
+    conversation_memory: ConversationMemory,
+    kg_context: KnowledgeGraphContext | None,
+) -> bool:
+    """Handle ``/<skill-name> [args]`` as a user-invoked Agent Skill.
+
+    Loads the skill's SKILL.md body, substitutes arguments, and runs it through
+    the normal query path so it executes and streams like any other turn.
+
+    Returns True if the input matched a user-invocable skill (and was run),
+    False otherwise so the caller can fall through to normal handling.
+    """
+    if not user_input.startswith("/"):
+        return False
+
+    parts = user_input[1:].split(maxsplit=1)
+    if not parts:
+        return False
+
+    name = parts[0]
+    args = parts[1] if len(parts) > 1 else ""
+
+    # /server/prompt tokens are handled by handle_prompt_command, not skills
+    if "/" in name:
+        return False
+
+    skill = agent.skills_manager.loaded_skills.get(name)
+    if skill is None or not skill.metadata.user_invocable:
+        return False
+
+    prompt_text = substitute_skill_args(skill.body, args)
+    console.print(f"[green]Running skill: {name}[/green]")
+    await query_with_feedback(
+        agent, prompt_text, console, conversation_memory=conversation_memory, kg_context=kg_context
+    )
+    return True
+
+
 async def tui_interactive_mode(agent: AiAssistAgent, state_manager: StateManager):
     """Run interactive mode with TUI enhancements"""
     agent.interactive_mode = True
@@ -995,7 +1067,7 @@ async def tui_interactive_mode(agent: AiAssistAgent, state_manager: StateManager
                     continue
 
                 if user_input.lower() == "/help":
-                    await handle_help_command(console)
+                    await handle_help_command(console, agent)
                     continue
 
                 if user_input.lower() == "/clear":
@@ -1047,6 +1119,12 @@ async def tui_interactive_mode(agent: AiAssistAgent, state_manager: StateManager
                     await handle_plan_command(
                         task, agent, console, conversation_memory=conversation_memory, kg_context=kg_context
                     )
+                    continue
+
+                # User-invoked Agent Skills: /<skill-name> [args]
+                if await handle_skill_invocation(
+                    user_input, agent, console, conversation_memory=conversation_memory, kg_context=kg_context
+                ):
                     continue
 
                 # Validate command before sending to agent
@@ -1508,7 +1586,7 @@ async def handle_plan_command(
         revision_feedback = choice
 
 
-async def handle_help_command(console: Console):
+async def handle_help_command(console: Console, agent: AiAssistAgent | None = None):
     """Handle /help command"""
     from .commands import get_interactive_commands
 
@@ -1519,6 +1597,16 @@ async def handle_help_command(console: Console):
         arg_display = f" {cmd.args}" if cmd.args else ""
         cmd_lines.append(f"- `{cmd.name}{arg_display}` - {cmd.description}")
     cmd_section = "\n".join(sorted(cmd_lines))
+
+    # List user-invocable installed skills as /<skill-name> commands
+    skill_lines = []
+    if agent is not None:
+        for name, skill in sorted(agent.skills_manager.loaded_skills.items()):
+            if not skill.metadata.user_invocable:
+                continue
+            hint = f" {skill.metadata.argument_hint}" if skill.metadata.argument_hint else ""
+            skill_lines.append(f"- `/{name}{hint}` - {skill.metadata.description}")
+    skill_section = "\n".join(skill_lines) if skill_lines else "- _(none installed)_"
 
     help_text = f"""
 # ai-assist Interactive Mode Help
@@ -1539,6 +1627,14 @@ Install specialized skills from git repositories, local paths, or ClawHub:
 - Uninstall with `/skill/uninstall <skill-name>`
 - Skills are automatically loaded into system prompt
 - Follows agentskills.io specification
+
+### Run a skill as a command
+Type `/<skill-name> [args]` to run an installed skill directly. Arguments fill
+`$ARGUMENTS` (full string) and `$1`, `$2`, ... (quoted segments stay grouped).
+A skill can opt out with `user-invocable: false` in its frontmatter.
+
+Installed skill commands:
+{skill_section}
 
 ## MCP Prompts 🎯
 Load specialized prompts from MCP servers:

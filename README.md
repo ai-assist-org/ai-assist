@@ -165,6 +165,7 @@ uv run ai-assist
 - `/skill/add_env <skill> <VAR>` - Allow an environment variable for a skill's scripts
 - `/skill/remove_env <skill> <VAR>` - Remove an allowed env var from a skill
 - `/skill/list_env [skill]` - Show allowed env vars for skills
+- `/<skill-name> [args]` - Run an installed skill directly (e.g. `/pdf report.pdf`)
 - `/eval-stats` - Show evaluation metrics from query traces
 - `/cost [period]` - Show token cost summary (e.g. `/cost 7d`, `/cost 30d`)
 - `/plan <task>` - Plan a task before executing (explore → approve → execute)
@@ -220,6 +221,20 @@ Install specialized skills following the [agentskills.io](https://agentskills.io
 - Specialized instructions for Claude following agentskills.io standard
 - Automatically loaded into system prompt (no activation needed)
 - Can include scripts, references, and assets
+
+**Running a skill as a command:**
+
+Any installed skill can be invoked directly by typing `/<skill-name> [args]`:
+
+```bash
+/pdf report.pdf                 # Run the "pdf" skill with an argument
+/deploy "us east" v2           # Quoted segments stay grouped
+```
+
+Arguments fill `$ARGUMENTS` (full string) and `$1`, `$2`, ... in the skill body.
+Built-in commands take precedence over a skill of the same name. A skill can opt
+out with `user-invocable: false` in its frontmatter. Type `/` and press Tab to
+see installed skill commands.
 
 📖 **Creating personal skills:** See [docs/PERSONAL_SKILLS.md](docs/PERSONAL_SKILLS.md)
 - Persistent across sessions

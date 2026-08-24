@@ -33,6 +33,8 @@ class SkillMetadata(BaseModel):
     compatibility: str | None = None
     metadata: dict[str, object] = Field(default_factory=dict)
     allowed_tools: list[str] = Field(default_factory=list)
+    user_invocable: bool = True  # From 'user-invocable' frontmatter; False opts out of /<skill-name>
+    argument_hint: str | None = None  # From 'argument-hint' frontmatter; shown in completion
 
     # Internal fields
     skill_path: Path
@@ -334,6 +336,8 @@ class SkillsLoader:
             compatibility=frontmatter.get("compatibility"),
             metadata=frontmatter.get("metadata", {}),
             allowed_tools=frontmatter.get("allowed-tools", "").split() if frontmatter.get("allowed-tools") else [],
+            user_invocable=frontmatter.get("user-invocable", True),
+            argument_hint=frontmatter.get("argument-hint"),
             skill_path=skill_path,
             source_type=source_type,
             source_url=source_url,

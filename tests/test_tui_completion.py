@@ -6,7 +6,22 @@ from prompt_toolkit.document import Document
 
 from ai_assist.agent import AiAssistAgent
 from ai_assist.config import AiAssistConfig
+from ai_assist.skills_loader import SkillContent, SkillMetadata
 from ai_assist.tui import AiAssistCompleter
+
+
+def _make_skill(name, user_invocable=True, argument_hint=None):
+    return SkillContent(
+        metadata=SkillMetadata(
+            name=name,
+            description=f"{name} skill",
+            skill_path=Path(f"/tmp/skills-cache/{name}"),
+            source_type="local",
+            user_invocable=user_invocable,
+            argument_hint=argument_hint,
+        ),
+        body="body",
+    )
 
 
 def test_skill_command_completion():
@@ -101,3 +116,44 @@ def test_skill_list_completion():
     # Should suggest /skill/list
     commands = [c.text for c in completions]
     assert "/skill/list" in commands
+
+
+def _completer_with_skills(skills):
+    config = AiAssistConfig(
+        anthropic_api_key="test-key",
+        model="claude-3-5-sonnet-20241022",
+        mcp_servers={},
+    )
+    agent = AiAssistAgent(config)
+    agent.skills_manager.loaded_skills = {s.metadata.name: s for s in skills}
+    return AiAssistCompleter(agent=agent)
+
+
+def test_user_invocable_skill_completion():
+    """Installed user-invocable skills appear as /<skill-name>"""
+    completer = _completer_with_skills([_make_skill("deploy")])
+
+    doc = Document("/dep", cursor_position=4)
+    commands = [c.text for c in completer.get_completions(doc, None)]
+
+    assert "/deploy" in commands
+
+
+def test_opted_out_skill_not_completed():
+    """Skills with user-invocable: false are excluded from completion"""
+    completer = _completer_with_skills([_make_skill("secret", user_invocable=False)])
+
+    doc = Document("/sec", cursor_position=4)
+    commands = [c.text for c in completer.get_completions(doc, None)]
+
+    assert "/secret" not in commands
+
+
+def test_skill_colliding_with_builtin_not_completed():
+    """A skill named like a built-in must not shadow the built-in command"""
+    completer = _completer_with_skills([_make_skill("status")])
+
+    doc = Document("/stat", cursor_position=5)
+    completions = list(completer.get_completions(doc, None))
+    # Built-in /status is present exactly once (skill does not add a duplicate)
+    assert [c.text for c in completions].count("/status") == 1

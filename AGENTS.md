@@ -92,7 +92,12 @@ Files: `knowledge_graph.py`, `kg_queries.py`, `kg_query_tools.py`, `knowledge_to
 Skills follow the [agentskills.io](https://agentskills.io) specification:
 - SKILL.md with YAML frontmatter (name, description, allowed-tools)
 - Optional scripts/ directory for sandboxed execution
-- Loaded into system prompt automatically
+- Loaded into system prompt automatically (model-invoked)
+- User-invocable as `/<skill-name> [args]` in interactive mode; the SKILL.md
+  body is run as a query with `$ARGUMENTS`/`$1` substitution (quoted segments
+  stay grouped). Opt out with `user-invocable: false`. Built-in commands take
+  precedence over same-named skills. Handled by `handle_skill_invocation`
+  (`tui_interactive.py`).
 
 **Script Execution Security** (disabled by default):
 - Requires `AI_ASSIST_ALLOW_SCRIPT_EXECUTION=true`
@@ -857,7 +862,7 @@ Also see:
 2. Register in `agent.py`: import, init, tool registration, dispatch chain
 3. Write tests in `tests/test_*_tools.py`
 4. Update README.md if user-facing
-5. Update presentation if appropriate
+5. Update presentation if appropriate (update `\date{...}` to the current month and year, rebuild with `make -C presentation`)
 
 ### Adding a New MCP Server
 

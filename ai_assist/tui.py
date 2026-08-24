@@ -180,6 +180,24 @@ class AiAssistCompleter(Completer):
                     yield Completion(
                         cmd, start_position=-len(word), display=cmd, display_meta=self._get_command_description(cmd)
                     )
+
+            # User-invocable skills: /<skill-name>
+            if self.agent:
+                builtins = set(self.commands)
+                for name, skill in self.agent.skills_manager.loaded_skills.items():
+                    if not skill.metadata.user_invocable:
+                        continue
+                    full_command = f"/{name}"
+                    if full_command in builtins:
+                        continue  # built-in command takes precedence
+                    if full_command.startswith(word.lower()):
+                        meta = skill.metadata.argument_hint or skill.metadata.description[:60]
+                        yield Completion(
+                            full_command,
+                            start_position=-len(word),
+                            display=full_command,
+                            display_meta=meta,
+                        )
         else:
             # Mid-sentence: check if cursor is on a /server/prompt token
             words = text.split()

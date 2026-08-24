@@ -73,6 +73,9 @@ compatibility: ai-assist
 - `description` - Brief description (1-1024 chars)
 - `license` - Optional license identifier
 - `compatibility` - Optional compatibility note
+- `user-invocable` - Optional (default `true`). Set to `false` to hide the skill
+  from the `/<skill-name>` command (it stays model-invocable).
+- `argument-hint` - Optional hint shown in tab-completion, e.g. `[env] [version]`
 
 ### 2. Markdown Body (Your Instructions)
 
@@ -102,6 +105,31 @@ You are an AI assistant with knowledge about [topic].
 - Link to docs
 - Personal preferences
 ```
+
+## Invoking a Skill as a Command
+
+Beyond being picked up automatically by the assistant, any installed skill can
+be run directly in interactive mode by typing `/<skill-name>`:
+
+```
+> /home-automation turn on the living room lights
+```
+
+This runs the skill's Markdown body as a query. Arguments after the name are
+substituted into the body:
+
+- `$ARGUMENTS` - the full argument string, verbatim (quotes preserved)
+- `$1`, `$2`, ... - positional arguments; quoted segments stay grouped, so
+  `/deploy "us east" v2` gives `$1` = `us east` and `$2` = `v2`
+- If the body contains no placeholder, the arguments are appended as an
+  `Arguments:` line.
+
+Notes:
+- Built-in commands (e.g. `/status`, `/help`) take precedence over a skill with
+  the same name.
+- Set `user-invocable: false` in the frontmatter to disable the command while
+  keeping the skill available to the assistant.
+- Type `/` and press Tab to see installed skill commands; `/help` lists them too.
 
 ## Example: Home Automation Skill
 
