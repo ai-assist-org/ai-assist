@@ -25,13 +25,13 @@ lint:  ## Run linting (ruff)
 lint-fix:  ## Run linting with auto-fix
 	ruff check --fix ai_assist tests
 
-format:  ## Format code with black and isort
+format:  ## Format code with black and ruff (import sorting)
 	black ai_assist tests
-	isort ai_assist tests
+	ruff check --select I --fix ai_assist tests
 
 format-check:  ## Check if code is formatted correctly (CI mode)
 	black --check ai_assist tests
-	isort --check ai_assist tests
+	ruff check --select I ai_assist tests
 
 clean:  ## Clean up build artifacts
 	rm -rf build/

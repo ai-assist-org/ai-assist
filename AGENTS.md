@@ -106,6 +106,28 @@ Skills follow the [agentskills.io](https://agentskills.io) specification:
 
 Files: `skills_loader.py`, `skills_manager.py`, `script_execution_tools.py`, `security.py`
 
+### Claude Code Plugins
+
+Loads a subset of the [Claude Code plugin](https://docs.claude.com/en/docs/claude-code/plugins)
+bundle format (`.claude-plugin/plugin.json` + `skills/*/SKILL.md` + legacy
+`commands/*.md` + `.mcp.json`):
+- Plugin skills/commands are registered into the shared
+  `skills_manager.loaded_skills` dict under **namespaced keys** (`plugin:skill`),
+  so every skill consumer (system prompt, completion, `/help`, invocation) works
+  unchanged. Namespacing lives at the registry-key layer only, never in
+  `SkillMetadata.name`.
+- Bundled MCP servers (`.mcp.json`) are namespaced (`plugin__server`) and merged
+  into `config.mcp_servers`; kept in `plugins_manager.plugin_mcp_servers` and
+  re-merged after any `reload_mcp_servers()` / skills reload so they survive.
+- `agents/` (subagents) and `hooks/` are **not** supported — skipped with a notice.
+- Commands: `/plugin/install|uninstall|list|search`, `/plugin/marketplace add|list`.
+  Install by git/local source or by name via a registered marketplace
+  (`.claude-plugin/marketplace.json`). Installing bundled MCP servers prompts for
+  confirmation before connecting.
+- User docs in `docs/PLUGINS.md`.
+
+Files: `plugins_loader.py`, `plugins_manager.py`
+
 ### Service Management
 
 Cross-platform background service installation for persistent monitoring:
@@ -791,6 +813,7 @@ ai_assist/
 ├── knowledge_graph.py         # Temporal KG database
 ├── embedding.py, context.py   # Vector embeddings and semantic search
 ├── skills_*.py                # Agent Skills loader and manager
+├── plugins_*.py               # Claude Code plugin loader and manager
 ├── plan_mode.py               # Plan mode (explore → approve → execute)
 ├── tui*.py                    # Terminal UI components
 ├── monitors.py, tasks.py      # Monitoring and task execution
@@ -833,6 +856,7 @@ emacs/                         # AWL major mode for Emacs
 Detailed documentation in `docs/`:
 - `AWL_SPECIFICATIONS.md` - Complete AWL syntax and semantics
 - `PERSONAL_SKILLS.md` - Creating custom Agent Skills
+- `PLUGINS.md` - Installing Claude Code plugins (skills + MCP + marketplace)
 - `IDENTITY.md` - identity.yaml configuration guide
 - `MULTI_INSTANCE.md` - Running multiple ai-assist instances
 - `KNOWLEDGE_MANAGEMENT.md` - Knowledge graph usage and synthesis

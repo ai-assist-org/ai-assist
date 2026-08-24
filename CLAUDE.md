@@ -36,7 +36,7 @@ uv run --extra eval python eval/run_eval.py --config eval/eval.yaml --model clau
 
 ### Code Quality
 ```bash
-make format                  # Format with black and isort
+make format                  # Format with black and ruff (import sorting)
 make lint                    # Lint with ruff
 make lint-fix                # Auto-fix linting issues
 make pre-commit-run          # Run all pre-commit hooks

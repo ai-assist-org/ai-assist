@@ -166,6 +166,11 @@ uv run ai-assist
 - `/skill/remove_env <skill> <VAR>` - Remove an allowed env var from a skill
 - `/skill/list_env [skill]` - Show allowed env vars for skills
 - `/<skill-name> [args]` - Run an installed skill directly (e.g. `/pdf report.pdf`)
+- `/plugin/install <source|name>@<branch>` - Install a Claude Code plugin
+- `/plugin/uninstall <name>` - Uninstall a plugin
+- `/plugin/list` - List installed plugins
+- `/plugin/search <query>` - Search registered marketplaces for plugins
+- `/plugin/marketplace <add <repo>|list>` - Manage plugin marketplaces
 - `/eval-stats` - Show evaluation metrics from query traces
 - `/cost [period]` - Show token cost summary (e.g. `/cost 7d`, `/cost 30d`)
 - `/plan <task>` - Plan a task before executing (explore → approve → execute)
@@ -238,6 +243,29 @@ see installed skill commands.
 
 📖 **Creating personal skills:** See [docs/PERSONAL_SKILLS.md](docs/PERSONAL_SKILLS.md)
 - Persistent across sessions
+
+### Claude Code Plugins
+
+ai-assist can install [Claude Code plugins](https://docs.claude.com/en/docs/claude-code/plugins)
+to add their bundled Agent Skills and MCP servers, optionally discovered through a
+marketplace:
+
+```bash
+/plugin/marketplace add owner/marketplace-repo   # Register a marketplace
+/plugin/search review                             # Find plugins by name/description
+/plugin/install owner/repo@main                   # Install directly from git
+/plugin/install my-plugin                          # ...or by name from a marketplace
+/plugin/list                                       # List installed plugins
+/plugin/uninstall my-plugin                        # Remove a plugin
+```
+
+A plugin's skills are namespaced and run as `/<plugin>:<skill>` (or `/<skill>`
+when the short name is unique). Bundled MCP servers are merged into ai-assist's
+MCP configuration; you are asked to confirm before their processes are launched.
+
+**Not supported:** plugin `agents/` (subagents) and `hooks/` have no equivalent in
+ai-assist and are skipped with a notice. See [docs/PLUGINS.md](docs/PLUGINS.md) for
+details.
 
 **Example skills:**
 - PDF processing (extract text, fill forms, merge)
@@ -854,6 +882,7 @@ ai-assist/
 
 - **[docs/AWL_SPECIFICATIONS.md](docs/AWL_SPECIFICATIONS.md)** - AWL (Agent Workflow Language) specification
 - **[docs/PERSONAL_SKILLS.md](docs/PERSONAL_SKILLS.md)** - Creating and managing personal Agent Skills
+- **[docs/PLUGINS.md](docs/PLUGINS.md)** - Installing Claude Code plugins (skills + MCP + marketplace)
 - **[docs/IDENTITY.md](docs/IDENTITY.md)** - Complete guide to identity.yaml configuration
 - **[docs/LOGGING.md](docs/LOGGING.md)** - Logging configuration and troubleshooting
 - **[docs/MULTI_INSTANCE.md](docs/MULTI_INSTANCE.md)** - Running multiple ai-assist instances

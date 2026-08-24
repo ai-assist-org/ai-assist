@@ -412,6 +412,135 @@ def _handle_skill_list_env(parts: list[str], agent: AiAssistAgent, console: Cons
             console.print(f"[bold]{name}[/bold]: {', '.join(env_vars)}")
 
 
+async def handle_plugin_management_command(command: str, agent: AiAssistAgent, console: Console) -> bool:
+    """Handle /plugin/* management commands.
+
+    Returns True if the command was handled.
+    """
+    if not command.startswith("/plugin/"):
+        return False
+
+    parts = command[8:].split(maxsplit=1)  # Remove '/plugin/' prefix
+    if not parts:
+        console.print("[yellow]Usage: /plugin/install <source|name>@<branch> or /plugin/list[/yellow]")
+        return True
+
+    subcommand = parts[0]
+
+    if subcommand == "install":
+        await _handle_plugin_install(parts, agent, console)
+    elif subcommand == "uninstall":
+        await _handle_plugin_uninstall(parts, agent, console)
+    elif subcommand == "list":
+        console.print(agent.plugins_manager.list_installed())
+    elif subcommand == "search":
+        _handle_plugin_search(parts, agent, console)
+    elif subcommand == "marketplace":
+        _handle_plugin_marketplace(parts, agent, console)
+    else:
+        console.print(f"[yellow]Unknown plugin command: {subcommand}[/yellow]")
+        console.print(
+            "Available: /plugin/install, /plugin/uninstall, /plugin/list, /plugin/search, /plugin/marketplace"
+        )
+
+    return True
+
+
+async def _handle_plugin_install(parts: list[str], agent: AiAssistAgent, console: Console):
+    if len(parts) < 2:
+        console.print("[yellow]Usage: /plugin/install <source|name>@<branch>[/yellow]")
+        console.print("Examples:")
+        console.print("  /plugin/install owner/repo@main")
+        console.print("  /plugin/install /path/to/plugin@main")
+        console.print("  /plugin/install my-plugin   (by name from a registered marketplace)")
+        return
+
+    source_spec = parts[1]
+    with console.status(f"Installing plugin from {source_spec}..."):
+        message, server_names = agent.plugins_manager.install_plugin(source_spec)
+
+    if message.startswith("Error"):
+        console.print(f"[red]{message}[/red]")
+        return
+
+    console.print(f"[green]{message}[/green]")
+
+    # Bundled MCP servers launch processes — confirm before connecting.
+    if server_names:
+        console.print(
+            f"[yellow]⚠ This plugin bundles {len(server_names)} MCP server(s) that run external processes:[/yellow]"
+        )
+        for name in server_names:
+            cfg = agent.plugins_manager.plugin_mcp_servers.get(name)
+            detail = cfg.url or f"{cfg.command} {' '.join(cfg.args)}".strip() if cfg else ""
+            console.print(f"  [bold]{name}[/bold]: {detail}")
+
+        try:
+            answer = await asyncio.to_thread(input, "Connect these MCP servers now? [y/N]: ")
+        except EOFError, KeyboardInterrupt:
+            answer = "n"
+
+        if answer.strip().lower() in ("y", "yes"):
+            for name in server_names:
+                agent.config.mcp_servers[name] = agent.plugins_manager.plugin_mcp_servers[name]
+                console.print(f"[cyan]Connecting {name}...[/cyan]")
+                connected = await agent._connect_server(name, agent.config.mcp_servers[name])
+                if connected:
+                    tool_count = len([t for t in agent.available_tools if t.get("_server") == name])
+                    console.print(f"[green]✓ Connected {name} ({tool_count} tools)[/green]")
+                else:
+                    console.print(f"[yellow]{name} did not initialize within timeout[/yellow]")
+        else:
+            console.print("[dim]MCP servers not connected. They will start on the next launch.[/dim]")
+
+
+async def _handle_plugin_uninstall(parts: list[str], agent: AiAssistAgent, console: Console):
+    if len(parts) < 2:
+        console.print("[yellow]Usage: /plugin/uninstall <plugin-name>[/yellow]")
+        return
+
+    plugin_name = parts[1].strip()
+    message, server_names = agent.plugins_manager.uninstall_plugin(plugin_name)
+
+    if message.startswith("Error"):
+        console.print(f"[red]{message}[/red]")
+        return
+
+    for name in server_names:
+        agent._disconnect_server(name)
+        agent.config.mcp_servers.pop(name, None)
+
+    console.print(f"[green]{message}[/green]")
+
+
+def _handle_plugin_search(parts: list[str], agent: AiAssistAgent, console: Console):
+    if len(parts) < 2:
+        console.print("[yellow]Usage: /plugin/search <query>[/yellow]")
+        return
+    console.print(agent.plugins_manager.search(parts[1]))
+
+
+def _handle_plugin_marketplace(parts: list[str], agent: AiAssistAgent, console: Console):
+    args = parts[1].split(maxsplit=1) if len(parts) > 1 else []
+    if not args:
+        console.print("[yellow]Usage: /plugin/marketplace <add <repo> | list>[/yellow]")
+        return
+
+    action = args[0]
+    if action == "add":
+        if len(args) < 2:
+            console.print("[yellow]Usage: /plugin/marketplace add <owner/repo|/path>@<branch>[/yellow]")
+            return
+        with console.status(f"Adding marketplace {args[1]}..."):
+            result = agent.plugins_manager.add_marketplace(args[1])
+        color = "red" if result.startswith("Error") else "green"
+        console.print(f"[{color}]{result}[/{color}]")
+    elif action == "list":
+        console.print(agent.plugins_manager.list_marketplaces())
+    else:
+        console.print(f"[yellow]Unknown marketplace action: {action}[/yellow]")
+
+
 async def handle_prompt_command(
     command: str, agent: AiAssistAgent, conversation_history: list, console: Console, prompt_session: PromptSession
 ) -> bool:
@@ -576,7 +705,19 @@ async def handle_skill_invocation(
     if "/" in name:
         return False
 
-    skill = agent.skills_manager.loaded_skills.get(name)
+    loaded = agent.skills_manager.loaded_skills
+    skill = loaded.get(name)
+
+    # Bare-name fallback: resolve a unique namespaced plugin skill (plugin:skill)
+    if skill is None and ":" not in name:
+        matches = [key for key in loaded if key.endswith(f":{name}")]
+        if len(matches) == 1:
+            name = matches[0]
+            skill = loaded[name]
+        elif len(matches) > 1:
+            console.print(f"[yellow]Ambiguous skill '{name}'. Matching plugins: {', '.join(matches)}[/yellow]")
+            return True
+
     if skill is None or not skill.metadata.user_invocable:
         return False
 
@@ -906,6 +1047,10 @@ async def tui_interactive_mode(agent: AiAssistAgent, state_manager: StateManager
                 if user_input.startswith("/"):
                     # Try skill management commands: /skill/install, /skill/uninstall, /skill/list
                     if await handle_skill_management_command(user_input, agent, console):
+                        continue
+
+                    # Try plugin management commands: /plugin/install, /plugin/list, ...
+                    if await handle_plugin_management_command(user_input, agent, console):
                         continue
 
                     # Handle /mcp/restart before prompt command (which would parse it as /mcp/restart)
@@ -1635,6 +1780,15 @@ A skill can opt out with `user-invocable: false` in its frontmatter.
 
 Installed skill commands:
 {skill_section}
+
+## Claude Code Plugins 🔌
+Install Claude Code plugins to add their skills and bundled MCP servers:
+- Add a marketplace: `/plugin/marketplace add <owner/repo>`
+- Search: `/plugin/search <query>`
+- Install: `/plugin/install <owner/repo|/path>@<branch>` or `/plugin/install <name>`
+- List / uninstall: `/plugin/list`, `/plugin/uninstall <name>`
+- Plugin skills are namespaced — run them as `/<plugin>:<skill>` (or `/<skill>`
+  when the name is unique). Subagents and hooks are not supported.
 
 ## MCP Prompts 🎯
 Load specialized prompts from MCP servers:

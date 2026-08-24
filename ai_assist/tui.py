@@ -68,6 +68,37 @@ class AiAssistCompleter(Completer):
                     display=entry + suffix,
                 )
 
+    def _get_plugin_arg_completions(self, text):
+        """Completions for /plugin/install and /plugin/uninstall arguments."""
+        prefix = text.split(" ", 1)[1] if " " in text else ""
+
+        if text.startswith("/plugin/uninstall ") and self.agent:
+            for plugin in self.agent.plugins_manager.installed_plugins:
+                if plugin.name.startswith(prefix.lower()):
+                    full_command = f"/plugin/uninstall {plugin.name}"
+                    yield Completion(
+                        full_command,
+                        start_position=-len(text),
+                        display=full_command,
+                        display_meta=f"{plugin.source}",
+                    )
+            return
+
+        # /plugin/install: suggest example patterns
+        examples = [
+            ("owner/repo@main", "Install a plugin from a git repository"),
+            ("/path/to/plugin@main", "Local plugin path example"),
+        ]
+        for example, description in examples:
+            if example.startswith(prefix):
+                full_command = f"/plugin/install {example}"
+                yield Completion(
+                    full_command,
+                    start_position=-len(text),
+                    display=full_command,
+                    display_meta=description,
+                )
+
     def get_completions(self, document, complete_event):
         """Get completions for the current input"""
         text = document.text_before_cursor
@@ -132,11 +163,15 @@ class AiAssistCompleter(Completer):
                         )
                 return  # Don't continue to other completions
 
+            if text.startswith("/plugin/install ") or text.startswith("/plugin/uninstall "):
+                yield from self._get_plugin_arg_completions(text)
+                return  # Don't continue to other completions
+
             # Check if this looks like a prompt command (has a slash in it)
             parts = word.lstrip("/").split("/")
 
             # Completing MCP prompts: /server/prompt
-            if len(parts) == 2 and self.agent and parts[0] != "skill":
+            if len(parts) == 2 and self.agent and parts[0] not in ("skill", "plugin"):
                 server_name, prompt_prefix = parts
 
                 # If we have prompts from this server

@@ -489,6 +489,33 @@ When asked to read a PDF...
 \end{columns}
 \end{frame}
 
+% ── Claude Code Plugins ──────────────────────────────────────────
+\begin{frame}[fragile]{Claude Code Plugin Compatibility}
+\begin{columns}[T]
+\begin{column}{0.48\textwidth}
+\begin{itemize}
+  \item Install \textbf{Claude Code plugins} directly
+  \item Loads bundled skills, legacy commands, and MCP servers
+  \item Namespaced as \texttt{/plugin:skill} (bare name when unique)
+  \item Discover via a \textbf{marketplace} index
+  \item Bundled MCP servers \alert{require confirmation} before connecting
+  \item \texttt{agents/} and \texttt{hooks/} are skipped (no equivalent)
+\end{itemize}
+\end{column}
+\begin{column}{0.48\textwidth}
+\begin{lstlisting}[style=code,language=bash,basicstyle=\ttfamily\tiny,title={\scriptsize Plugin Management}]
+/plugin/marketplace add owner/market@main
+/plugin/search review
+/plugin/install acme          # by name
+/plugin/install owner/repo@main
+/plugin/list
+/plugin/uninstall acme
+/acme:review src/   # run a plugin skill
+\end{lstlisting}
+\end{column}
+\end{columns}
+\end{frame}
+
 % ── Skill Security ───────────────────────────────────────────────
 \begin{frame}{Skill Security Model}
 Skills are \alert{untrusted code} --- defense in depth:

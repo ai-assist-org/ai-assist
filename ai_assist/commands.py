@@ -76,6 +76,30 @@ register_command(
 )
 register_command(CommandDef("/skill/list_env", "Show allowed env vars for skills", mode="interactive", args="[skill]"))
 
+# --- Plugin management (interactive-only) ---
+
+register_command(
+    CommandDef(
+        "/plugin/install",
+        "Install a Claude Code plugin from git, local path, or marketplace name",
+        mode="interactive",
+        args="<source|name>@<branch>",
+    )
+)
+register_command(CommandDef("/plugin/uninstall", "Uninstall an installed plugin", mode="interactive", args="<name>"))
+register_command(CommandDef("/plugin/list", "List all installed plugins", mode="interactive"))
+register_command(
+    CommandDef("/plugin/search", "Search registered marketplaces for plugins", mode="interactive", args="<query>")
+)
+register_command(
+    CommandDef(
+        "/plugin/marketplace",
+        "Manage plugin marketplaces (add <repo> | list)",
+        mode="interactive",
+        args="<add <repo>|list>",
+    )
+)
+
 # --- MCP management (interactive-only) ---
 
 register_command(CommandDef("/mcp/restart", "Restart an MCP server", mode="interactive", args="<server>"))

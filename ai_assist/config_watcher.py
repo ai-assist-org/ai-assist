@@ -59,6 +59,14 @@ class ConfigWatcher:
             self.watchers.append(watcher)
             print(f"Watching {skills_file} for changes")
 
+        # Watch installed-plugins.json
+        plugins_file = config_dir / "installed-plugins.json"
+        if plugins_file.exists():
+            watcher = FileWatchdog(plugins_file, self._on_plugins_change, debounce_seconds=1.0)
+            await watcher.start()
+            self.watchers.append(watcher)
+            print(f"Watching {plugins_file} for changes")
+
         # Watch individual SKILL.md files
         await self._watch_skill_files()
 
@@ -102,10 +110,22 @@ class ConfigWatcher:
         """Callback when installed-skills.json changes"""
         try:
             self.agent.skills_manager.load_installed_skills()
+            # load_installed_skills rebuilds loaded_skills from scratch, dropping
+            # plugin skills — re-apply them.
+            if hasattr(self.agent, "plugins_manager"):
+                self.agent.plugins_manager.reapply_to_loaded_skills()
             await self._watch_skill_files()
             print("✅ Skills reloaded")
         except Exception as e:
             print(f"❌ Failed to reload skills: {e}")
+
+    async def _on_plugins_change(self):
+        """Callback when installed-plugins.json changes"""
+        try:
+            self.agent.plugins_manager.load_installed_plugins()
+            print("✅ Plugins reloaded")
+        except Exception as e:
+            print(f"❌ Failed to reload plugins: {e}")
 
     def _make_skill_file_callback(self, skill_name: str):
         """Create a callback for a specific skill's SKILL.md."""

@@ -22,6 +22,8 @@ from .introspection_tools import IntrospectionTools
 from .json_tools import JsonTools
 from .mcp_stdio_fix import stdio_client_fixed
 from .mlflow_tracing import end_span, record_query_trace, setup_mlflow, start_query_span, start_tool_span
+from .plugins_loader import PluginsLoader
+from .plugins_manager import PluginsManager
 from .report_tools import ReportTools
 from .script_execution_tools import ScriptExecutionTools
 from .security import ToolDefinitionRegistry, sanitize_tool_result, validate_tool_description
@@ -351,6 +353,10 @@ class AiAssistAgent:
         self.skills_loader = SkillsLoader()
         self.skills_manager = SkillsManager(self.skills_loader)
 
+        # Initialize plugins system (Claude Code plugin compatibility)
+        self.plugins_loader = PluginsLoader(self.skills_loader)
+        self.plugins_manager = PluginsManager(self.plugins_loader, self.skills_manager)
+
         # Initialize script execution tools for Agent Skills
         self.script_execution_tools = ScriptExecutionTools(self.skills_manager, config)
 
@@ -498,6 +504,12 @@ class AiAssistAgent:
 
     async def connect_to_servers(self):
         """Connect to all configured MCP servers"""
+        # Load installed plugins first so their bundled MCP servers connect in the
+        # same loop as YAML-configured servers. Plugin skills are (re)applied after
+        # skills load below.
+        self.plugins_manager.load_installed_plugins()
+        self.config.mcp_servers.update(self.plugins_manager.plugin_mcp_servers)
+
         for server_name, server_config in self.config.mcp_servers.items():
             try:
                 task = asyncio.create_task(self._run_server(server_name, server_config), name=f"mcp_{server_name}")
@@ -604,6 +616,12 @@ class AiAssistAgent:
             print(f"✓ Loaded {len(self.skills_manager.installed_skills)} installed Agent Skills")
             self._allow_local_skill_paths()
 
+        # Re-apply plugin skills (load_installed_skills rebuilds loaded_skills from scratch)
+        self.plugins_manager.reapply_to_loaded_skills()
+        if self.plugins_manager.installed_plugins:
+            print(f"✓ Loaded {len(self.plugins_manager.installed_plugins)} installed plugins")
+            self._allow_plugin_paths()
+
         # Show event source status
         self._print_event_source_status()
 
@@ -645,6 +663,13 @@ class AiAssistAgent:
             skill_path = Path(skill.cache_path).resolve()
             if skill_path not in self.filesystem_tools.allowed_paths:
                 self.filesystem_tools.allowed_paths.append(skill_path)
+
+    def _allow_plugin_paths(self):
+        """Auto-allow installed plugin directories for filesystem access"""
+        for plugin in self.plugins_manager.installed_plugins:
+            plugin_path = Path(plugin.cache_path).resolve()
+            if plugin_path not in self.filesystem_tools.allowed_paths:
+                self.filesystem_tools.allowed_paths.append(plugin_path)
 
     def _transport(self, config: MCPServerConfig):
         """Return the appropriate MCP transport context manager for this server config."""
@@ -861,6 +886,10 @@ class AiAssistAgent:
         # Load new configuration
         mcp_file = get_config_dir() / "mcp_servers.yaml"
         new_servers = load_mcp_servers_from_yaml(mcp_file)
+
+        # Preserve plugin-bundled MCP servers across a YAML reload (they are not
+        # in mcp_servers.yaml and would otherwise be treated as removed).
+        new_servers.update(self.plugins_manager.plugin_mcp_servers)
 
         old_names = set(self.config.mcp_servers.keys())
         new_names = set(new_servers.keys())

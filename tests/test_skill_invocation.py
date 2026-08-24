@@ -121,3 +121,46 @@ async def test_server_prompt_token_not_handled_as_skill(agent):
         )
     assert handled is False
     mock_query.assert_not_awaited()
+
+
+# --- namespaced plugin skills ---
+
+
+@pytest.mark.asyncio
+async def test_namespaced_plugin_skill_invocation(agent):
+    agent.skills_manager.loaded_skills = {"acme:review": _make_skill("review", "Review $1")}
+    console = MagicMock()
+    with patch("ai_assist.tui_interactive.query_with_feedback", new=AsyncMock()) as mock_query:
+        handled = await handle_skill_invocation(
+            "/acme:review src", agent, console, conversation_memory=MagicMock(), kg_context=None
+        )
+    assert handled is True
+    assert mock_query.await_args.args[1] == "Review src"
+
+
+@pytest.mark.asyncio
+async def test_bare_name_resolves_unique_plugin_skill(agent):
+    agent.skills_manager.loaded_skills = {"acme:review": _make_skill("review", "Review $1")}
+    console = MagicMock()
+    with patch("ai_assist.tui_interactive.query_with_feedback", new=AsyncMock()) as mock_query:
+        handled = await handle_skill_invocation(
+            "/review src", agent, console, conversation_memory=MagicMock(), kg_context=None
+        )
+    assert handled is True
+    assert mock_query.await_args.args[1] == "Review src"
+
+
+@pytest.mark.asyncio
+async def test_bare_name_ambiguous_plugin_skill_reports(agent):
+    agent.skills_manager.loaded_skills = {
+        "acme:review": _make_skill("review"),
+        "other:review": _make_skill("review"),
+    }
+    console = MagicMock()
+    with patch("ai_assist.tui_interactive.query_with_feedback", new=AsyncMock()) as mock_query:
+        handled = await handle_skill_invocation(
+            "/review", agent, console, conversation_memory=MagicMock(), kg_context=None
+        )
+    # Handled (error shown) but not run.
+    assert handled is True
+    mock_query.assert_not_awaited()

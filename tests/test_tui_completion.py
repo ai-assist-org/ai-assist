@@ -157,3 +157,63 @@ def test_skill_colliding_with_builtin_not_completed():
     completions = list(completer.get_completions(doc, None))
     # Built-in /status is present exactly once (skill does not add a duplicate)
     assert [c.text for c in completions].count("/status") == 1
+
+
+# --- plugin completion ---
+
+
+def _agent():
+    config = AiAssistConfig(
+        anthropic_api_key="test-key",
+        model="claude-3-5-sonnet-20241022",
+        mcp_servers={},
+    )
+    return AiAssistAgent(config)
+
+
+def test_plugin_command_completion():
+    """/plugin/* commands appear in completion"""
+    completer = AiAssistCompleter(agent=_agent())
+    doc = Document("/plug", cursor_position=5)
+    commands = [c.text for c in completer.get_completions(doc, None)]
+    assert "/plugin/install" in commands
+    assert "/plugin/list" in commands
+    assert "/plugin/uninstall" in commands
+
+
+def test_plugin_install_completion_shows_examples():
+    completer = AiAssistCompleter(agent=_agent())
+    doc = Document("/plugin/install ", cursor_position=16)
+    commands = [c.text for c in completer.get_completions(doc, None)]
+    assert any("owner/repo" in cmd for cmd in commands)
+    assert any("/path/to/plugin" in cmd for cmd in commands)
+
+
+def test_plugin_uninstall_completion_lists_installed():
+    from ai_assist.plugins_manager import InstalledPlugin
+
+    agent = _agent()
+    agent.plugins_manager.installed_plugins = [
+        InstalledPlugin(
+            name="acme",
+            source="owner/acme",
+            source_type="git",
+            branch="main",
+            installed_at="now",
+            cache_path="/tmp/acme",
+        )
+    ]
+    completer = AiAssistCompleter(agent=agent)
+    doc = Document("/plugin/uninstall ", cursor_position=18)
+    commands = [c.text for c in completer.get_completions(doc, None)]
+    assert any("acme" in cmd for cmd in commands)
+
+
+def test_namespaced_plugin_skill_completion():
+    """A namespaced plugin skill in loaded_skills is completed as /<plugin>:<skill>"""
+    agent = _agent()
+    agent.skills_manager.loaded_skills = {"acme:review": _make_skill("review")}
+    completer = AiAssistCompleter(agent=agent)
+    doc = Document("/acme", cursor_position=5)
+    commands = [c.text for c in completer.get_completions(doc, None)]
+    assert "/acme:review" in commands

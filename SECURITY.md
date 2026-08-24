@@ -15,6 +15,7 @@ ai-assist implements defense-in-depth with multiple security layers:
 7. **Secret redaction** — filters sensitive environment variables
 8. **Command/path allowlists** — restricts filesystem and command access
 9. **Command argument validation** — validates paths in `cd`/`find` and parameters in `python`/`python3`
+10. **Plugin trust model** — untrusted plugin skills scanned; bundled MCP servers confirmed before connecting
 
 ## 1. Prompt Injection Detection
 
@@ -164,6 +165,27 @@ Python commands receive additional scrutiny beyond the command allowlist:
 
 **Double-prompting avoidance:** When `python` is not in the command allowlist, the user already confirms the full command (including `-c` details) during the allowlist check. The parameter validation only adds a second prompt when `python` was auto-allowed via the allowlist — preventing commands silently added to the allowlist from executing arbitrary inline code without review.
 
+## 9. Claude Code Plugin Trust Model
+
+Claude Code plugins (`/plugin/install`) bundle skills and MCP servers from
+third-party sources. They are treated as **untrusted content**:
+
+| Control | Description |
+|---------|-------------|
+| **Skill scanning** | Plugin skill descriptions and bodies are validated for injection patterns at load time, identically to standalone Agent Skills |
+| **MCP confirmation** | Installing a plugin that bundles MCP servers lists the commands and requires explicit confirmation before any server is connected |
+| **Persistence** | Confirmed servers reconnect automatically on later launches, like servers in `mcp_servers.yaml`; uninstalling the plugin disconnects and removes them |
+| **Namespacing** | Plugin skills (`plugin:skill`) and servers (`plugin__server`) are namespaced to prevent collisions with local skills/servers |
+| **No agents/hooks** | `agents/` and `hooks/` are not loaded (no equivalent subsystem), so their code never runs |
+| **Script execution** | Still disabled by default; plugin skill scripts require the same `AI_ASSIST_ALLOW_SCRIPT_EXECUTION` opt-in |
+
+**Residual risk:** a confirmed MCP server runs an external process with the same
+permissions as the ai-assist process. `${CLAUDE_PLUGIN_ROOT}`/`${CLAUDE_*}`
+variables are not expanded, so bundled stdio servers relying on them will not
+start. Only install plugins from sources you trust.
+
+**Implementation:** `plugins_loader.py`, `plugins_manager.py`
+
 ## Threat Model
 
 ### What We Protect Against
@@ -176,6 +198,8 @@ Python commands receive additional scrutiny beyond the command allowlist:
 | Tool poisoning via MCP tool descriptions | Description validation at connect time |
 | Tool poisoning via MCP prompt descriptions | Description validation at connect time |
 | Skill poisoning via description or body | Validation at load time and system prompt injection |
+| Plugin skill poisoning | Same validation as standalone skills at load time |
+| Unsolicited plugin MCP server processes | Explicit confirmation required before connecting |
 | Rug-pull attacks (definition changes) | Fingerprint registry + change detection |
 | Directory traversal in scripts | Path validation |
 | Secret leakage in scripts | Environment variable filtering |
@@ -206,6 +230,8 @@ Python commands receive additional scrutiny beyond the command allowlist:
 3. **Keep script execution disabled** unless needed
 4. **Run with limited permissions** — don't run as root
 5. **Review Agent Skills** before installation
+6. **Vet Claude Code plugins** before installing — review their skills and only
+   confirm bundled MCP servers from trusted sources
 
 ### For Skill Authors
 
