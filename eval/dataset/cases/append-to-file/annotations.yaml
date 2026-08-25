@@ -1,0 +1,18 @@
+expected_tools:
+  - "edit_file"
+  - "write_file"
+  - "execute_command"
+forbidden_tools:
+  - "append_to_report"
+  - "write_report"
+notes: >
+  Reproduces the observed failure where a "report at <path>" framing lures the
+  agent into report tools (append_to_report / write_report / list_reports)
+  instead of appending to the file at the given path. Report tools are
+  name-based and reports-dir-only, so writing to analyze-job/bugs.md via a
+  report tool either fails ("path traversal blocked") or lands in the wrong
+  place, wasting a round-trip. analyze-job/bugs.md is an arbitrary path, so a
+  filesystem tool (edit_file / write_file / execute_command) is correct.
+  Expected to FAIL until the report-tool descriptions steer the agent away from
+  applying report tools to path-addressed files. See report_name_not_path judge
+  in eval.yaml for the precise "path as report name" guard.

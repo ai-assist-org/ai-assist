@@ -1,0 +1,53 @@
+{
+  "turns": [
+    {
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_vrtx_01RX5BaLP3mmVxpdJqGigY26",
+          "name": "internal__read_file",
+          "input": {
+            "path": "analyze-job/bugs.md"
+          }
+        }
+      ],
+      "stop_reason": "tool_use",
+      "usage": {
+        "input_tokens": 364,
+        "output_tokens": 62
+      }
+    },
+    {
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_vrtx_0188GfNkG4BAz6NkdoH92dAB",
+          "name": "internal__edit_file",
+          "input": {
+            "path": "analyze-job/bugs.md",
+            "old_string": "'Failed at redhatci.ocp.preflight : Delete Image Source from cluster': CILAB-2760",
+            "new_string": "'Failed at redhatci.ocp.preflight : Delete Image Source from cluster': CILAB-2760\n'Failed at redhatci.ocp.mirror_images : Inspect destination image': CILAB-2770"
+          }
+        }
+      ],
+      "stop_reason": "tool_use",
+      "usage": {
+        "input_tokens": 506,
+        "output_tokens": 173
+      }
+    },
+    {
+      "content": [
+        {
+          "type": "text",
+          "text": "Done! The line has been appended to `analyze-job/bugs.md`. \u2705"
+        }
+      ],
+      "stop_reason": "end_turn",
+      "usage": {
+        "input_tokens": 707,
+        "output_tokens": 24
+      }
+    }
+  ]
+}

@@ -76,6 +76,10 @@ async def run(workspace: Path, output_dir: Path, model: str, timeout: int):
         model=model,
         mcp_servers={},
         allow_skill_script_execution=case_config.get("allow_skill_script_execution", False),
+        # Let filesystem tools operate on the workspace, like a real agent run in
+        # the user's working directory. Without this they default to /tmp/ai-assist
+        # and every read/write/edit of a workspace file is rejected.
+        allowed_paths=[str(workspace)],
     )
     agent = AiAssistAgent(config, knowledge_graph=kg)
 
@@ -125,8 +129,17 @@ async def run(workspace: Path, output_dir: Path, model: str, timeout: int):
     # Capture trace (must happen before clear_tool_calls)
     trace = agent.capture_trace(prompt, response, start_time)
 
-    # Extract tool calls with full detail
-    tool_calls = [{"name": tc["tool_name"], "input": tc["arguments"]} for tc in agent.last_tool_calls]
+    # Extract tool calls with full detail. Include the (truncated) result so
+    # judges can tell whether a call actually succeeded rather than guessing
+    # from the arguments alone.
+    def _truncate(value, limit=2000):
+        text = str(value)
+        return text if len(text) <= limit else text[:limit] + "… [truncated]"
+
+    tool_calls = [
+        {"name": tc["tool_name"], "input": tc["arguments"], "result": _truncate(tc.get("result", ""))}
+        for tc in agent.last_tool_calls
+    ]
 
     # Write outputs
     output_dir.mkdir(parents=True, exist_ok=True)
