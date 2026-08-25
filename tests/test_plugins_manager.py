@@ -129,8 +129,162 @@ def test_add_marketplace_and_search(manager, marketplace_dir):
     assert "Acme tools bundle" in found
 
 
+def test_add_marketplace_with_nickname(manager, marketplace_dir):
+    result = manager.add_marketplace(str(marketplace_dir), "redhat")
+    assert "'redhat' added" in result
+    # Registered under the nickname, not the manifest name
+    assert [m.name for m in manager.marketplaces] == ["redhat"]
+    assert "redhat" in manager.list_marketplaces()
+    # The nickname is usable for update
+    assert "updated" in manager.update_marketplace("redhat")
+
+
+def test_nickname_avoids_name_collision(manager, marketplace_dir):
+    # Same manifest name added twice under distinct nicknames coexist
+    manager.add_marketplace(str(marketplace_dir), "one")
+    manager.add_marketplace(str(marketplace_dir), "two")
+    assert sorted(m.name for m in manager.marketplaces) == ["one", "two"]
+
+
+@pytest.fixture
+def other_marketplace_dir(tmp_path, plugin_dir):
+    # A second, different source that declares the SAME manifest name.
+    root = tmp_path / "market2"
+    _write(
+        root / ".claude-plugin" / "marketplace.json",
+        json.dumps({"name": "acme-market", "plugins": [{"name": "acme", "source": str(plugin_dir)}]}),
+    )
+    return root
+
+
+def test_add_refuses_masking_marketplace(manager, marketplace_dir, other_marketplace_dir):
+    manager.add_marketplace(str(marketplace_dir))
+    result = manager.add_marketplace(str(other_marketplace_dir))
+    assert result.startswith("Error")
+    assert "already refers to" in result
+    assert "nickname" in result
+    # The original registration is untouched
+    assert [m.source for m in manager.marketplaces] == [str(marketplace_dir)]
+
+
+def test_add_refuses_masking_nickname(manager, marketplace_dir, other_marketplace_dir):
+    manager.add_marketplace(str(marketplace_dir), "redhat")
+    result = manager.add_marketplace(str(other_marketplace_dir), "redhat")
+    assert result.startswith("Error")
+    assert "choose a different nickname" in result
+
+
+def test_readd_same_source_is_allowed(manager, marketplace_dir):
+    manager.add_marketplace(str(marketplace_dir))
+    result = manager.add_marketplace(str(marketplace_dir))
+    assert "added" in result
+    # Still exactly one registration, not a duplicate
+    assert len(manager.marketplaces) == 1
+
+
+def test_update_marketplace(manager, marketplace_dir):
+    manager.add_marketplace(str(marketplace_dir))
+    result = manager.update_marketplace("acme-market")
+    assert "updated" in result
+    assert "1 plugins" in result
+
+
+def test_update_unknown_marketplace(manager):
+    result = manager.update_marketplace("nope")
+    assert result.startswith("Error")
+    assert "not registered" in result
+
+
 def test_install_by_name_via_marketplace(manager, marketplace_dir):
     manager.add_marketplace(str(marketplace_dir))
     message, servers = manager.install_plugin("acme")
+    assert "installed" in message
+    assert "acme:review" in manager.skills_manager.loaded_skills
+
+
+# --- real-world marketplace source schemas ---
+
+
+def _market_with_plugin(tmp_path, entry, plugin_root=None):
+    """Build a marketplace dir whose manifest declares a single plugin entry."""
+    root = tmp_path / "real-market"
+    manifest = {"name": "real-market", "plugins": [entry]}
+    if plugin_root is not None:
+        manifest["pluginRoot"] = plugin_root
+    _write(root / ".claude-plugin" / "marketplace.json", json.dumps(manifest))
+    return root
+
+
+def test_resolve_github_object_source(manager, tmp_path):
+    market = _market_with_plugin(
+        tmp_path,
+        {"name": "cc-suite", "source": {"source": "github", "repo": "xiaolai/cc-suite"}},
+    )
+    manager.add_marketplace(str(market))
+    assert manager._resolve_from_marketplaces("cc-suite") == "xiaolai/cc-suite"
+
+
+def test_resolve_github_object_source_with_path_and_ref(manager, tmp_path):
+    market = _market_with_plugin(
+        tmp_path,
+        {
+            "name": "airtable",
+            "source": {"source": "github", "repo": "Airtable/skills", "path": "plugins/airtable", "ref": "v2"},
+        },
+    )
+    manager.add_marketplace(str(market))
+    assert manager._resolve_from_marketplaces("airtable") == "Airtable/skills/plugins/airtable@v2"
+
+
+def test_resolve_git_subdir_object_source(manager, tmp_path):
+    market = _market_with_plugin(
+        tmp_path,
+        {
+            "name": "airtable",
+            "source": {
+                "source": "git-subdir",
+                "url": "https://github.com/Airtable/skills.git",
+                "path": "plugins/airtable",
+            },
+        },
+    )
+    manager.add_marketplace(str(market))
+    assert manager._resolve_from_marketplaces("airtable") == "Airtable/skills/plugins/airtable"
+
+
+def test_resolve_non_github_git_source_unsupported(manager, tmp_path):
+    market = _market_with_plugin(
+        tmp_path,
+        {"name": "gl", "source": {"source": "git", "url": "https://gitlab.com/foo/bar.git"}},
+    )
+    manager.add_marketplace(str(market))
+    assert manager._resolve_from_marketplaces("gl") is None
+
+    message, servers = manager.install_plugin("gl")
+    assert "unsupported source type" in message
+    assert servers == []
+
+
+def test_resolve_relative_string_source_honors_plugin_root(manager, tmp_path, plugin_dir):
+    # Place the plugin under <market>/bundles/acme and point pluginRoot at "bundles".
+    market = tmp_path / "rel-market"
+    (market / "bundles").mkdir(parents=True)
+    plugin_dir.rename(market / "bundles" / "acme")
+    _write(
+        market / ".claude-plugin" / "marketplace.json",
+        json.dumps(
+            {
+                "name": "rel-market",
+                "pluginRoot": "bundles",
+                "plugins": [{"name": "acme", "source": "acme"}],
+            }
+        ),
+    )
+
+    manager.add_marketplace(str(market))
+    resolved = manager._resolve_from_marketplaces("acme")
+    assert resolved == str((market / "bundles" / "acme").resolve())
+
+    message, _ = manager.install_plugin("acme")
     assert "installed" in message
     assert "acme:review" in manager.skills_manager.loaded_skills

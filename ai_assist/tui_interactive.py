@@ -523,18 +523,31 @@ def _handle_plugin_search(parts: list[str], agent: AiAssistAgent, console: Conso
 def _handle_plugin_marketplace(parts: list[str], agent: AiAssistAgent, console: Console):
     args = parts[1].split(maxsplit=1) if len(parts) > 1 else []
     if not args:
-        console.print("[yellow]Usage: /plugin/marketplace <add <repo> | list>[/yellow]")
+        console.print("[yellow]Usage: /plugin/marketplace <add <repo> | update [name] | list>[/yellow]")
         return
 
     action = args[0]
     if action == "add":
         if len(args) < 2:
-            console.print("[yellow]Usage: /plugin/marketplace add <owner/repo|/path>@<branch>[/yellow]")
+            console.print("[yellow]Usage: /plugin/marketplace add <owner/repo|/path>@<branch> [nickname][/yellow]")
             return
-        with console.status(f"Adding marketplace {args[1]}..."):
-            result = agent.plugins_manager.add_marketplace(args[1])
+        add_args = args[1].split()
+        source = add_args[0]
+        nickname = add_args[1] if len(add_args) > 1 else None
+        with console.status(f"Adding marketplace {source}..."):
+            result = agent.plugins_manager.add_marketplace(source, nickname)
         color = "red" if result.startswith("Error") else "green"
         console.print(f"[{color}]{result}[/{color}]")
+    elif action == "update":
+        names = [args[1]] if len(args) > 1 else [m.name for m in agent.plugins_manager.marketplaces]
+        if not names:
+            console.print("[yellow]No marketplaces registered.[/yellow]")
+            return
+        for name in names:
+            with console.status(f"Updating marketplace {name}..."):
+                result = agent.plugins_manager.update_marketplace(name)
+            color = "red" if result.startswith("Error") else "green"
+            console.print(f"[{color}]{result}[/{color}]")
     elif action == "list":
         console.print(agent.plugins_manager.list_marketplaces())
     else:

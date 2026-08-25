@@ -209,6 +209,56 @@ def test_plugin_uninstall_completion_lists_installed():
     assert any("acme" in cmd for cmd in commands)
 
 
+def test_plugin_install_completion_lists_marketplace_names(tmp_path):
+    """/plugin/install completes with plugin names from registered marketplaces"""
+    import json
+
+    from ai_assist.plugins_manager import Marketplace
+
+    manifest_dir = tmp_path / "market" / ".claude-plugin"
+    manifest_dir.mkdir(parents=True)
+    (manifest_dir / "marketplace.json").write_text(
+        json.dumps(
+            {
+                "name": "acme-market",
+                "plugins": [{"name": "acme-tools", "source": {"source": "github", "repo": "acme/tools"}}],
+            }
+        )
+    )
+
+    agent = _agent()
+    agent.plugins_manager.marketplaces = [
+        Marketplace(name="acme-market", source="acme/market", branch="main", cache_path=str(tmp_path / "market"))
+    ]
+    completer = AiAssistCompleter(agent=agent)
+    doc = Document("/plugin/install acme", cursor_position=20)
+    commands = [c.text for c in completer.get_completions(doc, None)]
+    assert "/plugin/install acme-tools" in commands
+
+
+def test_plugin_marketplace_add_completion_lists_well_known():
+    """/plugin/marketplace add suggests the well-known public marketplaces"""
+    completer = AiAssistCompleter(agent=_agent())
+    doc = Document("/plugin/marketplace add ", cursor_position=24)
+    commands = [c.text for c in completer.get_completions(doc, None)]
+    assert any("anthropics/claude-plugins-official" in cmd for cmd in commands)
+    assert any("anthropics/claude-plugins-community" in cmd for cmd in commands)
+
+
+def test_plugin_marketplace_update_completion_lists_registered():
+    """/plugin/marketplace update completes with registered marketplace names"""
+    from ai_assist.plugins_manager import Marketplace
+
+    agent = _agent()
+    agent.plugins_manager.marketplaces = [
+        Marketplace(name="ai-helpers", source="openshift-eng/ai-helpers", branch="main", cache_path="/tmp/ai-helpers")
+    ]
+    completer = AiAssistCompleter(agent=agent)
+    doc = Document("/plugin/marketplace update ", cursor_position=27)
+    commands = [c.text for c in completer.get_completions(doc, None)]
+    assert "/plugin/marketplace update ai-helpers" in commands
+
+
 def test_namespaced_plugin_skill_completion():
     """A namespaced plugin skill in loaded_skills is completed as /<plugin>:<skill>"""
     agent = _agent()

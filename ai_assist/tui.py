@@ -4,6 +4,14 @@ import os
 
 from prompt_toolkit.completion import Completer, Completion
 
+# Public Claude Code plugin marketplaces that work out of the box.
+WELL_KNOWN_MARKETPLACES = [
+    ("anthropics/claude-plugins-official@main", "Anthropic-managed official plugin directory"),
+    ("anthropics/claude-plugins-community@main", "Community-submitted plugins"),
+    ("anthropics/life-sciences@main", "Claude for Life Sciences plugins"),
+    ("openshift-eng/ai-helpers@main", "OpenShift/Red Hat developer plugins"),
+]
+
 
 def format_tool_display_name(tool_name: str) -> str:
     """Format a tool name for user-friendly display.
@@ -69,7 +77,24 @@ class AiAssistCompleter(Completer):
                 )
 
     def _get_plugin_arg_completions(self, text):
-        """Completions for /plugin/install and /plugin/uninstall arguments."""
+        """Completions for /plugin/marketplace add|update, /plugin/install, /plugin/uninstall."""
+        if text.startswith("/plugin/marketplace add "):
+            yield from self._get_marketplace_add_completions(text)
+            return
+
+        if text.startswith("/plugin/marketplace update ") and self.agent:
+            prefix = text.split("update ", 1)[1]
+            for market in self.agent.plugins_manager.marketplaces:
+                if market.name.startswith(prefix):
+                    full_command = f"/plugin/marketplace update {market.name}"
+                    yield Completion(
+                        full_command,
+                        start_position=-len(text),
+                        display=full_command,
+                        display_meta=f"{market.source}@{market.branch}",
+                    )
+            return
+
         prefix = text.split(" ", 1)[1] if " " in text else ""
 
         if text.startswith("/plugin/uninstall ") and self.agent:
@@ -83,6 +108,18 @@ class AiAssistCompleter(Completer):
                         display_meta=f"{plugin.source}",
                     )
             return
+
+        # /plugin/install: suggest plugin names from registered marketplaces
+        if self.agent:
+            for name, market_name, description in self._marketplace_plugin_names():
+                if name.startswith(prefix.lower()):
+                    full_command = f"/plugin/install {name}"
+                    yield Completion(
+                        full_command,
+                        start_position=-len(text),
+                        display=full_command,
+                        display_meta=(description or f"from {market_name}")[:60],
+                    )
 
         # /plugin/install: suggest example patterns
         examples = [
@@ -98,6 +135,35 @@ class AiAssistCompleter(Completer):
                     display=full_command,
                     display_meta=description,
                 )
+
+    @staticmethod
+    def _get_marketplace_add_completions(text):
+        """Suggest well-known marketplaces after /plugin/marketplace add."""
+        prefix = text.split("add ", 1)[1]
+        for repo, description in WELL_KNOWN_MARKETPLACES:
+            if repo.startswith(prefix):
+                full_command = f"/plugin/marketplace add {repo}"
+                yield Completion(
+                    full_command,
+                    start_position=-len(text),
+                    display=full_command,
+                    display_meta=description,
+                )
+
+    def _marketplace_plugin_names(self):
+        """Yield (name, marketplace_name, description) for all marketplace plugins."""
+        from pathlib import Path
+
+        manager = self.agent.plugins_manager
+        for market in manager.marketplaces:
+            try:
+                manifest = manager._read_marketplace_manifest(Path(market.cache_path))
+            except FileNotFoundError, ValueError:
+                continue
+            for plugin in manifest.get("plugins", []):
+                name = plugin.get("name")
+                if name:
+                    yield name, market.name, plugin.get("description", "")
 
     def get_completions(self, document, complete_event):
         """Get completions for the current input"""
@@ -163,7 +229,9 @@ class AiAssistCompleter(Completer):
                         )
                 return  # Don't continue to other completions
 
-            if text.startswith("/plugin/install ") or text.startswith("/plugin/uninstall "):
+            if text.startswith(
+                ("/plugin/marketplace add ", "/plugin/marketplace update ", "/plugin/install ", "/plugin/uninstall ")
+            ):
                 yield from self._get_plugin_arg_completions(text)
                 return  # Don't continue to other completions
 

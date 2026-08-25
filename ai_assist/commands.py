@@ -94,9 +94,9 @@ register_command(
 register_command(
     CommandDef(
         "/plugin/marketplace",
-        "Manage plugin marketplaces (add <repo> | list)",
+        "Manage plugin marketplaces (add <repo> [nickname] | update [name] | list)",
         mode="interactive",
-        args="<add <repo>|list>",
+        args="<add <repo> [nickname]|update [name]|list>",
     )
 )
 

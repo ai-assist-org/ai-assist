@@ -109,7 +109,15 @@ class PluginsManager:
         returned MCP servers.
         """
         try:
-            resolved = self._resolve_from_marketplaces(source_spec) or source_spec
+            resolved = self._resolve_from_marketplaces(source_spec)
+            if resolved is None and "/" not in source_spec and not Path(source_spec).expanduser().is_absolute():
+                if self._find_marketplace_plugin(source_spec) is not None:
+                    return (
+                        f"Error: Plugin '{source_spec}' uses an unsupported source type "
+                        "(only GitHub git sources and in-repo paths are supported).",
+                        [],
+                    )
+            resolved = resolved or source_spec
             source, branch = self.skills_manager._parse_source_spec(resolved)
 
             source_path = Path(source).expanduser()
@@ -196,8 +204,13 @@ class PluginsManager:
 
     # ------------------------------------------------------------ marketplace
 
-    def add_marketplace(self, source_spec: str) -> str:
-        """Register a marketplace from a git repo or local directory."""
+    def add_marketplace(self, source_spec: str, nickname: str | None = None) -> str:
+        """Register a marketplace from a git repo or local directory.
+
+        An optional ``nickname`` overrides the manifest name, letting the user
+        register several marketplaces that share a name and refer to each by a
+        short handle in ``update``/``search``/``list``.
+        """
         try:
             source, branch = self.skills_manager._parse_source_spec(source_spec)
             source_path = Path(source).expanduser()
@@ -208,7 +221,18 @@ class PluginsManager:
                 cache_path = self.plugins_loader.skills_loader._ensure_repo_cached(source, branch)
 
             manifest = self._read_marketplace_manifest(cache_path)
-            name = manifest.get("name") or source
+            name = nickname or manifest.get("name") or source
+
+            existing = next((m for m in self.marketplaces if m.name == name), None)
+            if existing is not None and (existing.source != source or existing.branch != branch):
+                hint = (
+                    "choose a different nickname"
+                    if nickname
+                    else f"register it under a nickname: /plugin/marketplace add {source_spec} <nickname>"
+                )
+                return (
+                    f"Error: '{name}' already refers to {existing.source}@{existing.branch}. " f"To keep both, {hint}."
+                )
 
             self.marketplaces = [m for m in self.marketplaces if m.name != name]
             self.marketplaces.append(Marketplace(name=name, source=source, branch=branch, cache_path=str(cache_path)))
@@ -217,6 +241,23 @@ class PluginsManager:
             return f"Marketplace '{name}' added ({count} plugins available)"
         except (FileNotFoundError, ValueError) as e:
             return f"Error: {e}"
+
+    def update_marketplace(self, name: str) -> str:
+        """Refresh a registered marketplace's cached repo (git pull)."""
+        market = next((m for m in self.marketplaces if m.name == name), None)
+        if market is None:
+            return f"Error: Marketplace '{name}' is not registered"
+        try:
+            source_path = Path(market.source).expanduser()
+            if source_path.is_absolute() and source_path.exists():
+                cache_path = source_path  # local directory, always current
+            else:
+                cache_path = self.plugins_loader.skills_loader._ensure_repo_cached(market.source, market.branch)
+            manifest = self._read_marketplace_manifest(cache_path)
+        except (FileNotFoundError, ValueError) as e:
+            return f"Error: {e}"
+        count = len(manifest.get("plugins", []))
+        return f"Marketplace '{name}' updated ({count} plugins available)"
 
     def list_marketplaces(self) -> str:
         """Return a formatted list of registered marketplaces."""
@@ -254,22 +295,66 @@ class PluginsManager:
         return "\n".join([f"Plugin search results for '{query}':\n", *lines])
 
     def _resolve_from_marketplaces(self, name: str) -> str | None:
-        """Resolve a bare plugin name to a concrete source via marketplaces."""
+        """Resolve a bare plugin name to a concrete install spec via marketplaces."""
         if "/" in name or Path(name).expanduser().is_absolute():
             return None  # Already a direct source spec
+        match = self._find_marketplace_plugin(name)
+        if match is None:
+            return None
+        plugin, cache_path, plugin_root = match
+        return self._marketplace_source_to_spec(plugin.get("source"), cache_path, plugin_root)
+
+    def _find_marketplace_plugin(self, name: str) -> tuple[dict, Path, str] | None:
+        """Find a plugin entry by name across registered marketplaces.
+
+        Returns (plugin_entry, marketplace_cache_path, plugin_root) or None.
+        """
         for market in self.marketplaces:
             try:
                 manifest = self._read_marketplace_manifest(Path(market.cache_path))
             except FileNotFoundError, ValueError:
                 continue
+            plugin_root = str(manifest.get("pluginRoot", ""))
             for plugin in manifest.get("plugins", []):
-                if plugin.get("name") != name:
-                    continue
-                source = plugin.get("source", "")
-                if isinstance(source, str) and source.startswith((".", "/")):
-                    # Relative path within the marketplace repo
-                    return str((Path(market.cache_path) / source).resolve())
-                return source or None
+                if plugin.get("name") == name:
+                    return plugin, Path(market.cache_path), plugin_root
+        return None
+
+    def _marketplace_source_to_spec(self, source, cache_path: Path, plugin_root: str) -> str | None:
+        """Convert a Claude Code marketplace plugin ``source`` to an install spec.
+
+        Supports the object forms used by real marketplaces
+        (``github`` / ``git`` / ``git-subdir``) and string sources (a path
+        relative to the marketplace repo, honoring ``pluginRoot``). Returns None
+        for unsupported sources (e.g. non-GitHub git URLs).
+        """
+        if isinstance(source, dict):
+            kind = source.get("source")
+            ref = source.get("ref") or source.get("branch")
+            path = str(source.get("path", "")).strip("/")
+            if kind == "github":
+                repo = str(source.get("repo", "")).strip("/")
+                if not repo:
+                    return None
+            elif kind in ("git", "git-subdir"):
+                repo, _ = self.skills_manager._normalize_github_url(str(source.get("url", "")))
+                if "://" in repo or repo.count("/") != 1:
+                    return None  # non-GitHub git URLs are not supported
+            else:
+                return None
+            spec = f"{repo}/{path}" if path else repo
+            return f"{spec}@{ref}" if ref else spec
+
+        if isinstance(source, str) and source:
+            expanded = Path(source).expanduser()
+            if expanded.is_absolute():
+                return str(expanded)
+            # A string source is a path relative to the marketplace repo.
+            rel = source.lstrip("./")
+            root = plugin_root.strip("/")
+            rel = f"{root}/{rel}" if root else rel
+            return str((cache_path / rel).resolve())
+
         return None
 
     @staticmethod

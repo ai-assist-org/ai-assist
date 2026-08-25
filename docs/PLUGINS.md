@@ -52,11 +52,65 @@ A marketplace is a git repo (or local directory) with a
 it, then install by name:
 
 ```bash
-/plugin/marketplace add owner/marketplace-repo@main
+/plugin/marketplace add owner/marketplace-repo@main [nickname]
+/plugin/marketplace update [name]      # git pull the cache; all marketplaces if name omitted
 /plugin/marketplace list
 /plugin/search <query>
 /plugin/install <plugin-name>          # resolved through registered marketplaces
 ```
+
+Pass an optional **nickname** to override the manifest name — handy when two
+marketplaces share a name, or to give one a short handle:
+
+```bash
+/plugin/marketplace add openshift-eng/ai-helpers@main redhat
+/plugin/marketplace update redhat
+```
+
+Adding a marketplace whose name (manifest name or nickname) would **mask a
+different** already-registered one is refused, with a suggestion to pick a
+nickname. Re-adding the same source under the same name just refreshes it.
+
+`update` refreshes the cached marketplace repo so `/plugin/search` and
+`/plugin/install` see newly published plugins. Re-running `add` on the same
+source has the same effect.
+
+Real-world marketplaces (e.g. `anthropics/claude-plugins-official`) declare each
+plugin's `source` as an object rather than a bare path. All the common forms are
+resolved automatically:
+
+| `source` form | Example | Resolves to |
+| --- | --- | --- |
+| `github` | `{"source": "github", "repo": "owner/repo", "path": "plugins/x"}` | `owner/repo/plugins/x` |
+| `git` / `git-subdir` | `{"source": "git-subdir", "url": "https://github.com/owner/repo.git", "path": "plugins/x"}` | `owner/repo/plugins/x` |
+| string | `"plugins/x"` (relative to the repo, honoring top-level `pluginRoot`) | in-repo path |
+
+An optional `ref`/`branch` on the object selects a git ref. Non-GitHub git URLs
+are not supported and are reported clearly when you try to install them. Plugin
+names from registered marketplaces are also offered in tab completion after
+`/plugin/install`.
+
+### Well-known marketplaces
+
+These public Claude Code marketplaces work out of the box:
+
+| Marketplace | Add command | Contents |
+| --- | --- | --- |
+| Anthropic official | `/plugin/marketplace add anthropics/claude-plugins-official@main` | Anthropic-managed, high-quality plugins |
+| Anthropic community | `/plugin/marketplace add anthropics/claude-plugins-community@main` | Community-submitted plugins |
+| Anthropic life sciences | `/plugin/marketplace add anthropics/life-sciences@main` | Plugins for the Claude for Life Sciences launch |
+| OpenShift Eng (Red Hat) | `/plugin/marketplace add openshift-eng/ai-helpers@main` | OpenShift/Red Hat developer plugins (jira, ci, git, openshift, must-gather, ...) |
+
+After adding one, discover and install by name:
+
+```bash
+/plugin/marketplace add anthropics/claude-plugins-official@main
+/plugin/search <query>
+/plugin/install <plugin-name>
+```
+
+> Note: `anthropics/claude-code` is the Claude Code product repo, **not** a
+> marketplace — it has no `.claude-plugin/marketplace.json` and cannot be added.
 
 ## Running plugin skills
 
