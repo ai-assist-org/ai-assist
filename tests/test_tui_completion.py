@@ -98,6 +98,26 @@ def test_skill_uninstall_completion():
     Path("/tmp/test-completion-skills.json").unlink()
 
 
+def test_skill_update_completion():
+    """Test /skill/update completes with installed skills"""
+    config = AiAssistConfig(
+        anthropic_api_key="test-key",
+        model="claude-3-5-sonnet-20241022",
+        mcp_servers={},
+    )
+    agent = AiAssistAgent(config)
+    agent.skills_manager.installed_skills_file = Path("/tmp/test-completion-skills-update.json")
+    agent.skills_manager.install_skill("/tmp/test-skills/hello@main")
+
+    completer = AiAssistCompleter(agent=agent)
+    doc = Document("/skill/update ", cursor_position=14)
+    commands = [c.text for c in completer.get_completions(doc, None)]
+    assert "/skill/update hello" in commands
+
+    agent.skills_manager.uninstall_skill("hello")
+    Path("/tmp/test-completion-skills-update.json").unlink()
+
+
 def test_skill_list_completion():
     """Test /skill/list completes"""
     config = AiAssistConfig(
@@ -207,6 +227,27 @@ def test_plugin_uninstall_completion_lists_installed():
     doc = Document("/plugin/uninstall ", cursor_position=18)
     commands = [c.text for c in completer.get_completions(doc, None)]
     assert any("acme" in cmd for cmd in commands)
+
+
+def test_plugin_update_completion_lists_installed():
+    """/plugin/update completes with installed plugin names"""
+    from ai_assist.plugins_manager import InstalledPlugin
+
+    agent = _agent()
+    agent.plugins_manager.installed_plugins = [
+        InstalledPlugin(
+            name="acme",
+            source="owner/acme",
+            source_type="git",
+            branch="main",
+            installed_at="now",
+            cache_path="/tmp/acme",
+        )
+    ]
+    completer = AiAssistCompleter(agent=agent)
+    doc = Document("/plugin/update ", cursor_position=15)
+    commands = [c.text for c in completer.get_completions(doc, None)]
+    assert "/plugin/update acme" in commands
 
 
 def test_plugin_install_completion_lists_marketplace_names(tmp_path):

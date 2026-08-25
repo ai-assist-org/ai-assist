@@ -120,13 +120,21 @@ bundle format (`.claude-plugin/plugin.json` + `skills/*/SKILL.md` + legacy
   into `config.mcp_servers`; kept in `plugins_manager.plugin_mcp_servers` and
   re-merged after any `reload_mcp_servers()` / skills reload so they survive.
 - `agents/` (subagents) and `hooks/` are **not** supported — skipped with a notice.
-- Commands: `/plugin/install|uninstall|list|search`, `/plugin/marketplace add|list`.
-  Install by git/local source or by name via a registered marketplace
-  (`.claude-plugin/marketplace.json`). Installing bundled MCP servers prompts for
-  confirmation before connecting.
+- Commands: `/plugin/install|uninstall|update|list|search`,
+  `/plugin/marketplace add [nickname]|update [name]|list`. Install by git/local
+  source or by name via a registered marketplace (`.claude-plugin/marketplace.json`).
+  `update` reinstalls from the recorded source (with rollback on failure);
+  marketplace `add` refuses to mask a different registration and accepts a
+  nickname; marketplace `update` refreshes the cached repo. Installing bundled
+  MCP servers prompts for confirmation before connecting.
+- Skills have the same lifecycle: `/skill/install|uninstall|update|list|search`
+  (`update` reinstalls, rolling back on failure; ClawHub skills re-pull latest).
+- The agent gets **read-only** introspection over installed skills/plugins via
+  `introspection__list_skills` / `introspection__list_plugins`; install/update/
+  uninstall stay human-driven slash commands (no agent write tools).
 - User docs in `docs/PLUGINS.md`.
 
-Files: `plugins_loader.py`, `plugins_manager.py`
+Files: `plugins_loader.py`, `plugins_manager.py`, `skills_manager.py`
 
 ### Service Management
 

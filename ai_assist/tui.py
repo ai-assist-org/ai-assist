@@ -77,7 +77,7 @@ class AiAssistCompleter(Completer):
                 )
 
     def _get_plugin_arg_completions(self, text):
-        """Completions for /plugin/marketplace add|update, /plugin/install, /plugin/uninstall."""
+        """Completions for /plugin/marketplace add|update, /plugin/install, /plugin/uninstall|update."""
         if text.startswith("/plugin/marketplace add "):
             yield from self._get_marketplace_add_completions(text)
             return
@@ -97,10 +97,11 @@ class AiAssistCompleter(Completer):
 
         prefix = text.split(" ", 1)[1] if " " in text else ""
 
-        if text.startswith("/plugin/uninstall ") and self.agent:
+        if text.startswith(("/plugin/uninstall ", "/plugin/update ")) and self.agent:
+            base = "/plugin/uninstall" if text.startswith("/plugin/uninstall ") else "/plugin/update"
             for plugin in self.agent.plugins_manager.installed_plugins:
                 if plugin.name.startswith(prefix.lower()):
-                    full_command = f"/plugin/uninstall {plugin.name}"
+                    full_command = f"{base} {plugin.name}"
                     yield Completion(
                         full_command,
                         start_position=-len(text),
@@ -181,12 +182,13 @@ class AiAssistCompleter(Completer):
             word = text  # Keep the full text including /
 
             # Special handling for skill commands with arguments (space-separated)
-            if text.startswith("/skill/uninstall ") and self.agent:
+            if text.startswith(("/skill/uninstall ", "/skill/update ")) and self.agent:
                 # Complete with installed skill names
+                base = "/skill/uninstall" if text.startswith("/skill/uninstall ") else "/skill/update"
                 prefix = text.split(" ", 1)[1] if " " in text else ""
                 for skill in self.agent.skills_manager.installed_skills:
                     if skill.name.startswith(prefix.lower()):
-                        full_command = f"/skill/uninstall {skill.name}"
+                        full_command = f"{base} {skill.name}"
                         yield Completion(
                             full_command,
                             start_position=-len(text),
@@ -230,7 +232,13 @@ class AiAssistCompleter(Completer):
                 return  # Don't continue to other completions
 
             if text.startswith(
-                ("/plugin/marketplace add ", "/plugin/marketplace update ", "/plugin/install ", "/plugin/uninstall ")
+                (
+                    "/plugin/marketplace add ",
+                    "/plugin/marketplace update ",
+                    "/plugin/install ",
+                    "/plugin/uninstall ",
+                    "/plugin/update ",
+                )
             ):
                 yield from self._get_plugin_arg_completions(text)
                 return  # Don't continue to other completions

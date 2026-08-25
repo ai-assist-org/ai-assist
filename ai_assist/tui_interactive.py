@@ -289,6 +289,8 @@ async def handle_skill_management_command(command: str, agent: AiAssistAgent, co
         _handle_skill_install(parts, agent, console)
     elif subcommand == "uninstall":
         _handle_skill_uninstall(parts, agent, console)
+    elif subcommand == "update":
+        _handle_skill_update(parts, agent, console)
     elif subcommand == "list":
         console.print(agent.skills_manager.list_installed())
     elif subcommand == "search":
@@ -302,7 +304,7 @@ async def handle_skill_management_command(command: str, agent: AiAssistAgent, co
     else:
         console.print(f"[yellow]Unknown skill command: {subcommand}[/yellow]")
         console.print(
-            "Available: /skill/install, /skill/uninstall, /skill/list, /skill/search, /skill/add_env, /skill/remove_env, /skill/list_env"
+            "Available: /skill/install, /skill/uninstall, /skill/update, /skill/list, /skill/search, /skill/add_env, /skill/remove_env, /skill/list_env"
         )
 
     return True
@@ -340,6 +342,22 @@ def _handle_skill_uninstall(parts: list[str], agent: AiAssistAgent, console: Con
         console.print(f"[red]{result}[/red]")
     else:
         console.print(f"[green]{result}[/green]")
+
+
+def _handle_skill_update(parts: list[str], agent: AiAssistAgent, console: Console):
+    manager = agent.skills_manager
+    if len(parts) >= 2 and parts[1].strip():
+        names = [parts[1].strip()]
+    else:
+        names = [s.name for s in manager.installed_skills]
+    if not names:
+        console.print("[yellow]No skills installed.[/yellow]")
+        return
+    for name in names:
+        with console.status(f"Updating skill {name}..."):
+            result = manager.update_skill(name)
+        color = "red" if result.startswith("Error") else "green"
+        console.print(f"[{color}]{result}[/{color}]")
 
 
 def _handle_skill_search(parts: list[str], agent: AiAssistAgent, console: Console):
@@ -431,6 +449,8 @@ async def handle_plugin_management_command(command: str, agent: AiAssistAgent, c
         await _handle_plugin_install(parts, agent, console)
     elif subcommand == "uninstall":
         await _handle_plugin_uninstall(parts, agent, console)
+    elif subcommand == "update":
+        await _handle_plugin_update(parts, agent, console)
     elif subcommand == "list":
         console.print(agent.plugins_manager.list_installed())
     elif subcommand == "search":
@@ -440,7 +460,7 @@ async def handle_plugin_management_command(command: str, agent: AiAssistAgent, c
     else:
         console.print(f"[yellow]Unknown plugin command: {subcommand}[/yellow]")
         console.print(
-            "Available: /plugin/install, /plugin/uninstall, /plugin/list, /plugin/search, /plugin/marketplace"
+            "Available: /plugin/install, /plugin/uninstall, /plugin/update, /plugin/list, /plugin/search, /plugin/marketplace"
         )
 
     return True
@@ -464,34 +484,39 @@ async def _handle_plugin_install(parts: list[str], agent: AiAssistAgent, console
         return
 
     console.print(f"[green]{message}[/green]")
+    await _confirm_and_connect_plugin_servers(agent, console, server_names)
 
-    # Bundled MCP servers launch processes — confirm before connecting.
-    if server_names:
-        console.print(
-            f"[yellow]⚠ This plugin bundles {len(server_names)} MCP server(s) that run external processes:[/yellow]"
-        )
+
+async def _confirm_and_connect_plugin_servers(agent: AiAssistAgent, console: Console, server_names: list[str]):
+    """Confirm and connect a plugin's bundled MCP servers (they launch processes)."""
+    if not server_names:
+        return
+
+    console.print(
+        f"[yellow]⚠ This plugin bundles {len(server_names)} MCP server(s) that run external processes:[/yellow]"
+    )
+    for name in server_names:
+        cfg = agent.plugins_manager.plugin_mcp_servers.get(name)
+        detail = cfg.url or f"{cfg.command} {' '.join(cfg.args)}".strip() if cfg else ""
+        console.print(f"  [bold]{name}[/bold]: {detail}")
+
+    try:
+        answer = await asyncio.to_thread(input, "Connect these MCP servers now? [y/N]: ")
+    except EOFError, KeyboardInterrupt:
+        answer = "n"
+
+    if answer.strip().lower() in ("y", "yes"):
         for name in server_names:
-            cfg = agent.plugins_manager.plugin_mcp_servers.get(name)
-            detail = cfg.url or f"{cfg.command} {' '.join(cfg.args)}".strip() if cfg else ""
-            console.print(f"  [bold]{name}[/bold]: {detail}")
-
-        try:
-            answer = await asyncio.to_thread(input, "Connect these MCP servers now? [y/N]: ")
-        except EOFError, KeyboardInterrupt:
-            answer = "n"
-
-        if answer.strip().lower() in ("y", "yes"):
-            for name in server_names:
-                agent.config.mcp_servers[name] = agent.plugins_manager.plugin_mcp_servers[name]
-                console.print(f"[cyan]Connecting {name}...[/cyan]")
-                connected = await agent._connect_server(name, agent.config.mcp_servers[name])
-                if connected:
-                    tool_count = len([t for t in agent.available_tools if t.get("_server") == name])
-                    console.print(f"[green]✓ Connected {name} ({tool_count} tools)[/green]")
-                else:
-                    console.print(f"[yellow]{name} did not initialize within timeout[/yellow]")
-        else:
-            console.print("[dim]MCP servers not connected. They will start on the next launch.[/dim]")
+            agent.config.mcp_servers[name] = agent.plugins_manager.plugin_mcp_servers[name]
+            console.print(f"[cyan]Connecting {name}...[/cyan]")
+            connected = await agent._connect_server(name, agent.config.mcp_servers[name])
+            if connected:
+                tool_count = len([t for t in agent.available_tools if t.get("_server") == name])
+                console.print(f"[green]✓ Connected {name} ({tool_count} tools)[/green]")
+            else:
+                console.print(f"[yellow]{name} did not initialize within timeout[/yellow]")
+    else:
+        console.print("[dim]MCP servers not connected. They will start on the next launch.[/dim]")
 
 
 async def _handle_plugin_uninstall(parts: list[str], agent: AiAssistAgent, console: Console):
@@ -511,6 +536,29 @@ async def _handle_plugin_uninstall(parts: list[str], agent: AiAssistAgent, conso
         agent.config.mcp_servers.pop(name, None)
 
     console.print(f"[green]{message}[/green]")
+
+
+async def _handle_plugin_update(parts: list[str], agent: AiAssistAgent, console: Console):
+    manager = agent.plugins_manager
+    if len(parts) >= 2 and parts[1].strip():
+        names = [parts[1].strip()]
+    else:
+        names = [p.name for p in manager.installed_plugins]
+    if not names:
+        console.print("[yellow]No plugins installed.[/yellow]")
+        return
+
+    for name in names:
+        with console.status(f"Updating plugin {name}..."):
+            message, to_disconnect, to_connect = manager.update_plugin(name)
+        color = "red" if message.startswith("Error") else "green"
+        console.print(f"[{color}]{message}[/{color}]")
+        if message.startswith("Error"):
+            continue
+        for server in to_disconnect:
+            agent._disconnect_server(server)
+            agent.config.mcp_servers.pop(server, None)
+        await _confirm_and_connect_plugin_servers(agent, console, to_connect)
 
 
 def _handle_plugin_search(parts: list[str], agent: AiAssistAgent, console: Console):

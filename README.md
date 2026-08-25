@@ -160,6 +160,7 @@ uv run ai-assist
 - `/prompt-info <server/prompt>` - Show detailed prompt info
 - `/skill/install <source>@<branch>` - Install an Agent Skill
 - `/skill/uninstall <name>` - Uninstall an Agent Skill
+- `/skill/update [name]` - Reinstall skill(s) from source (all if name omitted)
 - `/skill/list` - List installed Agent Skills
 - `/skill/search <query>` - Search ClawHub and skills.sh registries
 - `/skill/add_env <skill> <VAR>` - Allow an environment variable for a skill's scripts
@@ -168,9 +169,10 @@ uv run ai-assist
 - `/<skill-name> [args]` - Run an installed skill directly (e.g. `/pdf report.pdf`)
 - `/plugin/install <source|name>@<branch>` - Install a Claude Code plugin
 - `/plugin/uninstall <name>` - Uninstall a plugin
+- `/plugin/update [name]` - Reinstall plugin(s) from source (all if name omitted)
 - `/plugin/list` - List installed plugins
 - `/plugin/search <query>` - Search registered marketplaces for plugins
-- `/plugin/marketplace <add <repo>|list>` - Manage plugin marketplaces
+- `/plugin/marketplace <add <repo> [nickname]|update [name]|list>` - Manage plugin marketplaces
 - `/eval-stats` - Show evaluation metrics from query traces
 - `/cost [period]` - Show token cost summary (e.g. `/cost 7d`, `/cost 30d`)
 - `/plan <task>` - Plan a task before executing (explore → approve → execute)

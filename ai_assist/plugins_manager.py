@@ -185,6 +185,35 @@ class PluginsManager:
         self._save_installed_plugins()
         return (f"Plugin '{name}' uninstalled successfully", plugin.mcp_server_names)
 
+    def update_plugin(self, name: str) -> tuple[str, list[str], list[str]]:
+        """Reinstall a plugin from its recorded source to pick up upstream changes.
+
+        Returns (message, servers_to_disconnect, servers_to_connect). The caller
+        disconnects the first list and connects the second (plugin MCP servers
+        launch processes, so connection stays in the interactive layer). On
+        failure the previous plugin is restored and both lists are empty.
+        """
+        plugin = next((p for p in self.installed_plugins if p.name == name), None)
+        if plugin is None:
+            return (f"Error: Plugin '{name}' is not installed", [], [])
+
+        source_spec = f"{plugin.source}@{plugin.branch}"
+        old_servers = list(plugin.mcp_server_names)
+        self.uninstall_plugin(name)
+        message, new_servers = self.install_plugin(source_spec)
+        if message.startswith("Error"):
+            # Restore the previous plugin so a failed update is not destructive.
+            try:
+                loaded = self.plugins_loader.load_plugin_from_local(Path(plugin.cache_path))
+                self._register(plugin.name, loaded)
+                self.installed_plugins.append(plugin)
+                self.reapply_to_loaded_skills()
+                self._save_installed_plugins()
+            except Exception:
+                logger.exception("Failed to roll back plugin update for '%s'", name)
+            return (f"Error: Update of '{name}' failed, kept previous version. {message}", [], [])
+        return (f"Plugin '{name}' updated ({message})", old_servers, new_servers)
+
     def list_installed(self) -> str:
         """Return a formatted list of installed plugins."""
         if not self.installed_plugins:

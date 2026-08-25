@@ -228,3 +228,50 @@ def test_install_clawhub_skill_default_version(skills_manager):
 
     assert "installed successfully" in result
     mock_load.assert_called_once_with("test-skill", None)
+
+
+def test_update_skill_reinstalls_from_source(skills_manager):
+    """Updating a skill reinstalls it from its recorded source"""
+    skills_manager.install_skill("/tmp/test-skills/hello@main")
+
+    result = skills_manager.update_skill("hello")
+
+    assert "updated" in result
+    assert "hello" in skills_manager.loaded_skills
+    assert len(skills_manager.installed_skills) == 1
+
+
+def test_update_unknown_skill(skills_manager):
+    """Updating a skill that is not installed returns an error"""
+    result = skills_manager.update_skill("nope")
+    assert result.startswith("Error")
+    assert "not installed" in result
+
+
+def test_update_skill_rolls_back_on_failure(skills_manager):
+    """A failed reinstall keeps the previous skill installed"""
+    skills_manager.install_skill("/tmp/test-skills/hello@main")
+
+    with patch.object(skills_manager, "install_skill", return_value="Error: boom"):
+        result = skills_manager.update_skill("hello")
+
+    assert result.startswith("Error")
+    assert "kept previous version" in result
+    # The previous installation survives the failed update
+    assert "hello" in skills_manager.loaded_skills
+    assert [s.name for s in skills_manager.installed_skills] == ["hello"]
+
+
+def test_update_clawhub_skill_drops_pinned_version(skills_manager):
+    """Updating a ClawHub skill reinstalls from the slug to get the latest version"""
+    content = _make_clawhub_content(version="1.2.3")
+    with patch.object(skills_manager.skills_loader, "load_skill_from_clawhub", return_value=content):
+        skills_manager.install_skill("clawhub:test-skill@1.2.3")
+
+    newer = _make_clawhub_content(version="2.0.0")
+    with patch.object(skills_manager.skills_loader, "load_skill_from_clawhub", return_value=newer) as mock_load:
+        result = skills_manager.update_skill("test-skill")
+
+    assert "updated" in result
+    # Latest requested (version=None), not the previously pinned 1.2.3
+    mock_load.assert_called_once_with("test-skill", None)

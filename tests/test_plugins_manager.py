@@ -97,6 +97,41 @@ def test_uninstall_missing_plugin(manager):
     assert servers == []
 
 
+def test_update_plugin_reinstalls_and_swaps_servers(manager, plugin_dir):
+    manager.install_plugin(str(plugin_dir))
+
+    message, to_disconnect, to_connect = manager.update_plugin("acme")
+
+    assert "updated" in message
+    assert to_disconnect == ["acme__srv"]
+    assert to_connect == ["acme__srv"]
+    assert [p.name for p in manager.installed_plugins] == ["acme"]
+    assert "acme:review" in manager.skills_manager.loaded_skills
+
+
+def test_update_unknown_plugin(manager):
+    message, to_disconnect, to_connect = manager.update_plugin("nope")
+    assert message.startswith("Error")
+    assert "not installed" in message
+    assert to_disconnect == [] and to_connect == []
+
+
+def test_update_plugin_rolls_back_on_failure(manager, plugin_dir):
+    manager.install_plugin(str(plugin_dir))
+
+    from unittest.mock import patch
+
+    with patch.object(manager, "install_plugin", return_value=("Error: boom", [])):
+        message, to_disconnect, to_connect = manager.update_plugin("acme")
+
+    assert message.startswith("Error")
+    assert "kept previous version" in message
+    # Live connections are untouched on a failed update
+    assert to_disconnect == [] and to_connect == []
+    assert [p.name for p in manager.installed_plugins] == ["acme"]
+    assert "acme:review" in manager.skills_manager.loaded_skills
+
+
 # --- marketplace ---
 
 

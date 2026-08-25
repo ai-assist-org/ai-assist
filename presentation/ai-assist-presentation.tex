@@ -497,17 +497,20 @@ When asked to read a PDF...
   \item Install \textbf{Claude Code plugins} directly
   \item Loads bundled skills, legacy commands, and MCP servers
   \item Namespaced as \texttt{/plugin:skill} (bare name when unique)
-  \item Discover via a \textbf{marketplace} index
+  \item Discover via a \textbf{marketplace} index (nicknames supported)
+  \item \texttt{update} reinstalls skills/plugins (rollback on failure)
   \item Bundled MCP servers \alert{require confirmation} before connecting
+  \item Agent gets \textbf{read-only} introspection; changes stay human-driven
   \item \texttt{agents/} and \texttt{hooks/} are skipped (no equivalent)
 \end{itemize}
 \end{column}
 \begin{column}{0.48\textwidth}
 \begin{lstlisting}[style=code,language=bash,basicstyle=\ttfamily\tiny,title={\scriptsize Plugin Management}]
-/plugin/marketplace add owner/market@main
+/plugin/marketplace add owner/market@main redhat
+/plugin/marketplace update redhat
 /plugin/search review
 /plugin/install acme          # by name
-/plugin/install owner/repo@main
+/plugin/update acme           # reinstall latest
 /plugin/list
 /plugin/uninstall acme
 /acme:review src/   # run a plugin skill

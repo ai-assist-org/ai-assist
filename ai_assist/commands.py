@@ -64,6 +64,14 @@ register_command(
 register_command(
     CommandDef("/skill/uninstall", "Uninstall an installed Agent Skill", mode="interactive", args="<name>")
 )
+register_command(
+    CommandDef(
+        "/skill/update",
+        "Reinstall skill(s) from source to pick up upstream changes",
+        mode="interactive",
+        args="[name]",
+    )
+)
 register_command(CommandDef("/skill/list", "List all installed Agent Skills", mode="interactive"))
 register_command(
     CommandDef("/skill/search", "Search ClawHub and skills.sh for skills", mode="interactive", args="<query>")
@@ -87,6 +95,14 @@ register_command(
     )
 )
 register_command(CommandDef("/plugin/uninstall", "Uninstall an installed plugin", mode="interactive", args="<name>"))
+register_command(
+    CommandDef(
+        "/plugin/update",
+        "Reinstall plugin(s) from source to pick up upstream changes",
+        mode="interactive",
+        args="[name]",
+    )
+)
 register_command(CommandDef("/plugin/list", "List all installed plugins", mode="interactive"))
 register_command(
     CommandDef("/plugin/search", "Search registered marketplaces for plugins", mode="interactive", args="<query>")

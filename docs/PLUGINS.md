@@ -42,8 +42,14 @@ ai-assist /interactive
 
 # Manage installed plugins:
 /plugin/list
+/plugin/update [plugin-name]     # reinstall from source; all plugins if name omitted
 /plugin/uninstall <plugin-name>
 ```
+
+`/plugin/update` re-fetches a plugin from its recorded source to pick up upstream
+changes (there is no in-place upgrade — it reinstalls). Omit the name to update
+every installed plugin. If the reinstall fails, the previous version is kept.
+Bundled MCP servers are re-offered for connection just like a fresh install.
 
 ## Marketplaces
 
@@ -124,6 +130,17 @@ Plugin skills are **namespaced** to avoid collisions. Run them as:
 Arguments fill `$ARGUMENTS` (full string) and `$1`, `$2`, ... exactly as with
 regular skills. Plugin skills also appear in the system prompt and in tab
 completion.
+
+## Agent awareness
+
+The assistant can **see** what is installed but cannot change it. Two read-only
+introspection tools are always available:
+
+- `introspection__list_skills` — installed Agent Skills (including plugin skills)
+- `introspection__list_plugins` — installed plugins, their source, skills, and MCP servers
+
+Installing, updating, and uninstalling stay human-driven through the `/skill/*`
+and `/plugin/*` commands above; the agent has no write access to them.
 
 ## Security
 
