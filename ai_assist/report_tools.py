@@ -34,15 +34,24 @@ class ReportTools:
                 "name": "internal__write_report",
                 "_readonly": False,
                 "description": (
-                    "Create or completely replace a report file. "
-                    "Supports md (markdown), jsonl, csv, and tsv formats."
+                    "Create or completely replace a report in the managed reports "
+                    "directory. Supports md (markdown), jsonl, csv, and tsv formats. "
+                    "Only for reports addressed by a bare name. To write to a specific "
+                    "file path, use internal__write_file or internal__execute_command "
+                    "instead of this tool."
                 ),
                 "input_schema": {
                     "type": "object",
                     "properties": {
                         "name": {
                             "type": "string",
-                            "description": "Report name (without file extension)",
+                            "description": (
+                                "Bare report name only, without file extension and "
+                                "without any path (no '/', '~', or '..'). The report is "
+                                "stored in the managed reports directory; a path here is "
+                                "rejected. For a file at a given path, use a filesystem "
+                                "tool instead."
+                            ),
                         },
                         "content": {
                             "type": "string",
@@ -62,16 +71,26 @@ class ReportTools:
                 "name": "internal__append_to_report",
                 "_readonly": False,
                 "description": (
-                    "Add content to the end of a report (creates file if needed). "
+                    "Add content to the end of a report in the managed reports "
+                    "directory (creates it if needed). "
                     "For jsonl: content must be valid JSON (one object per line). "
-                    "For csv/tsv: raw rows to append."
+                    "For csv/tsv: raw rows to append. "
+                    "Only for reports addressed by a bare name. To append to a file at "
+                    "a specific path, use internal__edit_file or internal__execute_command "
+                    "(e.g. shell '>>' redirection) instead of this tool."
                 ),
                 "input_schema": {
                     "type": "object",
                     "properties": {
                         "name": {
                             "type": "string",
-                            "description": "Report name (without file extension)",
+                            "description": (
+                                "Bare report name only, without file extension and "
+                                "without any path (no '/', '~', or '..'). The report is "
+                                "stored in the managed reports directory; a path here is "
+                                "rejected. To append to a file at a given path, use a "
+                                "filesystem tool instead."
+                            ),
                         },
                         "content": {
                             "type": "string",
@@ -153,6 +172,32 @@ class ReportTools:
         else:
             raise ValueError(f"Unknown report tool: {tool_name}")
 
+    @staticmethod
+    def _check_name_is_bare(name: str) -> str | None:
+        """Return a corrective message if ``name`` looks like a file path.
+
+        Report tools address reports by a bare name in the managed reports
+        directory. When the agent passes a path (e.g. ``~/dir/bugs`` or
+        ``bugs.md``) it should use a filesystem tool instead. Returns None when
+        the name is a valid bare report name.
+        """
+        path_like = (
+            "/" in name
+            or "\\" in name
+            or name.startswith("~")
+            or ".." in name
+            or name.endswith(tuple(SUPPORTED_FORMATS.values()))
+        )
+        if not path_like:
+            return None
+        return (
+            f"Error: '{name}' looks like a file path, not a report name. Report tools "
+            "only accept a bare report name (no path, no extension) stored in the "
+            "managed reports directory. To write to a file at a specific path, use "
+            "internal__edit_file or internal__execute_command (e.g. shell '>>' to "
+            "append) instead."
+        )
+
     def _validate_report_path(self, report_file: Path) -> str | None:
         """Validate that a report path is within the reports directory.
 
@@ -218,6 +263,9 @@ class ReportTools:
         error = self._validate_report_path(report_file)
         if error:
             return error
+        error = self._check_name_is_bare(name)
+        if error:
+            return error
 
         if fmt == "md":
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -240,6 +288,9 @@ class ReportTools:
         ext = SUPPORTED_FORMATS[fmt]
         report_file = self.reports_dir / f"{name}{ext}"
         error = self._validate_report_path(report_file)
+        if error:
+            return error
+        error = self._check_name_is_bare(name)
         if error:
             return error
 

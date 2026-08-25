@@ -1,0 +1,1 @@
+prompt: "Append the line \"'Failed at redhatci.ocp.mirror_images : Inspect destination image': CILAB-2770\" to the bugs report at analyze-job/bugs.md"

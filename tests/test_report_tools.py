@@ -461,3 +461,32 @@ class TestDefaultFormatBackwardCompat:
     async def test_append_default_is_md(self, report_tools, temp_reports):
         await report_tools.execute_tool("append_to_report", {"name": "compat2", "content": "text"})
         assert (temp_reports / "compat2.md").exists()
+
+
+class TestBareNameGuardrail:
+    """A path-like report name is rejected with a message pointing to filesystem tools."""
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "~/ai-assist/analyze-job/bugs",
+            "analyze-job/bugs",
+            "bugs.md",
+        ],
+    )
+    def test_append_rejects_path_like_name(self, report_tools, temp_reports, name):
+        result = report_tools._append_to_report(name, "a line")
+        assert "looks like a file path" in result
+        assert "internal__edit_file" in result or "internal__execute_command" in result
+        # Nothing was written under the reports dir
+        assert list(temp_reports.iterdir()) == []
+
+    def test_write_rejects_path_like_name(self, report_tools, temp_reports):
+        result = report_tools._write_report("~/ai-assist/analyze-job/bugs", "content")
+        assert "looks like a file path" in result
+        assert list(temp_reports.iterdir()) == []
+
+    def test_bare_name_still_works(self, report_tools, temp_reports):
+        result = report_tools._append_to_report("jira-backlog", "a line")
+        assert "looks like a file path" not in result
+        assert (temp_reports / "jira-backlog.md").exists()

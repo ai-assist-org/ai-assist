@@ -39,7 +39,8 @@ outputs:
   - path: output
     schema: |
       response.txt: the agent's text response
-      tool_calls.json: list of {name, input} for each tool called
+      tool_calls.json: list of {name, input, result} for each tool called
+        (result is the tool's output, truncated)
       metrics.json: token usage and turn count
 
 traces:
@@ -96,6 +97,24 @@ judges:
         if "python3 -c" in cmd or "python -c" in cmd:
           return False, f"Used python -c pipe instead of jq/json_query: {cmd[:100]}"
       return True, "Did not use python -c for JSON processing"
+
+  - name: report_name_not_path
+    description: Verify report tools are not called with a filesystem path as the name
+    check: |
+      import json
+      files = outputs.get("files", {})
+      tc_content = next((v for k, v in files.items() if "tool_calls.json" in k), "[]")
+      tool_calls = json.loads(tc_content)
+      bad = []
+      for tc in tool_calls:
+        name = tc.get("name", "")
+        if "append_to_report" in name or "write_report" in name:
+          report_name = tc.get("input", {}).get("name") or ""
+          if any(c in report_name for c in ("/", "~", "..")):
+            bad.append(report_name)
+      if bad:
+        return False, f"Report tool called with path-like name(s): {bad}"
+      return True, "No report tool called with a path-like name"
 
   - name: response_quality
     description: Evaluate if the response is coherent and addresses the prompt
