@@ -77,9 +77,29 @@ class AiAssistCompleter(Completer):
                 )
 
     def _get_plugin_arg_completions(self, text):
-        """Completions for /plugin/marketplace add|update, /plugin/install, /plugin/uninstall|update."""
+        """Completions for /plugin/marketplace add|update|list, /plugin/install, /plugin/uninstall|update."""
         if text.startswith("/plugin/marketplace add "):
             yield from self._get_marketplace_add_completions(text)
+            return
+
+        if text.startswith("/plugin/marketplace ") and not text.startswith(
+            ("/plugin/marketplace add ", "/plugin/marketplace update ")
+        ):
+            # Complete the space-separated subcommands (add|update|list)
+            prefix = text.split(" ", 1)[1] if " " in text else ""
+            for sub, meta in (
+                ("add", "Register a marketplace: add <repo> [nickname]"),
+                ("update", "Refresh cached marketplace(s): update [name]"),
+                ("list", "List registered marketplaces"),
+            ):
+                if sub.startswith(prefix):
+                    full_command = f"/plugin/marketplace {sub}"
+                    yield Completion(
+                        full_command,
+                        start_position=-len(text),
+                        display=full_command,
+                        display_meta=meta,
+                    )
             return
 
         if text.startswith("/plugin/marketplace update ") and self.agent:
@@ -166,6 +186,73 @@ class AiAssistCompleter(Completer):
                 if name:
                     yield name, market.name, plugin.get("description", "")
 
+    def _get_command_arg_completions(self, text):
+        """Complete arguments/subcommands once the command token is followed by a space."""
+        prefix = text.split(" ", 1)[1]
+
+        if text.startswith(("/skill/uninstall ", "/skill/update ")) and self.agent:
+            base = "/skill/uninstall" if text.startswith("/skill/uninstall ") else "/skill/update"
+            for skill in self.agent.skills_manager.installed_skills:
+                if skill.name.startswith(prefix.lower()):
+                    full_command = f"{base} {skill.name}"
+                    yield Completion(
+                        full_command,
+                        start_position=-len(text),
+                        display=full_command,
+                        display_meta=f"{skill.source}",
+                    )
+            return
+
+        if text.startswith("/mcp/restart ") and self.agent:
+            for server_name in self.agent.config.mcp_servers.keys():
+                if server_name.startswith(prefix):
+                    full_command = f"/mcp/restart {server_name}"
+                    yield Completion(
+                        full_command,
+                        start_position=-len(text),
+                        display=full_command,
+                        display_meta="MCP server",
+                    )
+            return
+
+        if text.startswith("/skill/install "):
+            examples = [
+                ("clawhub:skill-slug", "Install from ClawHub registry"),
+                ("anthropics/skills/skills/pdf@main", "Official PDF skill from Anthropic"),
+                ("anthropics/skills/skills/docx@main", "Official DOCX skill from Anthropic"),
+                ("/path/to/skill@main", "Local skill path example"),
+            ]
+            for example, description in examples:
+                if example.startswith(prefix):
+                    full_command = f"/skill/install {example}"
+                    yield Completion(
+                        full_command,
+                        start_position=-len(text),
+                        display=full_command,
+                        display_meta=description,
+                    )
+            return
+
+        if text.startswith(("/plugin/marketplace ", "/plugin/install ", "/plugin/uninstall ", "/plugin/update ")):
+            yield from self._get_plugin_arg_completions(text)
+            return
+
+        # Namespace forms like "/plugin ", "/skill ", "/mcp " list their sub-commands.
+        yield from self._get_namespace_command_completions(text)
+
+    def _get_namespace_command_completions(self, text):
+        """Suggest the sub-commands of a namespace typed with a trailing space."""
+        namespace, _, partial = text.partition(" ")
+        for cmd in self.commands:
+            remainder = cmd[len(namespace) + 1 :]
+            if cmd.startswith(f"{namespace}/") and remainder.startswith(partial):
+                yield Completion(
+                    cmd,
+                    start_position=-len(text),
+                    display=cmd,
+                    display_meta=self._get_command_description(cmd),
+                )
+
     def get_completions(self, document, complete_event):
         """Get completions for the current input"""
         text = document.text_before_cursor
@@ -181,66 +268,10 @@ class AiAssistCompleter(Completer):
         if text.startswith("/"):
             word = text  # Keep the full text including /
 
-            # Special handling for skill commands with arguments (space-separated)
-            if text.startswith(("/skill/uninstall ", "/skill/update ")) and self.agent:
-                # Complete with installed skill names
-                base = "/skill/uninstall" if text.startswith("/skill/uninstall ") else "/skill/update"
-                prefix = text.split(" ", 1)[1] if " " in text else ""
-                for skill in self.agent.skills_manager.installed_skills:
-                    if skill.name.startswith(prefix.lower()):
-                        full_command = f"{base} {skill.name}"
-                        yield Completion(
-                            full_command,
-                            start_position=-len(text),
-                            display=full_command,
-                            display_meta=f"{skill.source}",
-                        )
-                return  # Don't continue to other completions
-
-            if text.startswith("/mcp/restart ") and self.agent:
-                # Complete with configured MCP server names
-                prefix = text.split(" ", 1)[1] if " " in text else ""
-                for server_name in self.agent.config.mcp_servers.keys():
-                    if server_name.startswith(prefix):
-                        full_command = f"/mcp/restart {server_name}"
-                        yield Completion(
-                            full_command,
-                            start_position=-len(text),
-                            display=full_command,
-                            display_meta="MCP server",
-                        )
-                return  # Don't continue to other completions
-
-            if text.startswith("/skill/install "):
-                # Suggest example patterns
-                prefix = text.split(" ", 1)[1] if " " in text else ""
-                examples = [
-                    ("clawhub:skill-slug", "Install from ClawHub registry"),
-                    ("anthropics/skills/skills/pdf@main", "Official PDF skill from Anthropic"),
-                    ("anthropics/skills/skills/docx@main", "Official DOCX skill from Anthropic"),
-                    ("/path/to/skill@main", "Local skill path example"),
-                ]
-                for example, description in examples:
-                    if example.startswith(prefix):
-                        full_command = f"/skill/install {example}"
-                        yield Completion(
-                            full_command,
-                            start_position=-len(text),
-                            display=full_command,
-                            display_meta=description,
-                        )
-                return  # Don't continue to other completions
-
-            if text.startswith(
-                (
-                    "/plugin/marketplace add ",
-                    "/plugin/marketplace update ",
-                    "/plugin/install ",
-                    "/plugin/uninstall ",
-                    "/plugin/update ",
-                )
-            ):
-                yield from self._get_plugin_arg_completions(text)
+            # Once the command token is complete (a space follows), complete its
+            # arguments / subcommands instead of the command name itself.
+            if " " in text:
+                yield from self._get_command_arg_completions(text)
                 return  # Don't continue to other completions
 
             # Check if this looks like a prompt command (has a slash in it)

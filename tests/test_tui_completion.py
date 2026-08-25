@@ -286,6 +286,24 @@ def test_plugin_marketplace_add_completion_lists_well_known():
     assert any("anthropics/claude-plugins-community" in cmd for cmd in commands)
 
 
+def test_plugin_marketplace_subcommand_completion():
+    """/plugin/marketplace <space> suggests the add|update|list subcommands"""
+    completer = AiAssistCompleter(agent=_agent())
+    doc = Document("/plugin/marketplace ", cursor_position=20)
+    commands = [c.text for c in completer.get_completions(doc, None)]
+    assert "/plugin/marketplace add" in commands
+    assert "/plugin/marketplace update" in commands
+    assert "/plugin/marketplace list" in commands
+
+
+def test_plugin_marketplace_subcommand_completion_prefix():
+    """/plugin/marketplace u<partial> narrows to matching subcommands"""
+    completer = AiAssistCompleter(agent=_agent())
+    doc = Document("/plugin/marketplace u", cursor_position=21)
+    commands = [c.text for c in completer.get_completions(doc, None)]
+    assert commands == ["/plugin/marketplace update"]
+
+
 def test_plugin_marketplace_update_completion_lists_registered():
     """/plugin/marketplace update completes with registered marketplace names"""
     from ai_assist.plugins_manager import Marketplace
@@ -298,6 +316,45 @@ def test_plugin_marketplace_update_completion_lists_registered():
     doc = Document("/plugin/marketplace update ", cursor_position=27)
     commands = [c.text for c in completer.get_completions(doc, None)]
     assert "/plugin/marketplace update ai-helpers" in commands
+
+
+def test_plugin_namespace_completion_lists_subcommands():
+    """/plugin <space> suggests all /plugin/* commands"""
+    completer = AiAssistCompleter(agent=_agent())
+    doc = Document("/plugin ", cursor_position=8)
+    commands = [c.text for c in completer.get_completions(doc, None)]
+    assert "/plugin/install" in commands
+    assert "/plugin/uninstall" in commands
+    assert "/plugin/update" in commands
+    assert "/plugin/list" in commands
+    assert "/plugin/marketplace" in commands
+
+
+def test_skill_namespace_completion_lists_subcommands():
+    """/skill <space> suggests all /skill/* commands"""
+    completer = AiAssistCompleter(agent=_agent())
+    doc = Document("/skill ", cursor_position=7)
+    commands = [c.text for c in completer.get_completions(doc, None)]
+    assert "/skill/install" in commands
+    assert "/skill/uninstall" in commands
+    assert "/skill/update" in commands
+    assert "/skill/list" in commands
+
+
+def test_mcp_namespace_completion_lists_subcommands():
+    """/mcp <space> suggests all /mcp/* commands"""
+    completer = AiAssistCompleter(agent=_agent())
+    doc = Document("/mcp ", cursor_position=5)
+    commands = [c.text for c in completer.get_completions(doc, None)]
+    assert any(cmd.startswith("/mcp/") for cmd in commands)
+
+
+def test_namespace_completion_narrows_on_partial():
+    """/plugin ins narrows to /plugin/install"""
+    completer = AiAssistCompleter(agent=_agent())
+    doc = Document("/plugin ins", cursor_position=11)
+    commands = [c.text for c in completer.get_completions(doc, None)]
+    assert commands == ["/plugin/install"]
 
 
 def test_namespaced_plugin_skill_completion():
