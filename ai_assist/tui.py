@@ -1,6 +1,7 @@
 """TUI components for ai-assist"""
 
 import os
+from collections import Counter
 
 from prompt_toolkit.completion import Completer, Completion
 
@@ -130,11 +131,15 @@ class AiAssistCompleter(Completer):
                     )
             return
 
-        # /plugin/install: suggest plugin names from registered marketplaces
+        # /plugin/install: suggest plugin names from registered marketplaces.
+        # A name offered by several marketplaces is disambiguated as name@marketplace.
         if self.agent:
-            for name, market_name, description in self._marketplace_plugin_names():
-                if name.startswith(prefix.lower()):
-                    full_command = f"/plugin/install {name}"
+            entries = list(self._marketplace_plugin_names())
+            name_counts = Counter(name for name, _, _ in entries)
+            for name, market_name, description in entries:
+                spec = name if name_counts[name] == 1 else f"{name}@{market_name}"
+                if spec.startswith(prefix.lower()):
+                    full_command = f"/plugin/install {spec}"
                     yield Completion(
                         full_command,
                         start_position=-len(text),

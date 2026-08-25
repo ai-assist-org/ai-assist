@@ -77,6 +77,17 @@ Adding a marketplace whose name (manifest name or nickname) would **mask a
 different** already-registered one is refused, with a suggestion to pick a
 nickname. Re-adding the same source under the same name just refreshes it.
 
+When the **same plugin name** is offered by more than one registered
+marketplace, a bare `/plugin/install <name>` is ambiguous and is refused with
+the list of candidates. Disambiguate with a `@marketplace` suffix:
+
+```bash
+/plugin/install foo@redhat
+```
+
+Tab completion suggests the `<name>@<marketplace>` forms automatically when a
+name is offered by several marketplaces.
+
 `update` refreshes the cached marketplace repo so `/plugin/search` and
 `/plugin/install` see newly published plugins. Re-running `add` on the same
 source has the same effect.

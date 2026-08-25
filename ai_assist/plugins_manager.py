@@ -324,20 +324,46 @@ class PluginsManager:
         return "\n".join([f"Plugin search results for '{query}':\n", *lines])
 
     def _resolve_from_marketplaces(self, name: str) -> str | None:
-        """Resolve a bare plugin name to a concrete install spec via marketplaces."""
+        """Resolve a bare plugin name to a concrete install spec via marketplaces.
+
+        A bare name may carry a ``@marketplace`` disambiguator to pick between
+        marketplaces that expose the same plugin name. Raises ValueError when a
+        name is ambiguous or the requested marketplace does not have it.
+        """
         if "/" in name or Path(name).expanduser().is_absolute():
             return None  # Already a direct source spec
-        match = self._find_marketplace_plugin(name)
-        if match is None:
+        plugin_name, _, market_hint = name.partition("@")
+        matches = self._find_marketplace_plugins(plugin_name)
+        if market_hint:
+            matches = [m for m in matches if m[0].name == market_hint]
+            if not matches:
+                raise ValueError(f"No plugin '{plugin_name}' found in marketplace '{market_hint}'")
+        if not matches:
             return None
-        plugin, cache_path, plugin_root = match
+        if len(matches) > 1:
+            options = "\n".join(f"  {plugin_name}@{market.name}" for market, _, _, _ in matches)
+            raise ValueError(
+                f"'{plugin_name}' is offered by {len(matches)} marketplaces:\n{options}\n"
+                f"Pick one, e.g. /plugin/install {plugin_name}@{matches[0][0].name}"
+            )
+        _market, plugin, cache_path, plugin_root = matches[0]
         return self._marketplace_source_to_spec(plugin.get("source"), cache_path, plugin_root)
 
     def _find_marketplace_plugin(self, name: str) -> tuple[dict, Path, str] | None:
-        """Find a plugin entry by name across registered marketplaces.
+        """Return the first (plugin_entry, cache_path, plugin_root) matching name, or None."""
+        plugin_name, _, _ = name.partition("@")
+        matches = self._find_marketplace_plugins(plugin_name)
+        if not matches:
+            return None
+        _market, plugin, cache_path, plugin_root = matches[0]
+        return plugin, cache_path, plugin_root
 
-        Returns (plugin_entry, marketplace_cache_path, plugin_root) or None.
+    def _find_marketplace_plugins(self, name: str) -> list[tuple[Marketplace, dict, Path, str]]:
+        """Find every plugin entry named ``name`` across registered marketplaces.
+
+        Returns a list of (marketplace, plugin_entry, cache_path, plugin_root).
         """
+        results = []
         for market in self.marketplaces:
             try:
                 manifest = self._read_marketplace_manifest(Path(market.cache_path))
@@ -346,8 +372,8 @@ class PluginsManager:
             plugin_root = str(manifest.get("pluginRoot", ""))
             for plugin in manifest.get("plugins", []):
                 if plugin.get("name") == name:
-                    return plugin, Path(market.cache_path), plugin_root
-        return None
+                    results.append((market, plugin, Path(market.cache_path), plugin_root))
+        return results
 
     def _marketplace_source_to_spec(self, source, cache_path: Path, plugin_root: str) -> str | None:
         """Convert a Claude Code marketplace plugin ``source`` to an install spec.

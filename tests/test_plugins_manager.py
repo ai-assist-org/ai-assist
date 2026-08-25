@@ -287,6 +287,55 @@ def test_resolve_git_subdir_object_source(manager, tmp_path):
     assert manager._resolve_from_marketplaces("airtable") == "Airtable/skills/plugins/airtable"
 
 
+def _named_market(tmp_path, market_name, repo):
+    """Build a marketplace named ``market_name`` exposing a plugin named 'shared'."""
+    root = tmp_path / market_name
+    _write(
+        root / ".claude-plugin" / "marketplace.json",
+        json.dumps(
+            {"name": market_name, "plugins": [{"name": "shared", "source": {"source": "github", "repo": repo}}]}
+        ),
+    )
+    return root
+
+
+def test_resolve_ambiguous_name_raises(manager, tmp_path):
+    manager.add_marketplace(str(_named_market(tmp_path, "market-a", "owner-a/shared")))
+    manager.add_marketplace(str(_named_market(tmp_path, "market-b", "owner-b/shared")))
+
+    with pytest.raises(ValueError) as excinfo:
+        manager._resolve_from_marketplaces("shared")
+    message = str(excinfo.value)
+    assert "offered by 2 marketplaces" in message
+    assert "shared@market-a" in message
+    assert "shared@market-b" in message
+
+
+def test_resolve_ambiguous_name_disambiguated(manager, tmp_path):
+    manager.add_marketplace(str(_named_market(tmp_path, "market-a", "owner-a/shared")))
+    manager.add_marketplace(str(_named_market(tmp_path, "market-b", "owner-b/shared")))
+
+    assert manager._resolve_from_marketplaces("shared@market-a") == "owner-a/shared"
+    assert manager._resolve_from_marketplaces("shared@market-b") == "owner-b/shared"
+
+
+def test_resolve_unknown_marketplace_hint_raises(manager, tmp_path):
+    manager.add_marketplace(str(_named_market(tmp_path, "market-a", "owner-a/shared")))
+
+    with pytest.raises(ValueError) as excinfo:
+        manager._resolve_from_marketplaces("shared@nope")
+    assert "marketplace 'nope'" in str(excinfo.value)
+
+
+def test_install_ambiguous_name_errors(manager, tmp_path):
+    manager.add_marketplace(str(_named_market(tmp_path, "market-a", "owner-a/shared")))
+    manager.add_marketplace(str(_named_market(tmp_path, "market-b", "owner-b/shared")))
+
+    message, servers = manager.install_plugin("shared")
+    assert "offered by 2 marketplaces" in message
+    assert servers == []
+
+
 def test_resolve_non_github_git_source_unsupported(manager, tmp_path):
     market = _market_with_plugin(
         tmp_path,

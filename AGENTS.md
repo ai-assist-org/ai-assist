@@ -125,7 +125,9 @@ bundle format (`.claude-plugin/plugin.json` + `skills/*/SKILL.md` + legacy
   source or by name via a registered marketplace (`.claude-plugin/marketplace.json`).
   `update` reinstalls from the recorded source (with rollback on failure);
   marketplace `add` refuses to mask a different registration and accepts a
-  nickname; marketplace `update` refreshes the cached repo. Installing bundled
+  nickname; marketplace `update` refreshes the cached repo. A plugin name
+  offered by several marketplaces is ambiguous: install errors with the
+  candidates, disambiguate with `<name>@<marketplace>`. Installing bundled
   MCP servers prompts for confirmation before connecting.
 - Skills have the same lifecycle: `/skill/install|uninstall|update|list|search`
   (`update` reinstalls, rolling back on failure; ClawHub skills re-pull latest).

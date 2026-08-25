@@ -277,6 +277,37 @@ def test_plugin_install_completion_lists_marketplace_names(tmp_path):
     assert "/plugin/install acme-tools" in commands
 
 
+def test_plugin_install_completion_disambiguates_conflicts(tmp_path):
+    """A plugin name offered by two marketplaces is completed as name@marketplace"""
+    import json
+
+    from ai_assist.plugins_manager import Marketplace
+
+    def _market(dir_name, market_name):
+        manifest_dir = tmp_path / dir_name / ".claude-plugin"
+        manifest_dir.mkdir(parents=True)
+        (manifest_dir / "marketplace.json").write_text(
+            json.dumps(
+                {
+                    "name": market_name,
+                    "plugins": [{"name": "shared", "source": {"source": "github", "repo": f"{market_name}/shared"}}],
+                }
+            )
+        )
+        return Marketplace(
+            name=market_name, source=f"{market_name}/repo", branch="main", cache_path=str(tmp_path / dir_name)
+        )
+
+    agent = _agent()
+    agent.plugins_manager.marketplaces = [_market("a", "market-a"), _market("b", "market-b")]
+    completer = AiAssistCompleter(agent=agent)
+    doc = Document("/plugin/install shared", cursor_position=22)
+    commands = [c.text for c in completer.get_completions(doc, None)]
+    assert "/plugin/install shared@market-a" in commands
+    assert "/plugin/install shared@market-b" in commands
+    assert "/plugin/install shared" not in commands
+
+
 def test_plugin_marketplace_add_completion_lists_well_known():
     """/plugin/marketplace add suggests the well-known public marketplaces"""
     completer = AiAssistCompleter(agent=_agent())
