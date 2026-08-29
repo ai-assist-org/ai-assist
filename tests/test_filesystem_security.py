@@ -1147,6 +1147,26 @@ class TestExtractCommandArgumentPaths:
         assert ("cd", "/etc") in result
         assert ("find", "/var") in result
 
+    def test_find_dot_after_cd(self):
+        """find . after cd should resolve . against the cd target, not process CWD"""
+        result = _extract_command_argument_paths("cd /tmp/workdir && find . -type d")
+        assert ("find", "/tmp/workdir") in result
+
+    def test_find_relative_after_cd(self):
+        """find with relative path after cd resolves against cd target"""
+        result = _extract_command_argument_paths("cd /tmp/foo && find subdir -name '*.txt'")
+        assert ("find", "/tmp/foo/subdir") in result
+
+    def test_find_absolute_after_cd_unchanged(self):
+        """find with absolute path after cd stays absolute"""
+        result = _extract_command_argument_paths("cd /tmp/foo && find /var -name '*.log'")
+        assert ("find", "/var") in result
+
+    def test_find_dot_without_cd(self):
+        """find . without preceding cd is returned as-is"""
+        result = _extract_command_argument_paths("find . -name '*.txt'")
+        assert ("find", ".") in result
+
     def test_python_with_option_flags(self):
         result = _extract_command_argument_paths("python3 -u script.py")
         assert ("python3", "script.py") in result
