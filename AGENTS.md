@@ -708,12 +708,12 @@ async def _connect_server(self, name: str, config: MCPServerConfig):
 #### Type Hints
 
 ```python
-# Always use type hints for better IDE support and documentation
-from typing import Optional, List, Dict
+# Always use type hints for better IDE support and documentation.
+# Prefer builtin generics (list, dict) and `X | None` over typing.Optional/List/Dict.
 
 async def query(self, prompt: str, max_turns: int = 10) -> str:
-    messages: List[Dict[str, str]] = [{"role": "user", "content": prompt}]
-    tool_results: List[Dict] = []
+    messages: list[dict[str, str]] = [{"role": "user", "content": prompt}]
+    tool_results: list[dict] = []
 ```
 
 #### Configuration Validation
@@ -725,7 +725,8 @@ class MyConfig(BaseModel):
     setting: str = Field(default_factory=lambda: os.getenv("MY_SETTING", "default"))
     number: int = Field(default=42, ge=0, le=100)
 
-    @validator("setting")
+    @field_validator("setting")
+    @classmethod
     def validate_setting(cls, v):
         if not v:
             raise ValueError("Setting cannot be empty")
@@ -761,8 +762,8 @@ async def check(self) -> list[dict]:
                 "summary": result,
                 "timestamp": datetime.now().isoformat(),
             })
-        except Exception as e:
-            logger.error(f"Error checking {query_item}: {e}")
+        except Exception:
+            logger.exception(f"Error checking {query_item}")
 
     self.last_check = datetime.now()
     return results

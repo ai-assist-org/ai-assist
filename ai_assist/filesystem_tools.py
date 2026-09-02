@@ -422,6 +422,8 @@ def _extract_command_argument_paths(command: str) -> list[tuple[str, str]]:
 
     segments = _split_shell_commands(stripped)
     results: list[tuple[str, str]] = []
+    # Track cd targets so relative paths in later segments resolve correctly
+    effective_cwd: str | None = None
 
     for segment in segments:
         try:
@@ -447,6 +449,7 @@ def _extract_command_argument_paths(command: str) -> list[tuple[str, str]]:
             target = args[0]
             if target != "-":
                 results.append(("cd", target))
+                effective_cwd = target
 
         elif cmd_name == "find":
             if any(arg in FIND_DANGEROUS_PRIMARIES for arg in args):
@@ -454,7 +457,10 @@ def _extract_command_argument_paths(command: str) -> list[tuple[str, str]]:
             for arg in args:
                 if arg.startswith("-") or arg.startswith("(") or arg == "!":
                     break
-                results.append(("find", arg))
+                path = arg
+                if effective_cwd and not Path(path).is_absolute():
+                    path = str(Path(effective_cwd) / path)
+                results.append(("find", path))
 
         elif cmd_name in PYTHON_COMMANDS:
             i = 0
