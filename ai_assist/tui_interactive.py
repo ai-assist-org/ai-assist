@@ -4,6 +4,8 @@ import asyncio
 import json
 import logging
 import os
+import re
+import shlex
 import sys
 import threading
 from datetime import datetime
@@ -287,6 +289,8 @@ async def handle_skill_management_command(command: str, agent: AiAssistAgent, co
         _handle_skill_install(parts, agent, console)
     elif subcommand == "uninstall":
         _handle_skill_uninstall(parts, agent, console)
+    elif subcommand == "update":
+        _handle_skill_update(parts, agent, console)
     elif subcommand == "list":
         console.print(agent.skills_manager.list_installed())
     elif subcommand == "search":
@@ -300,7 +304,7 @@ async def handle_skill_management_command(command: str, agent: AiAssistAgent, co
     else:
         console.print(f"[yellow]Unknown skill command: {subcommand}[/yellow]")
         console.print(
-            "Available: /skill/install, /skill/uninstall, /skill/list, /skill/search, /skill/add_env, /skill/remove_env, /skill/list_env"
+            "Available: /skill/install, /skill/uninstall, /skill/update, /skill/list, /skill/search, /skill/add_env, /skill/remove_env, /skill/list_env"
         )
 
     return True
@@ -338,6 +342,22 @@ def _handle_skill_uninstall(parts: list[str], agent: AiAssistAgent, console: Con
         console.print(f"[red]{result}[/red]")
     else:
         console.print(f"[green]{result}[/green]")
+
+
+def _handle_skill_update(parts: list[str], agent: AiAssistAgent, console: Console):
+    manager = agent.skills_manager
+    if len(parts) >= 2 and parts[1].strip():
+        names = [parts[1].strip()]
+    else:
+        names = [s.name for s in manager.installed_skills]
+    if not names:
+        console.print("[yellow]No skills installed.[/yellow]")
+        return
+    for name in names:
+        with console.status(f"Updating skill {name}..."):
+            result = manager.update_skill(name)
+        color = "red" if result.startswith("Error") else "green"
+        console.print(f"[{color}]{result}[/{color}]")
 
 
 def _handle_skill_search(parts: list[str], agent: AiAssistAgent, console: Console):
@@ -408,6 +428,178 @@ def _handle_skill_list_env(parts: list[str], agent: AiAssistAgent, console: Cons
     for name, env_vars in config.items():
         if env_vars:
             console.print(f"[bold]{name}[/bold]: {', '.join(env_vars)}")
+
+
+async def handle_plugin_management_command(command: str, agent: AiAssistAgent, console: Console) -> bool:
+    """Handle /plugin/* management commands.
+
+    Returns True if the command was handled.
+    """
+    if not command.startswith("/plugin/"):
+        return False
+
+    parts = command[8:].split(maxsplit=1)  # Remove '/plugin/' prefix
+    if not parts:
+        console.print("[yellow]Usage: /plugin/install <source|name>@<branch> or /plugin/list[/yellow]")
+        return True
+
+    subcommand = parts[0]
+
+    if subcommand == "install":
+        await _handle_plugin_install(parts, agent, console)
+    elif subcommand == "uninstall":
+        await _handle_plugin_uninstall(parts, agent, console)
+    elif subcommand == "update":
+        await _handle_plugin_update(parts, agent, console)
+    elif subcommand == "list":
+        console.print(agent.plugins_manager.list_installed())
+    elif subcommand == "search":
+        _handle_plugin_search(parts, agent, console)
+    elif subcommand == "marketplace":
+        _handle_plugin_marketplace(parts, agent, console)
+    else:
+        console.print(f"[yellow]Unknown plugin command: {subcommand}[/yellow]")
+        console.print(
+            "Available: /plugin/install, /plugin/uninstall, /plugin/update, /plugin/list, /plugin/search, /plugin/marketplace"
+        )
+
+    return True
+
+
+async def _handle_plugin_install(parts: list[str], agent: AiAssistAgent, console: Console):
+    if len(parts) < 2:
+        console.print("[yellow]Usage: /plugin/install <source|name>@<branch>[/yellow]")
+        console.print("Examples:")
+        console.print("  /plugin/install owner/repo@main")
+        console.print("  /plugin/install /path/to/plugin@main")
+        console.print("  /plugin/install my-plugin   (by name from a registered marketplace)")
+        return
+
+    source_spec = parts[1]
+    with console.status(f"Installing plugin from {source_spec}..."):
+        message, server_names = agent.plugins_manager.install_plugin(source_spec)
+
+    if message.startswith("Error"):
+        console.print(f"[red]{message}[/red]")
+        return
+
+    console.print(f"[green]{message}[/green]")
+    await _confirm_and_connect_plugin_servers(agent, console, server_names)
+
+
+async def _confirm_and_connect_plugin_servers(agent: AiAssistAgent, console: Console, server_names: list[str]):
+    """Confirm and connect a plugin's bundled MCP servers (they launch processes)."""
+    if not server_names:
+        return
+
+    console.print(
+        f"[yellow]⚠ This plugin bundles {len(server_names)} MCP server(s) that run external processes:[/yellow]"
+    )
+    for name in server_names:
+        cfg = agent.plugins_manager.plugin_mcp_servers.get(name)
+        detail = cfg.url or f"{cfg.command} {' '.join(cfg.args)}".strip() if cfg else ""
+        console.print(f"  [bold]{name}[/bold]: {detail}")
+
+    try:
+        answer = await asyncio.to_thread(input, "Connect these MCP servers now? [y/N]: ")
+    except EOFError, KeyboardInterrupt:
+        answer = "n"
+
+    if answer.strip().lower() in ("y", "yes"):
+        for name in server_names:
+            agent.config.mcp_servers[name] = agent.plugins_manager.plugin_mcp_servers[name]
+            console.print(f"[cyan]Connecting {name}...[/cyan]")
+            connected = await agent._connect_server(name, agent.config.mcp_servers[name])
+            if connected:
+                tool_count = len([t for t in agent.available_tools if t.get("_server") == name])
+                console.print(f"[green]✓ Connected {name} ({tool_count} tools)[/green]")
+            else:
+                console.print(f"[yellow]{name} did not initialize within timeout[/yellow]")
+    else:
+        console.print("[dim]MCP servers not connected. They will start on the next launch.[/dim]")
+
+
+async def _handle_plugin_uninstall(parts: list[str], agent: AiAssistAgent, console: Console):
+    if len(parts) < 2:
+        console.print("[yellow]Usage: /plugin/uninstall <plugin-name>[/yellow]")
+        return
+
+    plugin_name = parts[1].strip()
+    message, server_names = agent.plugins_manager.uninstall_plugin(plugin_name)
+
+    if message.startswith("Error"):
+        console.print(f"[red]{message}[/red]")
+        return
+
+    for name in server_names:
+        agent._disconnect_server(name)
+        agent.config.mcp_servers.pop(name, None)
+
+    console.print(f"[green]{message}[/green]")
+
+
+async def _handle_plugin_update(parts: list[str], agent: AiAssistAgent, console: Console):
+    manager = agent.plugins_manager
+    if len(parts) >= 2 and parts[1].strip():
+        names = [parts[1].strip()]
+    else:
+        names = [p.name for p in manager.installed_plugins]
+    if not names:
+        console.print("[yellow]No plugins installed.[/yellow]")
+        return
+
+    for name in names:
+        with console.status(f"Updating plugin {name}..."):
+            message, to_disconnect, to_connect = manager.update_plugin(name)
+        color = "red" if message.startswith("Error") else "green"
+        console.print(f"[{color}]{message}[/{color}]")
+        if message.startswith("Error"):
+            continue
+        for server in to_disconnect:
+            agent._disconnect_server(server)
+            agent.config.mcp_servers.pop(server, None)
+        await _confirm_and_connect_plugin_servers(agent, console, to_connect)
+
+
+def _handle_plugin_search(parts: list[str], agent: AiAssistAgent, console: Console):
+    if len(parts) < 2:
+        console.print("[yellow]Usage: /plugin/search <query>[/yellow]")
+        return
+    console.print(agent.plugins_manager.search(parts[1]))
+
+
+def _handle_plugin_marketplace(parts: list[str], agent: AiAssistAgent, console: Console):
+    args = parts[1].split(maxsplit=1) if len(parts) > 1 else []
+    if not args:
+        console.print("[yellow]Usage: /plugin/marketplace <add <repo> | update [name] | list>[/yellow]")
+        return
+
+    action = args[0]
+    if action == "add":
+        if len(args) < 2:
+            console.print("[yellow]Usage: /plugin/marketplace add <owner/repo|/path>@<branch> [nickname][/yellow]")
+            return
+        add_args = args[1].split()
+        source = add_args[0]
+        nickname = add_args[1] if len(add_args) > 1 else None
+        with console.status(f"Adding marketplace {source}..."):
+            result = agent.plugins_manager.add_marketplace(source, nickname)
+        color = "red" if result.startswith("Error") else "green"
+        console.print(f"[{color}]{result}[/{color}]")
+    elif action == "update":
+        names = [args[1]] if len(args) > 1 else [m.name for m in agent.plugins_manager.marketplaces]
+        if not names:
+            console.print("[yellow]No marketplaces registered.[/yellow]")
+            return
+        for name in names:
+            with console.status(f"Updating marketplace {name}..."):
+                result = agent.plugins_manager.update_marketplace(name)
+            color = "red" if result.startswith("Error") else "green"
+            console.print(f"[{color}]{result}[/{color}]")
+    elif action == "list":
+        console.print(agent.plugins_manager.list_marketplaces())
+    else:
+        console.print(f"[yellow]Unknown marketplace action: {action}[/yellow]")
 
 
 async def handle_prompt_command(
@@ -513,6 +705,88 @@ async def handle_prompt_command(
     except Exception as e:
         console.print(f"[red]Error executing prompt: {e}[/red]")
 
+    return True
+
+
+def substitute_skill_args(body: str, args: str) -> str:
+    """Substitute argument placeholders in a skill body.
+
+    - ``$ARGUMENTS`` -> the full raw argument string (verbatim).
+    - ``$1``..``$9`` -> positional args parsed with ``shlex`` so quoted segments
+      stay grouped (e.g. ``"us east"``). Missing positions become empty strings.
+      Falls back to whitespace-split on unbalanced quotes.
+    - If the body has no placeholder and args were given, append them.
+    """
+    try:
+        positional = shlex.split(args)
+    except ValueError:
+        positional = args.split()
+
+    has_placeholder = "$ARGUMENTS" in body or re.search(r"\$[1-9]", body) is not None
+
+    def replace_positional(match: re.Match) -> str:
+        idx = int(match.group(0)[1:])
+        return positional[idx - 1] if idx - 1 < len(positional) else ""
+
+    result = re.sub(r"\$[1-9]", replace_positional, body)
+    result = result.replace("$ARGUMENTS", args)
+
+    if not has_placeholder and args:
+        result = f"{result}\n\nArguments: {args}"
+
+    return result
+
+
+async def handle_skill_invocation(
+    user_input: str,
+    agent: AiAssistAgent,
+    console: Console,
+    conversation_memory: ConversationMemory,
+    kg_context: KnowledgeGraphContext | None,
+) -> bool:
+    """Handle ``/<skill-name> [args]`` as a user-invoked Agent Skill.
+
+    Loads the skill's SKILL.md body, substitutes arguments, and runs it through
+    the normal query path so it executes and streams like any other turn.
+
+    Returns True if the input matched a user-invocable skill (and was run),
+    False otherwise so the caller can fall through to normal handling.
+    """
+    if not user_input.startswith("/"):
+        return False
+
+    parts = user_input[1:].split(maxsplit=1)
+    if not parts:
+        return False
+
+    name = parts[0]
+    args = parts[1] if len(parts) > 1 else ""
+
+    # /server/prompt tokens are handled by handle_prompt_command, not skills
+    if "/" in name:
+        return False
+
+    loaded = agent.skills_manager.loaded_skills
+    skill = loaded.get(name)
+
+    # Bare-name fallback: resolve a unique namespaced plugin skill (plugin:skill)
+    if skill is None and ":" not in name:
+        matches = [key for key in loaded if key.endswith(f":{name}")]
+        if len(matches) == 1:
+            name = matches[0]
+            skill = loaded[name]
+        elif len(matches) > 1:
+            console.print(f"[yellow]Ambiguous skill '{name}'. Matching plugins: {', '.join(matches)}[/yellow]")
+            return True
+
+    if skill is None or not skill.metadata.user_invocable:
+        return False
+
+    prompt_text = substitute_skill_args(skill.body, args)
+    console.print(f"[green]Running skill: {name}[/green]")
+    await query_with_feedback(
+        agent, prompt_text, console, conversation_memory=conversation_memory, kg_context=kg_context
+    )
     return True
 
 
@@ -836,6 +1110,10 @@ async def tui_interactive_mode(agent: AiAssistAgent, state_manager: StateManager
                     if await handle_skill_management_command(user_input, agent, console):
                         continue
 
+                    # Try plugin management commands: /plugin/install, /plugin/list, ...
+                    if await handle_plugin_management_command(user_input, agent, console):
+                        continue
+
                     # Handle /mcp/restart before prompt command (which would parse it as /mcp/restart)
                     if user_input.lower().startswith("/mcp/restart"):
                         parts = user_input.split(maxsplit=1)
@@ -995,7 +1273,7 @@ async def tui_interactive_mode(agent: AiAssistAgent, state_manager: StateManager
                     continue
 
                 if user_input.lower() == "/help":
-                    await handle_help_command(console)
+                    await handle_help_command(console, agent)
                     continue
 
                 if user_input.lower() == "/clear":
@@ -1047,6 +1325,12 @@ async def tui_interactive_mode(agent: AiAssistAgent, state_manager: StateManager
                     await handle_plan_command(
                         task, agent, console, conversation_memory=conversation_memory, kg_context=kg_context
                     )
+                    continue
+
+                # User-invoked Agent Skills: /<skill-name> [args]
+                if await handle_skill_invocation(
+                    user_input, agent, console, conversation_memory=conversation_memory, kg_context=kg_context
+                ):
                     continue
 
                 # Validate command before sending to agent
@@ -1508,7 +1792,7 @@ async def handle_plan_command(
         revision_feedback = choice
 
 
-async def handle_help_command(console: Console):
+async def handle_help_command(console: Console, agent: AiAssistAgent | None = None):
     """Handle /help command"""
     from .commands import get_interactive_commands
 
@@ -1519,6 +1803,16 @@ async def handle_help_command(console: Console):
         arg_display = f" {cmd.args}" if cmd.args else ""
         cmd_lines.append(f"- `{cmd.name}{arg_display}` - {cmd.description}")
     cmd_section = "\n".join(sorted(cmd_lines))
+
+    # List user-invocable installed skills as /<skill-name> commands
+    skill_lines = []
+    if agent is not None:
+        for name, skill in sorted(agent.skills_manager.loaded_skills.items()):
+            if not skill.metadata.user_invocable:
+                continue
+            hint = f" {skill.metadata.argument_hint}" if skill.metadata.argument_hint else ""
+            skill_lines.append(f"- `/{name}{hint}` - {skill.metadata.description}")
+    skill_section = "\n".join(skill_lines) if skill_lines else "- _(none installed)_"
 
     help_text = f"""
 # ai-assist Interactive Mode Help
@@ -1539,6 +1833,23 @@ Install specialized skills from git repositories, local paths, or ClawHub:
 - Uninstall with `/skill/uninstall <skill-name>`
 - Skills are automatically loaded into system prompt
 - Follows agentskills.io specification
+
+### Run a skill as a command
+Type `/<skill-name> [args]` to run an installed skill directly. Arguments fill
+`$ARGUMENTS` (full string) and `$1`, `$2`, ... (quoted segments stay grouped).
+A skill can opt out with `user-invocable: false` in its frontmatter.
+
+Installed skill commands:
+{skill_section}
+
+## Claude Code Plugins 🔌
+Install Claude Code plugins to add their skills and bundled MCP servers:
+- Add a marketplace: `/plugin/marketplace add <owner/repo>`
+- Search: `/plugin/search <query>`
+- Install: `/plugin/install <owner/repo|/path>@<branch>` or `/plugin/install <name>`
+- List / uninstall: `/plugin/list`, `/plugin/uninstall <name>`
+- Plugin skills are namespaced — run them as `/<plugin>:<skill>` (or `/<skill>`
+  when the name is unique). Subagents and hooks are not supported.
 
 ## MCP Prompts 🎯
 Load specialized prompts from MCP servers:

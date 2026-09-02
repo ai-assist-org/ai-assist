@@ -13,7 +13,6 @@ This installs:
 - pytest-cov (coverage; run `make test-cov` or `pytest --cov=ai_assist --cov-report=term`)
 - pre-commit (git hooks)
 - black (code formatting)
-- isort (import sorting)
 - ruff (linting and import sorting)
 
 ### 2. Set Up Pre-commit Hooks
@@ -56,7 +55,7 @@ Run quality checks manually:
 black ai_assist tests
 
 # Sort imports
-isort ai_assist tests
+ruff check --select I --fix ai_assist tests
 
 # Lint code
 ruff check ai_assist tests
@@ -77,7 +76,7 @@ The pre-commit hooks will run automatically when you commit. They include:
 
 ### Formatting
 - **black**: Formats Python code to a consistent style (120 char line length)
-- **ruff**: Linting and import sorting (replaces isort in hooks; see `.pre-commit-config.yaml`)
+- **ruff**: Linting and import sorting (the `I` rule replaces isort; see `.pre-commit-config.yaml`)
 
 ### Linting
 - **ruff**: Fast Python linter (checks for errors, style issues, bugs; also sorts imports)

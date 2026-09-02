@@ -64,6 +64,14 @@ register_command(
 register_command(
     CommandDef("/skill/uninstall", "Uninstall an installed Agent Skill", mode="interactive", args="<name>")
 )
+register_command(
+    CommandDef(
+        "/skill/update",
+        "Reinstall skill(s) from source to pick up upstream changes",
+        mode="interactive",
+        args="[name]",
+    )
+)
 register_command(CommandDef("/skill/list", "List all installed Agent Skills", mode="interactive"))
 register_command(
     CommandDef("/skill/search", "Search ClawHub and skills.sh for skills", mode="interactive", args="<query>")
@@ -75,6 +83,38 @@ register_command(
     CommandDef("/skill/remove_env", "Remove an allowed env var from a skill", mode="interactive", args="<skill> <VAR>")
 )
 register_command(CommandDef("/skill/list_env", "Show allowed env vars for skills", mode="interactive", args="[skill]"))
+
+# --- Plugin management (interactive-only) ---
+
+register_command(
+    CommandDef(
+        "/plugin/install",
+        "Install a Claude Code plugin from git, local path, or marketplace name",
+        mode="interactive",
+        args="<source|name>@<branch>",
+    )
+)
+register_command(CommandDef("/plugin/uninstall", "Uninstall an installed plugin", mode="interactive", args="<name>"))
+register_command(
+    CommandDef(
+        "/plugin/update",
+        "Reinstall plugin(s) from source to pick up upstream changes",
+        mode="interactive",
+        args="[name]",
+    )
+)
+register_command(CommandDef("/plugin/list", "List all installed plugins", mode="interactive"))
+register_command(
+    CommandDef("/plugin/search", "Search registered marketplaces for plugins", mode="interactive", args="<query>")
+)
+register_command(
+    CommandDef(
+        "/plugin/marketplace",
+        "Manage plugin marketplaces (add <repo> [nickname] | update [name] | list)",
+        mode="interactive",
+        args="<add <repo> [nickname]|update [name]|list>",
+    )
+)
 
 # --- MCP management (interactive-only) ---
 

@@ -52,8 +52,8 @@ def test_get_tool_definitions_with_kg(introspection_tools_with_kg):
     """Test tool definitions with KG only"""
     tools_defs = introspection_tools_with_kg.get_tool_definitions()
 
-    # Should have 3 KG tools + 1 MCP prompt inspection tool + 1 get_tool_help + 1 get_skill_help + 1 validate_awl_script + 1 inspect_awl_script + 2 context tools + 2 resource tools
-    assert len(tools_defs) == 12
+    # Should have 3 KG tools + 1 MCP prompt inspection tool + 1 get_tool_help + 1 get_skill_help + 1 list_skills + 1 list_plugins + 1 validate_awl_script + 1 inspect_awl_script + 2 context tools + 2 resource tools
+    assert len(tools_defs) == 14
 
     tool_names = [t["name"] for t in tools_defs]
     assert "introspection__search_knowledge_graph" in tool_names
@@ -71,8 +71,8 @@ def test_get_tool_definitions_with_both(introspection_tools_full):
     """Test tool definitions with both KG and conversation"""
     tools_defs = introspection_tools_full.get_tool_definitions()
 
-    # Should have 3 KG + 1 MCP prompt inspection + 1 conversation + 1 get_tool_help + 1 get_skill_help + 1 validate_awl_script + 1 inspect_awl_script + 2 context tools + 2 resource tools
-    assert len(tools_defs) == 13
+    # Should have 3 KG + 1 MCP prompt inspection + 1 conversation + 1 get_tool_help + 1 get_skill_help + 1 list_skills + 1 list_plugins + 1 validate_awl_script + 1 inspect_awl_script + 2 context tools + 2 resource tools
+    assert len(tools_defs) == 15
 
     tool_names = [t["name"] for t in tools_defs]
     assert "introspection__search_knowledge_graph" in tool_names
@@ -413,6 +413,87 @@ async def test_get_skill_help_via_execute_tool():
     result = await tools.execute_tool("get_skill_help", {"skill_name": "nonexistent"})
     data = json.loads(result)
     assert "error" in data
+
+
+def test_list_skills_tools_always_present():
+    """list_skills and list_plugins appear in tool definitions"""
+    names = [t["name"] for t in IntrospectionTools(agent=None).get_tool_definitions()]
+    assert "introspection__list_skills" in names
+    assert "introspection__list_plugins" in names
+
+
+def test_list_skills_are_readonly():
+    """The listing tools are read-only"""
+    tools = {t["name"]: t for t in IntrospectionTools(agent=None).get_tool_definitions()}
+    assert tools["introspection__list_skills"]["_readonly"] is True
+    assert tools["introspection__list_plugins"]["_readonly"] is True
+
+
+def test_list_skills_returns_installed():
+    """list_skills reports installed skills with descriptions"""
+    from unittest.mock import MagicMock
+
+    content = MagicMock()
+    content.metadata.description = "A test skill"
+    content.scripts = {}
+
+    agent = MagicMock()
+    agent.skills_manager.loaded_skills = {"hello": content}
+
+    tools = IntrospectionTools(agent=agent)
+    data = json.loads(tools._list_skills({}))
+    assert data["count"] == 1
+    assert data["skills"][0]["name"] == "hello"
+    assert data["skills"][0]["description"] == "A test skill"
+    assert data["skills"][0]["has_scripts"] is False
+
+
+def test_list_skills_no_agent():
+    """list_skills errors without an agent reference"""
+    data = json.loads(IntrospectionTools(agent=None)._list_skills({}))
+    assert "error" in data
+
+
+def test_list_plugins_returns_installed():
+    """list_plugins reports installed plugins, their skills and MCP servers"""
+    from unittest.mock import MagicMock
+
+    plugin = MagicMock()
+    plugin.name = "acme"
+    plugin.source = "owner/acme"
+    plugin.branch = "main"
+    plugin.skill_keys = ["acme:review"]
+    plugin.mcp_server_names = ["acme__srv"]
+
+    agent = MagicMock()
+    agent.plugins_manager.installed_plugins = [plugin]
+
+    tools = IntrospectionTools(agent=agent)
+    data = json.loads(tools._list_plugins({}))
+    assert data["count"] == 1
+    assert data["plugins"][0]["name"] == "acme"
+    assert data["plugins"][0]["source"] == "owner/acme@main"
+    assert data["plugins"][0]["skills"] == ["review"]
+    assert data["plugins"][0]["mcp_servers"] == ["acme__srv"]
+
+
+def test_list_plugins_no_agent():
+    """list_plugins errors without an agent reference"""
+    data = json.loads(IntrospectionTools(agent=None)._list_plugins({}))
+    assert "error" in data
+
+
+@pytest.mark.asyncio
+async def test_list_skills_via_execute_tool():
+    """list_skills is routable via execute_tool"""
+    from unittest.mock import MagicMock
+
+    agent = MagicMock()
+    agent.skills_manager.loaded_skills = {}
+
+    tools = IntrospectionTools(agent=agent)
+    data = json.loads(await tools.execute_tool("list_skills", {}))
+    assert data["count"] == 0
 
 
 # --- AWL script validation tests ---

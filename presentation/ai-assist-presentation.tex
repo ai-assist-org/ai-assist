@@ -69,7 +69,7 @@
 \title{ai-assist}
 \subtitle{An AI-Powered Assistant for Engineering Teams}
 \author{Fr\'ed\'eric Lepied\\{\small Senior Manager -- Telco Partner CI}}
-\date{July 2026}
+\date{August 2026}
 \institute{Red Hat}
 
 % ══════════════════════════════════════════════════════════════════
@@ -461,6 +461,7 @@ servers:
   \item Skills = specialized instructions in \texttt{SKILL.md}
   \item Install from Git repos, local paths, or registries
   \item Progressive disclosure (summary in prompt, details on demand)
+  \item Model-invoked \emph{or} run directly as \texttt{/<skill-name>}
   \item Optional sandboxed script execution
   \item Hot-reloaded on file change
 \end{itemize}
@@ -472,6 +473,7 @@ servers:
 /skill/search "data analysis"
 /skill/add_env pdf MY_API_KEY
 /skill/uninstall pdf
+/pdf report.pdf   # run a skill directly
 \end{lstlisting}
 
 \smallskip
@@ -482,6 +484,36 @@ description: Read and analyze PDFs
 ---
 Instructions for Claude go here.
 When asked to read a PDF...
+\end{lstlisting}
+\end{column}
+\end{columns}
+\end{frame}
+
+% ── Claude Code Plugins ──────────────────────────────────────────
+\begin{frame}[fragile]{Claude Code Plugin Compatibility}
+\begin{columns}[T]
+\begin{column}{0.48\textwidth}
+\begin{itemize}
+  \item Install \textbf{Claude Code plugins} directly
+  \item Loads bundled skills, legacy commands, and MCP servers
+  \item Namespaced as \texttt{/plugin:skill} (bare name when unique)
+  \item Discover via a \textbf{marketplace} index (nicknames supported)
+  \item \texttt{update} reinstalls skills/plugins (rollback on failure)
+  \item Bundled MCP servers \alert{require confirmation} before connecting
+  \item Agent gets \textbf{read-only} introspection; changes stay human-driven
+  \item \texttt{agents/} and \texttt{hooks/} are skipped (no equivalent)
+\end{itemize}
+\end{column}
+\begin{column}{0.48\textwidth}
+\begin{lstlisting}[style=code,language=bash,basicstyle=\ttfamily\tiny,title={\scriptsize Plugin Management}]
+/plugin/marketplace add owner/market@main redhat
+/plugin/marketplace update redhat
+/plugin/search review
+/plugin/install acme          # by name
+/plugin/update acme           # reinstall latest
+/plugin/list
+/plugin/uninstall acme
+/acme:review src/   # run a plugin skill
 \end{lstlisting}
 \end{column}
 \end{columns}
@@ -551,6 +583,7 @@ Skills are \alert{untrusted code} --- defense in depth:
   \item \texttt{/history} --- recent monitoring history
   \item \texttt{/prompts} --- list MCP prompts
   \item \texttt{/skill/install}, \texttt{/skill/list}
+  \item \texttt{/<skill-name>} --- run an installed skill
   \item \texttt{/plan <task>} --- plan before acting
   \item \texttt{/clear-cache} --- reset cached data
   \item \texttt{/clear}, \texttt{/help}, \texttt{/exit}

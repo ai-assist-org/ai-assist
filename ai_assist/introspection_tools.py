@@ -493,6 +493,43 @@ After the loop, `results` is a list of dicts from each successful iteration.
             }
         )
 
+        # List installed skills — always available (read-only)
+        tools.append(
+            {
+                "name": "introspection__list_skills",
+                "_readonly": True,
+                "description": (
+                    "List installed Agent Skills (including those bundled by plugins) with their "
+                    "names and descriptions. Use introspection__get_skill_help for a skill's full body."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {},
+                    "required": [],
+                },
+                "_server": "introspection",
+            }
+        )
+
+        # List installed plugins — always available (read-only)
+        tools.append(
+            {
+                "name": "introspection__list_plugins",
+                "_readonly": True,
+                "description": (
+                    "List installed Claude Code plugins with their source, bundled skills, and MCP "
+                    "servers. The user manages plugins with /plugin/install, /plugin/update, and "
+                    "/plugin/uninstall."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {},
+                    "required": [],
+                },
+                "_server": "introspection",
+            }
+        )
+
         # AWL script inspection tool — always available
         tools.append(
             {
@@ -637,6 +674,8 @@ Do NOT compact if you still need the old tool results for your current task.
             "validate_awl_script": self._validate_awl_script,
             "get_tool_help": self._get_tool_help,
             "get_skill_help": self._get_skill_help,
+            "list_skills": self._list_skills,
+            "list_plugins": self._list_plugins,
             "get_context_usage": self._get_context_usage,
             "compact_conversation": self._compact_conversation,
             "list_mcp_resources": self._list_mcp_resources,
@@ -1070,6 +1109,45 @@ Do NOT compact if you still need the old tool results for your current task.
             result,
             indent=2,
         )
+
+    def _list_skills(self, arguments: dict) -> str:
+        """Return the installed Agent Skills (read-only introspection).
+
+        Returns:
+            JSON string with a list of {name, description, has_scripts}.
+        """
+        if not self.agent:
+            return json.dumps({"error": "Agent reference not available"})
+
+        skills = [
+            {
+                "name": name,
+                "description": content.metadata.description,
+                "has_scripts": bool(content.scripts),
+            }
+            for name, content in self.agent.skills_manager.loaded_skills.items()
+        ]
+        return json.dumps({"count": len(skills), "skills": skills}, indent=2)
+
+    def _list_plugins(self, arguments: dict) -> str:
+        """Return the installed plugins (read-only introspection).
+
+        Returns:
+            JSON string with a list of {name, source, skills, mcp_servers}.
+        """
+        if not self.agent or not hasattr(self.agent, "plugins_manager"):
+            return json.dumps({"error": "Plugins are not available"})
+
+        plugins = [
+            {
+                "name": plugin.name,
+                "source": f"{plugin.source}@{plugin.branch}",
+                "skills": [key.split(":", 1)[1] for key in plugin.skill_keys],
+                "mcp_servers": plugin.mcp_server_names,
+            }
+            for plugin in self.agent.plugins_manager.installed_plugins
+        ]
+        return json.dumps({"count": len(plugins), "plugins": plugins}, indent=2)
 
     def _get_context_usage(self, arguments: dict) -> str:
         """Return current context window usage statistics.

@@ -92,7 +92,12 @@ Files: `knowledge_graph.py`, `kg_queries.py`, `kg_query_tools.py`, `knowledge_to
 Skills follow the [agentskills.io](https://agentskills.io) specification:
 - SKILL.md with YAML frontmatter (name, description, allowed-tools)
 - Optional scripts/ directory for sandboxed execution
-- Loaded into system prompt automatically
+- Loaded into system prompt automatically (model-invoked)
+- User-invocable as `/<skill-name> [args]` in interactive mode; the SKILL.md
+  body is run as a query with `$ARGUMENTS`/`$1` substitution (quoted segments
+  stay grouped). Opt out with `user-invocable: false`. Built-in commands take
+  precedence over same-named skills. Handled by `handle_skill_invocation`
+  (`tui_interactive.py`).
 
 **Script Execution Security** (disabled by default):
 - Requires `AI_ASSIST_ALLOW_SCRIPT_EXECUTION=true`
@@ -100,6 +105,38 @@ Skills follow the [agentskills.io](https://agentskills.io) specification:
 - Per-skill env var allowlist via `/skill/add_env` (persisted in `~/.ai-assist/skill_env.json`)
 
 Files: `skills_loader.py`, `skills_manager.py`, `script_execution_tools.py`, `security.py`
+
+### Claude Code Plugins
+
+Loads a subset of the [Claude Code plugin](https://docs.claude.com/en/docs/claude-code/plugins)
+bundle format (`.claude-plugin/plugin.json` + `skills/*/SKILL.md` + legacy
+`commands/*.md` + `.mcp.json`):
+- Plugin skills/commands are registered into the shared
+  `skills_manager.loaded_skills` dict under **namespaced keys** (`plugin:skill`),
+  so every skill consumer (system prompt, completion, `/help`, invocation) works
+  unchanged. Namespacing lives at the registry-key layer only, never in
+  `SkillMetadata.name`.
+- Bundled MCP servers (`.mcp.json`) are namespaced (`plugin__server`) and merged
+  into `config.mcp_servers`; kept in `plugins_manager.plugin_mcp_servers` and
+  re-merged after any `reload_mcp_servers()` / skills reload so they survive.
+- `agents/` (subagents) and `hooks/` are **not** supported — skipped with a notice.
+- Commands: `/plugin/install|uninstall|update|list|search`,
+  `/plugin/marketplace add [nickname]|update [name]|list`. Install by git/local
+  source or by name via a registered marketplace (`.claude-plugin/marketplace.json`).
+  `update` reinstalls from the recorded source (with rollback on failure);
+  marketplace `add` refuses to mask a different registration and accepts a
+  nickname; marketplace `update` refreshes the cached repo. A plugin name
+  offered by several marketplaces is ambiguous: install errors with the
+  candidates, disambiguate with `<name>@<marketplace>`. Installing bundled
+  MCP servers prompts for confirmation before connecting.
+- Skills have the same lifecycle: `/skill/install|uninstall|update|list|search`
+  (`update` reinstalls, rolling back on failure; ClawHub skills re-pull latest).
+- The agent gets **read-only** introspection over installed skills/plugins via
+  `introspection__list_skills` / `introspection__list_plugins`; install/update/
+  uninstall stay human-driven slash commands (no agent write tools).
+- User docs in `docs/PLUGINS.md`.
+
+Files: `plugins_loader.py`, `plugins_manager.py`, `skills_manager.py`
 
 ### Service Management
 
@@ -787,6 +824,7 @@ ai_assist/
 ├── knowledge_graph.py         # Temporal KG database
 ├── embedding.py, context.py   # Vector embeddings and semantic search
 ├── skills_*.py                # Agent Skills loader and manager
+├── plugins_*.py               # Claude Code plugin loader and manager
 ├── plan_mode.py               # Plan mode (explore → approve → execute)
 ├── tui*.py                    # Terminal UI components
 ├── monitors.py, tasks.py      # Monitoring and task execution
@@ -829,6 +867,7 @@ emacs/                         # AWL major mode for Emacs
 Detailed documentation in `docs/`:
 - `AWL_SPECIFICATIONS.md` - Complete AWL syntax and semantics
 - `PERSONAL_SKILLS.md` - Creating custom Agent Skills
+- `PLUGINS.md` - Installing Claude Code plugins (skills + MCP + marketplace)
 - `IDENTITY.md` - identity.yaml configuration guide
 - `MULTI_INSTANCE.md` - Running multiple ai-assist instances
 - `KNOWLEDGE_MANAGEMENT.md` - Knowledge graph usage and synthesis
@@ -858,7 +897,7 @@ Also see:
 2. Register in `agent.py`: import, init, tool registration, dispatch chain
 3. Write tests in `tests/test_*_tools.py`
 4. Update README.md if user-facing
-5. Update presentation if appropriate
+5. Update presentation if appropriate (update `\date{...}` to the current month and year, rebuild with `make -C presentation`)
 
 ### Adding a New MCP Server
 

@@ -160,11 +160,19 @@ uv run ai-assist
 - `/prompt-info <server/prompt>` - Show detailed prompt info
 - `/skill/install <source>@<branch>` - Install an Agent Skill
 - `/skill/uninstall <name>` - Uninstall an Agent Skill
+- `/skill/update [name]` - Reinstall skill(s) from source (all if name omitted)
 - `/skill/list` - List installed Agent Skills
 - `/skill/search <query>` - Search ClawHub and skills.sh registries
 - `/skill/add_env <skill> <VAR>` - Allow an environment variable for a skill's scripts
 - `/skill/remove_env <skill> <VAR>` - Remove an allowed env var from a skill
 - `/skill/list_env [skill]` - Show allowed env vars for skills
+- `/<skill-name> [args]` - Run an installed skill directly (e.g. `/pdf report.pdf`)
+- `/plugin/install <source|name>@<branch>` - Install a Claude Code plugin
+- `/plugin/uninstall <name>` - Uninstall a plugin
+- `/plugin/update [name]` - Reinstall plugin(s) from source (all if name omitted)
+- `/plugin/list` - List installed plugins
+- `/plugin/search <query>` - Search registered marketplaces for plugins
+- `/plugin/marketplace <add <repo> [nickname]|update [name]|list>` - Manage plugin marketplaces
 - `/eval-stats` - Show evaluation metrics from query traces
 - `/cost [period]` - Show token cost summary (e.g. `/cost 7d`, `/cost 30d`)
 - `/plan <task>` - Plan a task before executing (explore → approve → execute)
@@ -221,8 +229,45 @@ Install specialized skills following the [agentskills.io](https://agentskills.io
 - Automatically loaded into system prompt (no activation needed)
 - Can include scripts, references, and assets
 
+**Running a skill as a command:**
+
+Any installed skill can be invoked directly by typing `/<skill-name> [args]`:
+
+```bash
+/pdf report.pdf                 # Run the "pdf" skill with an argument
+/deploy "us east" v2           # Quoted segments stay grouped
+```
+
+Arguments fill `$ARGUMENTS` (full string) and `$1`, `$2`, ... in the skill body.
+Built-in commands take precedence over a skill of the same name. A skill can opt
+out with `user-invocable: false` in its frontmatter. Type `/` and press Tab to
+see installed skill commands.
+
 📖 **Creating personal skills:** See [docs/PERSONAL_SKILLS.md](docs/PERSONAL_SKILLS.md)
 - Persistent across sessions
+
+### Claude Code Plugins
+
+ai-assist can install [Claude Code plugins](https://docs.claude.com/en/docs/claude-code/plugins)
+to add their bundled Agent Skills and MCP servers, optionally discovered through a
+marketplace:
+
+```bash
+/plugin/marketplace add owner/marketplace-repo   # Register a marketplace
+/plugin/search review                             # Find plugins by name/description
+/plugin/install owner/repo@main                   # Install directly from git
+/plugin/install my-plugin                          # ...or by name from a marketplace
+/plugin/list                                       # List installed plugins
+/plugin/uninstall my-plugin                        # Remove a plugin
+```
+
+A plugin's skills are namespaced and run as `/<plugin>:<skill>` (or `/<skill>`
+when the short name is unique). Bundled MCP servers are merged into ai-assist's
+MCP configuration; you are asked to confirm before their processes are launched.
+
+**Not supported:** plugin `agents/` (subagents) and `hooks/` have no equivalent in
+ai-assist and are skipped with a notice. See [docs/PLUGINS.md](docs/PLUGINS.md) for
+details.
 
 **Example skills:**
 - PDF processing (extract text, fill forms, merge)
@@ -839,6 +884,7 @@ ai-assist/
 
 - **[docs/AWL_SPECIFICATIONS.md](docs/AWL_SPECIFICATIONS.md)** - AWL (Agent Workflow Language) specification
 - **[docs/PERSONAL_SKILLS.md](docs/PERSONAL_SKILLS.md)** - Creating and managing personal Agent Skills
+- **[docs/PLUGINS.md](docs/PLUGINS.md)** - Installing Claude Code plugins (skills + MCP + marketplace)
 - **[docs/IDENTITY.md](docs/IDENTITY.md)** - Complete guide to identity.yaml configuration
 - **[docs/LOGGING.md](docs/LOGGING.md)** - Logging configuration and troubleshooting
 - **[docs/MULTI_INSTANCE.md](docs/MULTI_INSTANCE.md)** - Running multiple ai-assist instances

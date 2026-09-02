@@ -214,6 +214,33 @@ class SkillsManager:
 
         return f"Skill '{skill_name}' uninstalled successfully"
 
+    def update_skill(self, skill_name: str) -> str:
+        """Reinstall a skill from its recorded source to pick up upstream changes.
+
+        Rolls back to the previous installation if the reinstall fails.
+        """
+        existing = next((s for s in self.installed_skills if s.name == skill_name), None)
+        if not existing:
+            return f"Error: Skill '{skill_name}' is not installed"
+
+        prev_content = self.loaded_skills.get(skill_name)
+        # ClawHub skills update to the latest version (drop the pinned version).
+        if existing.source_type == "clawhub":
+            source_spec = existing.source
+        else:
+            source_spec = f"{existing.source}@{existing.branch}"
+
+        self.uninstall_skill(skill_name)
+        result = self.install_skill(source_spec)
+        if result.startswith("Error"):
+            # Restore the previous installation so a failed update is not destructive.
+            self.installed_skills.append(existing)
+            if prev_content is not None:
+                self.loaded_skills[skill_name] = prev_content
+            self._save_installed_skills()
+            return f"Error: Update of '{skill_name}' failed, kept previous version. {result}"
+        return f"Skill '{skill_name}' updated (reinstalled from {source_spec})"
+
     def list_installed(self) -> str:
         """Return formatted list of installed skills"""
         if not self.installed_skills:
