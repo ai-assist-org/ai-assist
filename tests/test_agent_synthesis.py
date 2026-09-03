@@ -13,6 +13,15 @@ from ai_assist.knowledge_graph import KnowledgeGraph
 from ai_assist.report_tools import ReportTools
 
 
+def _mock_stream_message(response):
+    """Mimic ``client.messages.stream(...)`` as a context manager whose
+    ``get_final_message()`` returns ``response`` (matches the streaming call
+    now used in production)."""
+    cm = MagicMock()
+    cm.__enter__.return_value.get_final_message.return_value = response
+    return cm
+
+
 @pytest.fixture
 def kg():
     """Create in-memory knowledge graph"""
@@ -77,7 +86,7 @@ class TestSynthesisEngine:
             )
         ]
 
-        with patch.object(agent.anthropic.messages, "create", return_value=mock_response):
+        with patch.object(agent.anthropic.messages, "stream", return_value=_mock_stream_message(mock_response)):
             await agent._run_synthesis(conversation, focus="preferences")
 
         results = agent.knowledge_graph.search_knowledge(entity_type="user_preference")
@@ -106,7 +115,7 @@ class TestSynthesisEngine:
             )
         ]
 
-        with patch.object(agent.anthropic.messages, "create", return_value=mock_response):
+        with patch.object(agent.anthropic.messages, "stream", return_value=_mock_stream_message(mock_response)):
             await agent._run_synthesis(conversation, focus="lessons")
 
         results = agent.knowledge_graph.search_knowledge(entity_type="lesson_learned")
@@ -119,7 +128,7 @@ class TestSynthesisEngine:
         mock_response = MagicMock()
         mock_response.content = [MagicMock(text=json.dumps({"insights": []}))]
 
-        with patch.object(agent.anthropic.messages, "create", return_value=mock_response):
+        with patch.object(agent.anthropic.messages, "stream", return_value=_mock_stream_message(mock_response)):
             await agent._run_synthesis(conversation, focus="all")
 
         results = agent.knowledge_graph.search_knowledge()
@@ -131,7 +140,7 @@ class TestSynthesisEngine:
         mock_response = MagicMock()
         mock_response.content = [MagicMock(text="Not valid JSON")]
 
-        with patch.object(agent.anthropic.messages, "create", return_value=mock_response):
+        with patch.object(agent.anthropic.messages, "stream", return_value=_mock_stream_message(mock_response)):
             await agent._run_synthesis(conversation, focus="all")
 
         results = agent.knowledge_graph.search_knowledge()
@@ -147,7 +156,7 @@ class TestSynthesisEngine:
             )
         ]
 
-        with patch.object(agent.anthropic.messages, "create", return_value=mock_response):
+        with patch.object(agent.anthropic.messages, "stream", return_value=_mock_stream_message(mock_response)):
             await agent._run_synthesis(conversation, focus="all")
 
         results = agent.knowledge_graph.search_knowledge()
@@ -193,7 +202,7 @@ class TestSynthesisIntegration:
             )
         ]
 
-        with patch.object(agent.anthropic.messages, "create", return_value=mock_response):
+        with patch.object(agent.anthropic.messages, "stream", return_value=_mock_stream_message(mock_response)):
             await agent.check_and_run_synthesis(conversation)
 
         assert agent._pending_synthesis is None
@@ -234,7 +243,7 @@ class TestSynthesisFromKG:
             )
         ]
 
-        with patch.object(agent.anthropic.messages, "create", return_value=mock_response):
+        with patch.object(agent.anthropic.messages, "stream", return_value=_mock_stream_message(mock_response)):
             await agent._run_synthesis_from_kg()
 
         results = kg.search_knowledge(entity_type="user_preference")
@@ -281,11 +290,13 @@ class TestSynthesisFromKG:
             )
         ]
 
-        with patch.object(agent.anthropic.messages, "create", return_value=mock_response) as mock_create:
+        with patch.object(
+            agent.anthropic.messages, "stream", return_value=_mock_stream_message(mock_response)
+        ) as mock_stream:
             await agent._run_synthesis_from_kg(hours=24)
 
         # The LLM should only have been called with the recent conversation
-        call_args = mock_create.call_args
+        call_args = mock_stream.call_args
         prompt_text = call_args[1]["messages"][0]["content"]
         assert "dark mode" in prompt_text
         assert "Jenkins" not in prompt_text
@@ -327,12 +338,14 @@ class TestSynthesisFromKG:
             mock_response = MagicMock()
             mock_response.content = [MagicMock(text=json.dumps({"connections": []}))]
 
-            with patch.object(agent.anthropic.messages, "create", return_value=mock_response) as mock_create:
+            with patch.object(
+                agent.anthropic.messages, "stream", return_value=_mock_stream_message(mock_response)
+            ) as mock_stream:
                 with patch.object(agent, "_gather_recent_reports", return_value="Report content here"):
                     await agent._run_synthesis_from_kg()
 
             # LLM should have been called for connection discovery
-            assert mock_create.called
+            assert mock_stream.called
 
         # A synthesis_marker should have been created
         markers = kg.query_as_of(now + timedelta(seconds=10), entity_type="synthesis_marker")
@@ -355,11 +368,11 @@ class TestSynthesisFromKG:
 
         # Mock _get_report_snapshots to return same snapshots (no change)
         with patch.object(agent, "_get_report_snapshots", return_value={"existing_report.md": "2026-02-25T08:00:00"}):
-            with patch.object(agent.anthropic.messages, "create") as mock_create:
+            with patch.object(agent.anthropic.messages, "stream") as mock_stream:
                 result = await agent._run_synthesis_from_kg()
 
             # No LLM calls should have been made
-            mock_create.assert_not_called()
+            mock_stream.assert_not_called()
 
         assert "No new conversations" in result
 
@@ -380,7 +393,7 @@ class TestSynthesisFromKG:
         mock_response.content = [MagicMock(text=json.dumps({"insights": []}))]
 
         # First synthesis processes the first conversation
-        with patch.object(agent.anthropic.messages, "create", return_value=mock_response):
+        with patch.object(agent.anthropic.messages, "stream", return_value=_mock_stream_message(mock_response)):
             await agent._run_synthesis_from_kg()
 
         # Verify synthesis_marker was created
@@ -401,11 +414,13 @@ class TestSynthesisFromKG:
         )
 
         # Run synthesis again — marker cutoff should exclude the first conversation
-        with patch.object(agent.anthropic.messages, "create", return_value=mock_response) as mock_create:
+        with patch.object(
+            agent.anthropic.messages, "stream", return_value=_mock_stream_message(mock_response)
+        ) as mock_stream:
             await agent._run_synthesis_from_kg()
 
         # Should only include the second conversation (first already synthesized)
-        call_args = mock_create.call_args
+        call_args = mock_stream.call_args
         prompt_text = call_args[1]["messages"][0]["content"]
         assert "Second question" in prompt_text
         assert "First question" not in prompt_text
