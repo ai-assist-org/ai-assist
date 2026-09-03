@@ -2006,24 +2006,16 @@ class AiAssistAgent:
 
             # Call Claude API with error handling
             try:
-                # Use streaming for large max_tokens to avoid HTTP timeouts
-                if max_tokens > 8192:
-                    with self.anthropic.messages.stream(
-                        model=self.config.model,
-                        max_tokens=max_tokens,
-                        system=system_prompt,
-                        tools=api_tools,  # type: ignore[arg-type]
-                        messages=messages,  # type: ignore[arg-type]
-                    ) as stream:
-                        response = stream.get_final_message()
-                else:
-                    response = self.anthropic.messages.create(  # type: ignore[assignment]
-                        model=self.config.model,
-                        max_tokens=max_tokens,
-                        system=system_prompt,
-                        tools=api_tools,  # type: ignore[arg-type]
-                        messages=messages,  # type: ignore[arg-type]
-                    )
+                # Always stream: avoids HTTP timeouts on large max_tokens and
+                # supports SSE-only endpoints (e.g. ChatGPT via LiteLLM).
+                with self.anthropic.messages.stream(
+                    model=self.config.model,
+                    max_tokens=max_tokens,
+                    system=system_prompt,
+                    tools=api_tools,  # type: ignore[arg-type]
+                    messages=messages,  # type: ignore[arg-type]
+                ) as stream:
+                    response = stream.get_final_message()
             except BadRequestError as e:
                 # Context limit or invalid request - return error to agent
                 error_msg = str(e)
@@ -3355,11 +3347,12 @@ class AiAssistAgent:
         )
 
         try:
-            response = self.anthropic.messages.create(
+            with self.anthropic.messages.stream(
                 model=self._model_for("synthesis"),
                 max_tokens=2000,
                 messages=[{"role": "user", "content": synthesis_prompt}],
-            )
+            ) as stream:
+                response = stream.get_final_message()
             self._track_token_usage(response, turn=-1)
 
             first_block = response.content[0]
@@ -3465,11 +3458,12 @@ class AiAssistAgent:
             )
 
             try:
-                response = self.anthropic.messages.create(
+                with self.anthropic.messages.stream(
                     model=self._model_for("synthesis"),
                     max_tokens=4096,
                     messages=[{"role": "user", "content": synthesis_prompt}],
-                )
+                ) as stream:
+                    response = stream.get_final_message()
                 self._track_token_usage(response, turn=-1)
 
                 first_block = response.content[0]
@@ -3672,11 +3666,12 @@ class AiAssistAgent:
         )
 
         try:
-            response = self.anthropic.messages.create(
+            with self.anthropic.messages.stream(
                 model=self._model_for("synthesis"),
                 max_tokens=8000,
                 messages=[{"role": "user", "content": prompt}],
-            )
+            ) as stream:
+                response = stream.get_final_message()
             self._track_token_usage(response, turn=-1)
 
             first_block = response.content[0]

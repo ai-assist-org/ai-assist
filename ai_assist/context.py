@@ -119,7 +119,7 @@ class ConversationMemory:
         )
 
         try:
-            response = anthropic_client.messages.create(
+            with anthropic_client.messages.stream(
                 model=model,
                 max_tokens=1024,
                 messages=[
@@ -128,7 +128,8 @@ class ConversationMemory:
                         "content": f"{compaction_prompt}\n\n{history_text}",
                     }
                 ],
-            )
+            ) as stream:
+                response = stream.get_final_message()
 
             summary_text = ""
             for block in response.content:

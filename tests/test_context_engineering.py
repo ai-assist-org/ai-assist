@@ -9,6 +9,15 @@ from ai_assist.config import AiAssistConfig
 from ai_assist.context import ConversationMemory
 
 
+def _mock_stream_message(response):
+    """Mimic ``client.messages.stream(...)`` as a context manager whose
+    ``get_final_message()`` returns ``response`` (matches the streaming call
+    now used in production)."""
+    cm = MagicMock()
+    cm.__enter__.return_value.get_final_message.return_value = response
+    return cm
+
+
 class TestTokenBudgetMonitoring:
     """Tests for token usage tracking"""
 
@@ -325,7 +334,7 @@ class TestConversationCompaction:
         mem.add_exchange("q2", "a2")
         mock_client = MagicMock()
         assert mem.compact(mock_client, "test-model", keep_recent=4) is False
-        mock_client.messages.create.assert_not_called()
+        mock_client.messages.stream.assert_not_called()
 
     def test_compact_success(self):
         """Successful compaction replaces old exchanges with summary"""
@@ -339,7 +348,7 @@ class TestConversationCompaction:
         mock_block.text = "Summary: 8 exchanges about various questions."
         mock_response.content = [mock_block]
         mock_client = MagicMock()
-        mock_client.messages.create.return_value = mock_response
+        mock_client.messages.stream.return_value = _mock_stream_message(mock_response)
 
         result = mem.compact(mock_client, "test-model", keep_recent=4)
 
@@ -359,7 +368,7 @@ class TestConversationCompaction:
             mem.add_exchange(f"q{i}", f"a{i}")
 
         mock_client = MagicMock()
-        mock_client.messages.create.side_effect = Exception("API error")
+        mock_client.messages.stream.side_effect = Exception("API error")
 
         result = mem.compact(mock_client, "test-model", keep_recent=4)
 
@@ -378,7 +387,7 @@ class TestConversationCompaction:
         mock_block.text = "   "  # Whitespace-only
         mock_response.content = [mock_block]
         mock_client = MagicMock()
-        mock_client.messages.create.return_value = mock_response
+        mock_client.messages.stream.return_value = _mock_stream_message(mock_response)
 
         result = mem.compact(mock_client, "test-model", keep_recent=4)
 
@@ -537,7 +546,10 @@ class TestToolResultCache:
         mock_response_2.usage = make_usage_mock()
 
         agent.anthropic = MagicMock()
-        agent.anthropic.messages.create.side_effect = [mock_response_1, mock_response_2]
+        agent.anthropic.messages.stream.side_effect = [
+            _mock_stream_message(mock_response_1),
+            _mock_stream_message(mock_response_2),
+        ]
 
         execute_call_count = 0
 

@@ -12,6 +12,15 @@ from ai_assist.knowledge_graph import KnowledgeGraph
 from ai_assist.report_tools import ReportTools
 
 
+def _mock_stream_message(response):
+    """Mimic ``client.messages.stream(...)`` as a context manager whose
+    ``get_final_message()`` returns ``response`` (matches the streaming call
+    now used in production)."""
+    cm = MagicMock()
+    cm.__enter__.return_value.get_final_message.return_value = response
+    return cm
+
+
 @pytest.fixture
 def kg():
     """Create in-memory knowledge graph"""
@@ -69,7 +78,7 @@ class TestConnectionDiscovery:
             )
         ]
 
-        with patch.object(agent.anthropic.messages, "create", return_value=mock_response):
+        with patch.object(agent.anthropic.messages, "stream", return_value=_mock_stream_message(mock_response)):
             result = await agent._run_connection_discovery()
 
         assert "Created 1" in result
@@ -110,7 +119,7 @@ class TestConnectionDiscovery:
             )
         ]
 
-        with patch.object(agent.anthropic.messages, "create", return_value=mock_response):
+        with patch.object(agent.anthropic.messages, "stream", return_value=_mock_stream_message(mock_response)):
             result = await agent._run_connection_discovery()
 
         assert "Created 0" in result
@@ -140,7 +149,7 @@ class TestConnectionDiscovery:
             )
         ]
 
-        with patch.object(agent.anthropic.messages, "create", return_value=mock_response):
+        with patch.object(agent.anthropic.messages, "stream", return_value=_mock_stream_message(mock_response)):
             result = await agent._run_connection_discovery()
 
         assert "Created 0" in result
@@ -164,10 +173,12 @@ class TestConnectionDiscovery:
         mock_response = MagicMock()
         mock_response.content = [MagicMock(text=json.dumps({"connections": []}))]
 
-        with patch.object(agent.anthropic.messages, "create", return_value=mock_response) as mock_create:
+        with patch.object(
+            agent.anthropic.messages, "stream", return_value=_mock_stream_message(mock_response)
+        ) as mock_stream:
             await agent._run_connection_discovery()
 
-        call_args = mock_create.call_args
+        call_args = mock_stream.call_args
         prompt_text = call_args[1]["messages"][0]["content"]
         assert "DCI failures" in prompt_text
 
@@ -190,10 +201,12 @@ class TestConnectionDiscovery:
         mock_response.content = [MagicMock(text=json.dumps({"connections": []}))]
 
         # Pass the exact modification time so the report is considered unchanged
-        with patch.object(agent.anthropic.messages, "create", return_value=mock_response) as mock_create:
+        with patch.object(
+            agent.anthropic.messages, "stream", return_value=_mock_stream_message(mock_response)
+        ) as mock_stream:
             await agent._run_connection_discovery(previous_reports_processed={"old_report.md": mod_time})
 
-        call_args = mock_create.call_args
+        call_args = mock_stream.call_args
         prompt_text = call_args[1]["messages"][0]["content"]
         assert "Already processed content" not in prompt_text
         assert "No new reports" in prompt_text
@@ -217,10 +230,12 @@ class TestConnectionDiscovery:
         mock_response.content = [MagicMock(text=json.dumps({"connections": []}))]
 
         # The file's current mod_time won't match old_mod_time, so it should be included
-        with patch.object(agent.anthropic.messages, "create", return_value=mock_response) as mock_create:
+        with patch.object(
+            agent.anthropic.messages, "stream", return_value=_mock_stream_message(mock_response)
+        ) as mock_stream:
             await agent._run_connection_discovery(previous_reports_processed={"evolving_report.md": old_mod_time})
 
-        call_args = mock_create.call_args
+        call_args = mock_stream.call_args
         prompt_text = call_args[1]["messages"][0]["content"]
         assert "Original content" in prompt_text
 
@@ -238,7 +253,7 @@ class TestConnectionDiscovery:
         mock_response = MagicMock()
         mock_response.content = [MagicMock(text="Not valid JSON")]
 
-        with patch.object(agent.anthropic.messages, "create", return_value=mock_response):
+        with patch.object(agent.anthropic.messages, "stream", return_value=_mock_stream_message(mock_response)):
             result = await agent._run_connection_discovery()
 
         # Falls through to partial extraction, finds nothing, returns gracefully
@@ -258,7 +273,7 @@ class TestConnectionDiscovery:
         synthesis_response = MagicMock()
         synthesis_response.content = [MagicMock(text=json.dumps({"insights": []}))]
 
-        with patch.object(agent.anthropic.messages, "create", return_value=synthesis_response):
+        with patch.object(agent.anthropic.messages, "stream", return_value=_mock_stream_message(synthesis_response)):
             with patch.object(
                 agent,
                 "_run_connection_discovery",
@@ -371,7 +386,7 @@ class TestPartialJsonExtraction:
         mock_response = MagicMock()
         mock_response.content = [MagicMock(text=truncated_json)]
 
-        with patch.object(agent.anthropic.messages, "create", return_value=mock_response):
+        with patch.object(agent.anthropic.messages, "stream", return_value=_mock_stream_message(mock_response)):
             result = await agent._run_connection_discovery()
 
         assert "Created 1" in result
