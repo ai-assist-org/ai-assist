@@ -77,45 +77,30 @@ class RuntimeLimits:
     timeout: float = 300.0
 
 
-MODEL_ALIASES: dict[str, str] = {
-    "haiku": "claude-haiku-4-5",
-    "sonnet": "claude-sonnet-4-6",
-    "opus": "claude-opus-4-8",
-    "fable": "claude-fable-5",
-}
+AWL_MODEL_LEVELS: tuple[str, ...] = ("low", "medium", "high")
 
 
-def _resolve_model_aliases(workflow: WorkflowNode) -> None:
-    """Resolve short model aliases (haiku, sonnet, opus) to full names in-place."""
+def _resolve_model_level(level: str | None, tiers: dict[str, str], default_model: str) -> str:
+    """Resolve an AWL model level to a concrete model id.
 
-    def _walk(nodes: list[ASTNode]):
-        for node in nodes:
-            if isinstance(node, TaskNode) and node.model:
-                resolved = MODEL_ALIASES.get(node.model)
-                if resolved:
-                    node.model = resolved
-            elif isinstance(node, IfNode):
-                _walk(node.then_body)
-                _walk(node.else_body)
-            elif isinstance(node, LoopNode):
-                _walk(node.body)
-            elif isinstance(node, WhileNode):
-                _walk(node.body)
-            elif isinstance(node, GoalNode):
-                _walk(node.body)
-
-    _walk(workflow.body)
+    A task with no level (``None``) defaults to ``high``. A level not present in
+    ``tiers`` falls back to ``default_model`` (the effective config.model).
+    """
+    return tiers.get(level or "high", default_model)
 
 
-def _validate_workflow_models(workflow: WorkflowNode, known_prefixes: list[str]) -> list[str]:
-    """Check that all model= overrides match a known model prefix."""
+def _validate_workflow_models(workflow: WorkflowNode, valid_levels: tuple[str, ...]) -> list[str]:
+    """Check that every model= override is a valid level (low/medium/high)."""
     errors: list[str] = []
 
     def _walk(nodes: list[ASTNode]):
         for node in nodes:
             if isinstance(node, TaskNode) and node.model:
-                if not any(prefix in node.model for prefix in known_prefixes):
-                    errors.append(f"@task '{node.task_id}': unknown model '{node.model}'")
+                if node.model not in valid_levels:
+                    errors.append(
+                        f"@task '{node.task_id}': model '{node.model}' is not a valid level; "
+                        f"use one of: {', '.join(valid_levels)}"
+                    )
             elif isinstance(node, IfNode):
                 _walk(node.then_body)
                 _walk(node.else_body)
@@ -351,13 +336,10 @@ class AWLRuntime:
             logger.warning("AWL validation: %s", w)
             print(f"  [!] {w}")
 
-        # Resolve model aliases (haiku → claude-haiku-4-5, etc.) and validate
-        _resolve_model_aliases(workflow)
-        model_prefixes = list(getattr(type(self._agent), "MODEL_CONTEXT_WINDOWS", {}).keys())
-        if model_prefixes:
-            model_errors = _validate_workflow_models(workflow, model_prefixes)
-            for err in model_errors:
-                raise AWLRuntimeError(f"Model validation failed: {err}")
+        # Validate model levels (low/medium/high); resolution happens per-task.
+        model_errors = _validate_workflow_models(workflow, AWL_MODEL_LEVELS)
+        for err in model_errors:
+            raise AWLRuntimeError(f"Model validation failed: {err}")
 
         if workflow.max_steps is not None:
             self._limits.max_steps = workflow.max_steps
@@ -482,11 +464,16 @@ class AWLRuntime:
             tool_calls_before = len(self._agent.last_tool_calls)
             try:
                 max_turns = task.max_tool_calls or self._limits.max_tool_calls
-                saved_model = None
-                if task.model:
-                    saved_model = self._agent.config.model
-                    self._agent.config.model = task.model
-                    logger.info("AWL task '%s' using model override: %s", task.task_id, task.model)
+                saved_model = self._agent.config.model
+                resolved_model = _resolve_model_level(task.model, self._agent.config.model_tiers, saved_model)
+                self._agent.config.model = resolved_model
+                if resolved_model != saved_model:
+                    logger.info(
+                        "AWL task '%s' using model level '%s': %s",
+                        task.task_id,
+                        task.model or "high",
+                        resolved_model,
+                    )
                 try:
                     response = await self._agent.query(
                         prompt,
@@ -495,8 +482,7 @@ class AWLRuntime:
                         max_time_seconds=task.max_time,
                     )
                 finally:
-                    if saved_model is not None:
-                        self._agent.config.model = saved_model
+                    self._agent.config.model = saved_model
             finally:
                 self._agent.on_inner_execution = prev_inner
 

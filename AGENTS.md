@@ -61,7 +61,7 @@ User → CLI (main.py) → AiAssistAgent (agent.py) → Claude API
 
 AWL scripts define intent-driven workflows where the agent autonomously selects tools to achieve goals. Key constructs:
 
-- `@task <name> [@hints] [max_tool_calls=N] [max_time=N] [model=<name>]`: Defines a goal for the agent to achieve, exposing variables. `model=` overrides the LLM for this task (e.g., use Haiku for cheap data gathering, Opus for deep analysis); validated at load time.
+- `@task <name> [@hints] [max_tool_calls=N] [max_time=N] [model=<level>]`: Defines a goal for the agent to achieve, exposing variables. `model=` selects an abstract capability level for this task — `low`, `medium`, or `high` (e.g., `low` for cheap data gathering, `high` for deep analysis); validated at load time. Each level maps to a concrete model via `AI_ASSIST_MODEL_LOW`/`_MEDIUM`/`_HIGH`, falling back to `AI_ASSIST_MODEL` when unset. Omitting `model=` uses `high`.
 - `@if <condition>`: Conditional execution with Python-like expressions
 - `@loop <var> as <item> limit=N collect=<var>`: Iteration with map-reduce pattern
 - `${var}`: Variable interpolation in goals and text

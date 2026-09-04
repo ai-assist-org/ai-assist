@@ -192,6 +192,12 @@ class MCPServerConfig(BaseModel):
     readonly_tools: list[str] = Field(default_factory=list)
 
 
+def _env_model_tiers() -> dict[str, str]:
+    """AWL model-tier overrides from env (level -> model id); unset levels omitted."""
+    env = {"low": "AI_ASSIST_MODEL_LOW", "medium": "AI_ASSIST_MODEL_MEDIUM", "high": "AI_ASSIST_MODEL_HIGH"}
+    return {level: os.environ[var] for level, var in env.items() if os.getenv(var)}
+
+
 class AiAssistConfig(BaseModel):
     """Main ai-assist configuration"""
 
@@ -212,6 +218,10 @@ class AiAssistConfig(BaseModel):
     # Optional per-role model overrides (fall back to `model` when unset)
     synthesis_model: str | None = Field(default_factory=lambda: os.getenv("AI_ASSIST_SYNTHESIS_MODEL"))
     compaction_model: str | None = Field(default_factory=lambda: os.getenv("AI_ASSIST_COMPACTION_MODEL"))
+
+    # AWL model-level overrides: level name -> concrete model id. Levels not set
+    # here fall back to `model` at resolution time. Valid levels: low, medium, high.
+    model_tiers: dict[str, str] = Field(default_factory=_env_model_tiers)
 
     # Prompt caching (Anthropic ephemeral cache). Disable for endpoints that don't support it.
     enable_prompt_caching: bool = Field(
@@ -363,6 +373,7 @@ class AiAssistConfig(BaseModel):
             model=os.getenv("AI_ASSIST_MODEL", "claude-sonnet-4-6"),
             synthesis_model=os.getenv("AI_ASSIST_SYNTHESIS_MODEL"),
             compaction_model=os.getenv("AI_ASSIST_COMPACTION_MODEL"),
+            model_tiers=_env_model_tiers(),
             enable_prompt_caching=os.getenv("AI_ASSIST_ENABLE_CACHE", "true").lower() == "true",
             enable_mlflow=os.getenv("AI_ASSIST_ENABLE_MLFLOW", "false").lower() == "true",
             mlflow_tracking_uri=os.getenv("MLFLOW_TRACKING_URI"),

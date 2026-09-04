@@ -151,27 +151,29 @@ Expose: jira_ticket
 
 ---
 
-## model=\<model_name\>
+## model=\<level\>
 
-`model` overrides the global model for a single task. Use this when a task needs a
-more capable model (e.g., Opus for deep analysis) or a cheaper/faster model
-(e.g., Haiku for mechanical data gathering).
+`model` selects an abstract **capability level** for a single task, so scripts
+stay provider-neutral. The only valid values are `low`, `medium`, and `high`.
+Use a lower level for cheap/mechanical work and a higher level for deep analysis.
 
-Short aliases are supported: `haiku`, `sonnet`, `opus` (resolved to the latest
-version of each model family). Full model names (e.g., `claude-opus-4-6-20260205`)
-are also accepted.
+Each level maps to a concrete model via env vars (`AI_ASSIST_MODEL_LOW`,
+`AI_ASSIST_MODEL_MEDIUM`, `AI_ASSIST_MODEL_HIGH`). A level with no env override
+falls back to `AI_ASSIST_MODEL` (the session model, which `--model` also sets).
+A task with no `model=` uses the `high` level.
 
-The model name is validated against known models at workflow load time. Unknown
-models cause the workflow to fail before any task executes.
+The value is validated at workflow load time. Any value other than `low`,
+`medium`, or `high` (including a concrete model id) fails the workflow before any
+task executes.
 
 Example:
 
-@task search_jobs model=haiku @no-kg
+@task search_jobs model=low @no-kg
 Goal: Search DCI for failed jobs in the last 24 hours.
 Expose: failed_jobs
 @end
 
-@task root_cause model=opus
+@task root_cause model=high
 Goal: Perform root cause analysis on ${failed_jobs}.
 Expose: rca_result
 @end

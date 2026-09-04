@@ -188,6 +188,28 @@ def test_per_role_model_routing():
     assert agent._model_for("main") == "claude-sonnet-4-6"
 
 
+def test_model_tiers_empty_by_default():
+    """With no AWL tier env vars set, model_tiers is empty (levels fall back to model)."""
+    with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-ant-test"}, clear=True):
+        config = AiAssistConfig.from_env()
+        assert config.model_tiers == {}
+
+
+def test_model_tiers_from_env():
+    """AI_ASSIST_MODEL_LOW/_MEDIUM/_HIGH populate model_tiers; unset levels omitted."""
+    with patch.dict(
+        os.environ,
+        {
+            "ANTHROPIC_API_KEY": "sk-ant-test",
+            "AI_ASSIST_MODEL_LOW": "claude-haiku-4-5",
+            "AI_ASSIST_MODEL_HIGH": "claude-opus-4-8",
+        },
+        clear=True,
+    ):
+        config = AiAssistConfig.from_env()
+        assert config.model_tiers == {"low": "claude-haiku-4-5", "high": "claude-opus-4-8"}
+
+
 def test_pricing_zero_for_unknown_custom_model():
     """zero_if_unknown reports $0 for a model with no known pricing"""
     entry = {"input_tokens": 1000, "output_tokens": 500}
