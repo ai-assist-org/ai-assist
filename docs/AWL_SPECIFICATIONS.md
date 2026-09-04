@@ -151,27 +151,40 @@ Expose: jira_ticket
 
 ---
 
-## model=\<model_name\>
+## model=\<level\>
 
-`model` overrides the global model for a single task. Use this when a task needs a
-more capable model (e.g., Opus for deep analysis) or a cheaper/faster model
-(e.g., Haiku for mechanical data gathering).
+`model` selects an abstract **capability level** for a single task, so scripts
+stay provider-neutral. The valid values are `low`, `medium`, `high`, and
+`default`. Use a lower level for cheap/mechanical work and a higher level for
+deep analysis. **A task with no `model=` uses `default`** (the session model).
 
-Short aliases are supported: `haiku`, `sonnet`, `opus` (resolved to the latest
-version of each model family). Full model names (e.g., `claude-opus-4-6-20260205`)
-are also accepted.
+Each level maps to a concrete model via env vars:
 
-The model name is validated against known models at workflow load time. Unknown
-models cause the workflow to fail before any task executes.
+| level | env var | fallback when unset |
+| --- | --- | --- |
+| `low` | `AI_ASSIST_MODEL_LOW` | `default` |
+| `medium` | `AI_ASSIST_MODEL_MEDIUM` | `default` |
+| `high` | `AI_ASSIST_MODEL_HIGH` | `default` |
+| `default` | `AI_ASSIST_MODEL` | `high`, then `claude-sonnet-4-6` |
+
+`default` is the session model — the same one used for interactive sessions and
+set by `--model`. `default` and `high` **fall back to each other**: set only
+`AI_ASSIST_MODEL` and `high` tracks it; set only `AI_ASSIST_MODEL_HIGH` and the
+session model tracks that (so a config that defines only the AWL levels still
+runs on a sensible model). Set both explicitly to make them differ.
+
+The value is validated at workflow load time. Any value other than `low`,
+`medium`, `high`, or `default` (including a concrete model id) fails the
+workflow before any task executes.
 
 Example:
 
-@task search_jobs model=haiku @no-kg
+@task search_jobs model=low @no-kg
 Goal: Search DCI for failed jobs in the last 24 hours.
 Expose: failed_jobs
 @end
 
-@task root_cause model=opus
+@task root_cause model=high
 Goal: Perform root cause analysis on ${failed_jobs}.
 Expose: rca_result
 @end
