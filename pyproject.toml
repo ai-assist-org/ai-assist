@@ -132,7 +132,6 @@ addopts = [
     "--tb=short",
     "-n", "auto",
     "-m", "not integration",
-    "--max-warnings=20",
 ]
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",

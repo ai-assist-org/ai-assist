@@ -69,7 +69,7 @@
 \title{ai-assist}
 \subtitle{An AI-Powered Assistant for Engineering Teams}
 \author{Fr\'ed\'eric Lepied\\{\small Senior Manager -- Telco Partner CI}}
-\date{August 2026}
+\date{September 2026}
 \institute{Red Hat}
 
 % ══════════════════════════════════════════════════════════════════
@@ -1487,14 +1487,14 @@ ai-assist /sandbox service pr-review logs -f
 \begin{column}{0.48\textwidth}
 \begin{lstlisting}[style=code,basicstyle=\ttfamily\fontsize{5.5}{7}\selectfont,language={}]
 @start
-@task find_handlers @no-kg model=haiku
+@task find_handlers @no-kg model=low
 Goal: Find HTTP handlers.
 Expose: handlers
 @end
 
 @if len(handlers) > 0
 @loop handlers as h limit=5
-  @task inspect @no-history model=sonnet
+  @task inspect @no-history model=medium
   Goal: What does ${h} do?
   Expose: summary
   @end
