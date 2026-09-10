@@ -211,11 +211,15 @@ class TestSynthesisIntegration:
 
 
 class TestSynthesisFromKG:
-    """Test synthesis that reads conversation entities from the KG"""
+    """Test report snapshotting and connection discovery in scheduled synthesis.
+
+    Conversation fact-extraction is deliberately NOT part of this task — it is
+    handled at compaction, ``/clear`` and on exit in the interactive TUI.
+    """
 
     @pytest.mark.asyncio
-    async def test_synthesis_from_kg_extracts_insights(self, agent, kg):
-        """Synthesis from KG should extract insights from conversation entities"""
+    async def test_synthesis_from_kg_ignores_conversations(self, agent, kg):
+        """Conversation entities must not be mined by the scheduled task."""
         now = datetime.now()
         kg.insert_entity(
             entity_type="conversation",
@@ -224,104 +228,34 @@ class TestSynthesisFromKG:
             tx_from=now - timedelta(hours=2),
         )
 
-        mock_response = MagicMock()
-        mock_response.content = [
-            MagicMock(
-                text=json.dumps(
-                    {
-                        "insights": [
-                            {
-                                "category": "user_preference",
-                                "key": "test_framework",
-                                "content": "User prefers pytest over unittest",
-                                "confidence": 1.0,
-                                "tags": ["testing"],
-                            }
-                        ]
-                    }
-                )
-            )
-        ]
+        # No report change → early exit, no LLM call, no insights extracted from
+        # the conversation above.
+        with patch.object(agent, "_get_report_snapshots", return_value={}):
+            with patch.object(agent.anthropic.messages, "stream") as mock_stream:
+                result = await agent._run_synthesis_from_kg()
 
-        with patch.object(agent.anthropic.messages, "stream", return_value=_mock_stream_message(mock_response)):
-            await agent._run_synthesis_from_kg()
+            mock_stream.assert_not_called()
 
-        results = kg.search_knowledge(entity_type="user_preference")
-        assert len(results) >= 1
-        assert any("pytest" in r["content"].lower() for r in results)
+        assert "No new reports" in result
+        for etype in ["user_preference", "lesson_learned", "project_context", "decision_rationale"]:
+            assert len(kg.search_knowledge(entity_type=etype)) == 0
 
     @pytest.mark.asyncio
-    async def test_synthesis_from_kg_only_recent(self, agent, kg):
-        """Synthesis should only process conversations from the specified time window"""
-        now = datetime.now()
-
-        # Old conversation (48 hours ago)
-        kg.insert_entity(
-            entity_type="conversation",
-            data={"user": "Old question about Jenkins", "assistant": "Jenkins info..."},
-            valid_from=now - timedelta(hours=48),
-            tx_from=now - timedelta(hours=48),
-        )
-
-        # Recent conversation (1 hour ago)
-        kg.insert_entity(
-            entity_type="conversation",
-            data={"user": "I like dark mode", "assistant": "Dark mode enabled."},
-            valid_from=now - timedelta(hours=1),
-            tx_from=now - timedelta(hours=1),
-        )
-
-        mock_response = MagicMock()
-        mock_response.content = [
-            MagicMock(
-                text=json.dumps(
-                    {
-                        "insights": [
-                            {
-                                "category": "user_preference",
-                                "key": "dark_mode",
-                                "content": "User likes dark mode",
-                                "confidence": 0.9,
-                                "tags": ["ui"],
-                            }
-                        ]
-                    }
-                )
-            )
-        ]
-
-        with patch.object(
-            agent.anthropic.messages, "stream", return_value=_mock_stream_message(mock_response)
-        ) as mock_stream:
-            await agent._run_synthesis_from_kg(hours=24)
-
-        # The LLM should only have been called with the recent conversation
-        call_args = mock_stream.call_args
-        prompt_text = call_args[1]["messages"][0]["content"]
-        assert "dark mode" in prompt_text
-        assert "Jenkins" not in prompt_text
-
-    @pytest.mark.asyncio
-    async def test_synthesis_from_kg_no_conversations(self, agent, kg):
-        """Synthesis with no conversations and no reports should return early"""
+    async def test_synthesis_from_kg_no_new_reports(self, agent, kg):
+        """Synthesis with no new reports should return early without a marker."""
         with patch.object(agent, "_get_report_snapshots", return_value={}):
             result = await agent._run_synthesis_from_kg()
 
-        assert "No new conversations" in result
+        assert "No new reports" in result
 
         # No synthesis_marker should be created (nothing was processed)
         now = datetime.now()
         markers = kg.query_as_of(now, entity_type="synthesis_marker")
         assert len(markers) == 0
 
-        # No knowledge insights should be saved
-        for etype in ["user_preference", "lesson_learned", "project_context", "decision_rationale"]:
-            results = kg.search_knowledge(entity_type=etype)
-            assert len(results) == 0
-
     @pytest.mark.asyncio
-    async def test_synthesis_from_kg_no_conversations_but_new_reports(self, agent, kg):
-        """When no conversations exist but reports changed, connection discovery should run"""
+    async def test_synthesis_from_kg_processes_new_reports(self, agent, kg):
+        """When reports change, connection discovery should run and mark progress."""
         now = datetime.now()
 
         # Insert an entity so connection discovery has something to work with
@@ -352,17 +286,14 @@ class TestSynthesisFromKG:
         assert len(markers) >= 1
 
     @pytest.mark.asyncio
-    async def test_synthesis_from_kg_no_llm_calls_when_nothing_new(self, agent, kg):
-        """No LLM calls should be made when there are no new conversations or reports"""
+    async def test_synthesis_from_kg_no_llm_calls_when_reports_unchanged(self, agent, kg):
+        """No LLM calls should be made when reports have not changed."""
         now = datetime.now()
 
         # Create a previous synthesis marker with report snapshots
         kg.insert_entity(
             entity_type="synthesis_marker",
-            data={
-                "synthesized_conversations": 0,
-                "reports_processed": {"existing_report.md": "2026-02-25T08:00:00"},
-            },
+            data={"reports_processed": {"existing_report.md": "2026-02-25T08:00:00"}},
             valid_from=now - timedelta(hours=1),
         )
 
@@ -374,53 +305,169 @@ class TestSynthesisFromKG:
             # No LLM calls should have been made
             mock_stream.assert_not_called()
 
-        assert "No new conversations" in result
+        assert "No new reports" in result
 
-    @pytest.mark.asyncio
-    async def test_synthesis_from_kg_skips_already_synthesized(self, agent, kg):
-        """Synthesis should not re-process already synthesized conversations"""
-        now = datetime.now()
 
-        # First conversation (recent, within 24h)
-        kg.insert_entity(
-            entity_type="conversation",
-            data={"user": "First question", "assistant": "First answer"},
-            valid_from=now - timedelta(hours=3),
-            tx_from=now - timedelta(hours=3),
+class TestSaveInsights:
+    """Tests for the shared _save_insights helper used by synthesis and compaction."""
+
+    def test_save_insights_writes_retrievable_entity(self, agent, kg):
+        n = agent._save_insights(
+            [
+                {
+                    "category": "project_context",
+                    "key": "code-loc",
+                    "content": "the tests live at ~/external/eco-gotests",
+                    "confidence": 0.9,
+                    "tags": ["path"],
+                }
+            ],
+            "compaction_extraction",
         )
 
-        mock_response = MagicMock()
-        mock_response.content = [MagicMock(text=json.dumps({"insights": []}))]
+        assert n == 1
+        results = kg.search_knowledge(entity_type="project_context")
+        saved = next(r for r in results if r["key"] == "code-loc")
+        assert "eco-gotests" in saved["content"]
 
-        # First synthesis processes the first conversation
-        with patch.object(agent.anthropic.messages, "stream", return_value=_mock_stream_message(mock_response)):
-            await agent._run_synthesis_from_kg()
-
-        # Verify synthesis_marker was created
-        markers = kg.query_as_of(now + timedelta(hours=1), entity_type="synthesis_marker")
-        assert len(markers) >= 1
-
-        # Second conversation added after first synthesis marker
-        # valid_from must be after the marker but tx_from must be <= "now" when synthesis runs
-        import time
-
-        time.sleep(0.01)  # Ensure marker's valid_from is in the past
-        second_time = datetime.now()
-        kg.insert_entity(
-            entity_type="conversation",
-            data={"user": "Second question", "assistant": "Second answer"},
-            valid_from=second_time,
-            tx_from=second_time,
+    def test_save_insights_skips_bad_items(self, agent):
+        n = agent._save_insights(
+            [
+                {"category": "bogus_type", "key": "k", "content": "c"},
+                {"category": "project_context", "key": "ok", "content": "c"},
+            ],
+            "compaction_extraction",
         )
 
-        # Run synthesis again — marker cutoff should exclude the first conversation
-        with patch.object(
-            agent.anthropic.messages, "stream", return_value=_mock_stream_message(mock_response)
-        ) as mock_stream:
-            await agent._run_synthesis_from_kg()
+        assert n == 1
 
-        # Should only include the second conversation (first already synthesized)
-        call_args = mock_stream.call_args
-        prompt_text = call_args[1]["messages"][0]["content"]
-        assert "Second question" in prompt_text
-        assert "First question" not in prompt_text
+    def test_save_insights_no_kg_returns_zero(self, config):
+        agent_no_kg = AiAssistAgent(config)
+        n = agent_no_kg._save_insights(
+            [{"category": "project_context", "key": "k", "content": "c"}],
+            "compaction_extraction",
+        )
+        assert n == 0
+
+
+# Labeled fixture: clear re-statements of the SAME fact (a file/code location
+# repeated with light rewording). These reliably clear DEDUP_SIM_THRESHOLD in
+# both directions, so extraction under a fresh slug must reuse the existing key.
+_DUP_PAIRS = [
+    (
+        "The main config file is at /etc/ai-assist/config.yaml",
+        "The configuration file lives at /etc/ai-assist/config.yaml",
+    ),
+    (
+        "The AWL script at /home/fred/ai-assist/awl/eda-reports.awl generates EDA reports",
+        "The EDA reports AWL script is located at /home/fred/ai-assist/awl/eda-reports.awl",
+    ),
+    (
+        "Service logs are written to /var/log/ai-assist/service.log",
+        "Service logs are written to /var/log/ai-assist/service.log",
+    ),
+]
+
+# Labeled fixture: distinct-but-similar facts. These MUST NOT merge — a false
+# merge overwrites a real, different fact irrecoverably. Includes the hardest
+# case (same "X's jira user is Y" template, different person) which embeddings
+# rank deceptively high (~0.74) yet still below the conservative threshold.
+_DISTINCT_PAIRS = [
+    (
+        "The AWL script at /home/fred/ai-assist/awl/eda-reports.awl generates EDA reports",
+        "The AWL script at /home/fred/ai-assist/awl/quarterly-review.awl generates quarterly reviews",
+    ),
+    (
+        "Jennifer Chen's jira user is jenchen@redhat.com",
+        "Semih Kisa's jira user is skisa@redhat.com",
+    ),
+    (
+        "The eco-gotests repo is at ~/work/eco-gotests",
+        "The dci-mcp-server repo is at ~/work/dci-mcp-server",
+    ),
+]
+
+
+class TestDedupKeyReuse:
+    """Evaluation of conservative semantic key-reuse in _save_insights.
+
+    Two properties, measured on labeled dup/distinct pairs with real embeddings:
+    true-merges (restatements collapse onto one key) and — critically — zero
+    false-merges (distinct facts stay separate, since a merge is destructive).
+    """
+
+    def _save(self, agent, key, content):
+        return agent._save_insights(
+            [{"category": "project_context", "key": key, "content": content}],
+            "compaction_extraction",
+        )
+
+    def _live_keys(self, kg):
+        return {r["key"] for r in kg.search_knowledge(entity_type="project_context")}
+
+    def test_restatement_reuses_existing_key(self, agent, kg):
+        """A re-stated fact under a new slug supersedes the original (one live row)."""
+        for i, (existing, restated) in enumerate(_DUP_PAIRS):
+            self._save(agent, f"orig_{i}", existing)
+            before = self._live_keys(kg)
+            self._save(agent, f"restated_{i}", restated)
+            after = self._live_keys(kg)
+            # No new key introduced: the restatement folded onto orig_{i}.
+            assert after == before, f"pair {i}: restatement forked a new key {after - before}"
+            assert f"restated_{i}" not in after
+            saved = next(r for r in kg.search_knowledge(entity_type="project_context") if r["key"] == f"orig_{i}")
+            assert saved["content"] == restated  # last write wins
+
+    def test_distinct_facts_do_not_merge(self, agent, kg):
+        """Distinct-but-similar facts each keep their own key (no data loss)."""
+        for i, (first, second) in enumerate(_DISTINCT_PAIRS):
+            self._save(agent, f"a_{i}", first)
+            self._save(agent, f"b_{i}", second)
+            keys = self._live_keys(kg)
+            assert f"a_{i}" in keys and f"b_{i}" in keys, f"pair {i}: distinct facts wrongly merged"
+
+    def test_loose_paraphrase_stays_separate(self, agent, kg):
+        """Documents the conservative tradeoff: a loosely-reworded restatement
+        that falls below threshold is NOT merged (kept as a distinct key, i.e.
+        today's behaviour). We accept missed merges to guarantee no false ones."""
+        self._save(agent, "loc_a", "The eco-gotests tests are located at ~/work/eco-gotests")
+        self._save(agent, "loc_b", "eco-gotests is located at ~/work/eco-gotests on my machine")
+        keys = self._live_keys(kg)
+        assert "loc_a" in keys and "loc_b" in keys
+
+    def test_non_project_context_is_not_deduped(self, agent, kg):
+        """Dedup is scoped to project_context; other knowledge types keep their key."""
+        self._save(agent, "cfg", "The main config file is at /etc/ai-assist/config.yaml")
+        agent._save_insights(
+            [
+                {
+                    "category": "lesson_learned",
+                    "key": "cfg_lesson",
+                    "content": "The configuration file lives at /etc/ai-assist/config.yaml",
+                }
+            ],
+            "compaction_extraction",
+        )
+        assert "cfg" in self._live_keys(kg)
+        lessons = {r["key"] for r in kg.search_knowledge(entity_type="lesson_learned")}
+        assert "cfg_lesson" in lessons
+
+    def test_similarity_separation_holds(self, kg):
+        """Guards the threshold: every duplicate scores above it, every distinct below.
+
+        If the embedding model or DEDUP_SIM_THRESHOLD drifts so this gap closes,
+        this fails loudly rather than silently enabling false merges.
+        """
+
+        def score(existing, probe):
+            g = KnowledgeGraph(":memory:")
+            g.insert_knowledge("project_context", "x", existing)
+            res = g.semantic_search(probe, limit=1, entity_types=["project_context"], include_future=True)
+            g.close()
+            return res[0]["score"] if res else 0.0
+
+        dup_scores = [score(a, b) for a, b in _DUP_PAIRS]
+        distinct_scores = [score(a, b) for a, b in _DISTINCT_PAIRS]
+        thr = AiAssistAgent.DEDUP_SIM_THRESHOLD
+        assert min(dup_scores) >= thr, f"a duplicate scored below threshold: {dup_scores}"
+        assert max(distinct_scores) < thr, f"a distinct pair scored at/above threshold: {distinct_scores}"

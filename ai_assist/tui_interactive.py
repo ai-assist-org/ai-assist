@@ -883,6 +883,68 @@ async def tui_interactive_mode(agent: AiAssistAgent, state_manager: StateManager
     # Enable agent introspection of conversation memory
     agent.set_conversation_memory(conversation_memory)
 
+    def _launch_background_compaction(keep_recent: int = 4):
+        """Compact conversation memory off the event loop.
+
+        Summarizes the oldest exchanges and mines them for durable facts in a
+        single background LLM call, so the next prompt appears immediately. The
+        summarized exchanges are dropped by identity, preserving anything the
+        user adds while the call is in flight. Extracted facts are saved to the
+        KG as knowledge entities (retrieved automatically on later turns).
+        """
+        if not (conversation_memory.needs_compaction() and not conversation_memory.is_compacting()):
+            return
+        old = conversation_memory.exchanges[:-keep_recent]
+        if not old:
+            return
+        old_ids = {id(ex) for ex in old}
+        model = agent._model_for("compaction")
+        gen = conversation_memory.generation
+        conversation_memory.mark_compacting()
+
+        async def _bg():
+            try:
+                summary, facts = await asyncio.to_thread(
+                    conversation_memory.summarize_and_extract, agent.anthropic, model, old
+                )
+                # If /clear reset the conversation while we were summarizing,
+                # discard the result rather than resurrecting stale exchanges.
+                if conversation_memory.generation != gen:
+                    return
+                if summary:
+                    conversation_memory.finish_compaction(old_ids, summary)
+                if facts and agent.knowledge_graph:
+                    await asyncio.to_thread(agent._save_insights, facts, "compaction_extraction")
+            except Exception:
+                logger.exception("Background compaction failed")
+            finally:
+                conversation_memory.clear_compacting()
+
+        asyncio.create_task(_bg())
+
+    def _launch_background_fact_extraction(exchanges: list[dict]):
+        """Mine durable facts from exchanges about to be discarded (e.g. on /clear).
+
+        Unlike compaction, this saves facts only — no summary is applied, since
+        the conversation is being reset. Runs off the event loop so /clear stays
+        instant.
+        """
+        if not exchanges or not agent.knowledge_graph:
+            return
+        model = agent._model_for("compaction")
+
+        async def _bg():
+            try:
+                _summary, facts = await asyncio.to_thread(
+                    conversation_memory.summarize_and_extract, agent.anthropic, model, exchanges
+                )
+                if facts:
+                    await asyncio.to_thread(agent._save_insights, facts, "clear_extraction")
+            except Exception:
+                logger.exception("Background fact extraction on /clear failed")
+
+        asyncio.create_task(_bg())
+
     # Initialize knowledge graph context for prompt enrichment
     try:
         kg = KnowledgeGraph()
@@ -1072,8 +1134,10 @@ async def tui_interactive_mode(agent: AiAssistAgent, state_manager: StateManager
         approved = choice in ("y", "yes", "a", "always")
         logger.info("Security prompt: path %s by user: %s", "approved" if approved else "denied", description[:200])
         if choice in ("a", "always"):
-            # Extract path from description ("Access path: /foo/bar/file.txt")
-            path_str = description.replace("Access path: ", "")
+            # Extract path from description ("Access path: /foo/bar/file.txt").
+            # The description may carry a trailing "\nReason: ..." line — keep
+            # only the first line so the path resolves correctly.
+            path_str = description.split("\n", 1)[0].replace("Access path: ", "")
             resolved_path = Path(path_str).resolve()
             # For regular files, save the parent directory;
             # for directories, save the directory itself
@@ -1209,12 +1273,8 @@ async def tui_interactive_mode(agent: AiAssistAgent, state_manager: StateManager
                                 conversation_memory.add_exchange(prompt_content, full_response)
 
                                 # Compact conversation memory if threshold reached
-                                if conversation_memory.needs_compaction():
-                                    try:
-                                        if conversation_memory.compact(agent.anthropic, agent._model_for("compaction")):
-                                            console.print("[dim]Compacted conversation history[/dim]")
-                                    except Exception:
-                                        pass
+                                # (runs in the background so the next prompt is not blocked)
+                                _launch_background_compaction()
 
                                 # Track for state manager
                                 conversation_context.append(
@@ -1277,6 +1337,8 @@ async def tui_interactive_mode(agent: AiAssistAgent, state_manager: StateManager
                     continue
 
                 if user_input.lower() == "/clear":
+                    # Mine durable facts from the discarded history before wiping it
+                    _launch_background_fact_extraction(list(conversation_memory.exchanges))
                     conversation_memory.clear()
                     conversation_context.clear()
                     state_manager.save_conversation_context("last_interactive_session", {"messages": []})
@@ -1365,12 +1427,8 @@ async def tui_interactive_mode(agent: AiAssistAgent, state_manager: StateManager
                         conversation_memory.add_exchange(user_input, response)
 
                         # Compact conversation memory if threshold reached
-                        if conversation_memory.needs_compaction():
-                            try:
-                                if conversation_memory.compact(agent.anthropic, agent._model_for("compaction")):
-                                    console.print("[dim]Compacted conversation history[/dim]")
-                            except Exception:
-                                pass
+                        # (runs in the background so the next prompt is not blocked)
+                        _launch_background_compaction()
 
                         # Track conversation in context list for state manager
                         conversation_context.append(
@@ -1412,6 +1470,25 @@ async def tui_interactive_mode(agent: AiAssistAgent, state_manager: StateManager
             except Exception as e:
                 console.print(f"[red]Error: {e}[/red]\n")
     finally:
+        # Mine durable facts from whatever is still in memory before teardown, so
+        # short sessions that never compacted or were /clear'd still contribute
+        # knowledge. Runs synchronously here because background tasks (below) are
+        # about to be cancelled; _save_insights dedups against existing keys.
+        if conversation_memory.exchanges and getattr(agent, "knowledge_graph", None):
+            console.print("[dim]Saving learnings from this session...[/dim]")
+            try:
+                model = agent._model_for("compaction")
+                _summary, facts = await asyncio.to_thread(
+                    conversation_memory.summarize_and_extract,
+                    agent.anthropic,
+                    model,
+                    list(conversation_memory.exchanges),
+                )
+                if facts:
+                    await asyncio.to_thread(agent._save_insights, facts, "exit_extraction")
+            except Exception:
+                logger.exception("Fact extraction on exit failed")
+
         # Cancel background tasks on exit
         cancelled = await bg_manager.cancel_all()
         if cancelled > 0:

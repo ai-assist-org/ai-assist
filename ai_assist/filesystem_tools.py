@@ -601,9 +601,14 @@ class FilesystemTools:
                 return True
         return False
 
-    async def _validate_path(self, path_str: str) -> str | None:
+    async def _validate_path(self, path_str: str, reason: str | None = None) -> str | None:
         """Validate that a path is within allowed directories.
         Falls back to path_confirmation_callback if path is blocked.
+
+        Args:
+            path_str: The path to validate.
+            reason: Optional context (e.g. the triggering command) shown to the
+                user in the approval prompt to explain why the path is needed.
 
         Returns:
             Error message if path is not allowed, None if validation passes
@@ -623,6 +628,8 @@ class FilesystemTools:
         # Path not in allowlist — try interactive approval
         if self.path_confirmation_callback is not None:
             description = f"Access path: {resolved}"
+            if reason:
+                description += f"\nReason: {reason}"
             approved = await self.path_confirmation_callback(description)
             if approved:
                 return None
@@ -1143,7 +1150,7 @@ class FilesystemTools:
             pairs = _extract_command_argument_paths(full_command)
             for cmd_name, path_or_marker in pairs:
                 if cmd_name == "cd" and path_or_marker not in ("<inline-code>", "<stdin>", "<interactive>"):
-                    path_error = await self._validate_path(path_or_marker)
+                    path_error = await self._validate_path(path_or_marker, reason=full_command)
                     if path_error:
                         return f"Error: cd target path is not allowed. {path_error}"
             return None
@@ -1179,7 +1186,7 @@ class FilesystemTools:
             if cmd_name == "cd":
                 args = tokens[idx + 1 :]
                 if args and args[0] != "-":
-                    path_error = await self._validate_path(args[0])
+                    path_error = await self._validate_path(args[0], reason=full_command)
                     if path_error:
                         return f"Error: cd target path is not allowed. {path_error}"
                 continue
@@ -1254,7 +1261,7 @@ class FilesystemTools:
                 elif cmd_name not in self.allowed_commands:
                     return f"Error: {cmd_name} {path_or_marker} execution is not allowed in non-interactive mode."
             else:
-                path_error = await self._validate_path(path_or_marker)
+                path_error = await self._validate_path(path_or_marker, reason=command)
                 if path_error:
                     return f"Error: {cmd_name} target path is not allowed. {path_error}"
 
