@@ -81,7 +81,9 @@ Bi-temporal database tracking:
 
 **Temporal Tools**: Point-in-time snapshots (`kg_snapshot`), time-filtered search (`search_knowledge` with `since`), and knowledge expiry (`expire_knowledge`) let the agent query and manage knowledge across time.
 
-**KG Synthesis**: Nightly task extracts structured knowledge (preferences, lessons, context) from conversations and injects relevant context into future queries via semantic similarity.
+**KG Synthesis**: Nightly task that snapshots new/changed reports and discovers connections between KG entities. It does *not* extract knowledge from conversations — that is handled by compaction-time extraction (below). Recalled knowledge is injected into future queries via semantic similarity.
+
+**Compaction-time extraction**: In interactive mode, durable facts the user stated are extracted into the KG when the conversation is compacted, cleared (`/clear`), or the session exits (synchronous on exit so short sessions still contribute), as a background task, so they survive a growing context window. Extraction reuses an existing `project_context` key when a new fact is a near-duplicate (semantic similarity ≥ `AiAssistAgent.DEDUP_SIM_THRESHOLD`), letting the KG's last-write-wins upsert supersede it instead of accreting parallel entries. The threshold is deliberately conservative — a false merge overwrites a distinct fact irrecoverably.
 
 **Auto Context Injection**: Semantically relevant entities are automatically surfaced in the system prompt based on query similarity.
 

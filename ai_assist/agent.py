@@ -238,6 +238,12 @@ def _extract_date_range(question: str) -> tuple[datetime, datetime] | None:
 class AiAssistAgent:
     """AI Agent with MCP capabilities"""
 
+    # Minimum semantic similarity for an extracted fact to reuse (supersede) an
+    # existing key instead of forking a new slug. Deliberately conservative: a
+    # false merge overwrites a distinct fact irrecoverably. Calibrated on
+    # labeled dup/distinct pairs (distinct top out ~0.66, restatements ~0.80+).
+    DEDUP_SIM_THRESHOLD = 0.80
+
     # Model-specific max output tokens
     # Source: https://docs.anthropic.com/en/docs/about-claude/models
     MODEL_MAX_TOKENS = {
@@ -1260,7 +1266,7 @@ class AiAssistAgent:
     def _get_recent_notifications_context(self, max_age_minutes: int = 15, max_entries: int = 5) -> str:
         """Read recent notifications from log and format as context section."""
         import json as json_module
-        from datetime import datetime, timedelta
+        from datetime import datetime
 
         from .config import get_config_dir
 
@@ -3325,6 +3331,98 @@ class AiAssistAgent:
         """Clear tracked tool calls"""
         self.last_tool_calls = []
 
+    def _resolve_dedup_key(self, entity_type: str, key: str, content: str) -> str:
+        """Return the key to persist a fact under, reusing an existing one on a
+        near-identical match so the write *supersedes* it instead of forking a
+        new slug.
+
+        Extraction LLMs invent a fresh slug for a re-stated fact, which creates
+        a parallel live entity rather than letting the KG's last-write-wins
+        upsert engage. This looks up the single best same-type match by semantic
+        similarity; if it clears ``DEDUP_SIM_THRESHOLD`` the existing key is
+        returned so ``insert_knowledge`` overwrites that record.
+
+        The threshold is deliberately conservative: a false merge overwrites a
+        distinct fact irrecoverably (knowledge upsert keeps no history), and
+        measurement showed distinct-but-similar facts top out ~0.66 while true
+        restatements sit ~0.80+. Below threshold we keep the new key (status quo).
+
+        Args:
+            entity_type: Knowledge entity type (only project_context is deduped).
+            key: The slug the extractor proposed.
+            content: The fact text, used as the similarity probe.
+
+        Returns:
+            The existing key to reuse, or the proposed key unchanged.
+        """
+        if not self.knowledge_graph:
+            return key
+        try:
+            matches = self.knowledge_graph.semantic_search(
+                content,
+                limit=1,
+                entity_types=[entity_type],
+                min_score=self.DEDUP_SIM_THRESHOLD,
+                include_future=True,
+            )
+        except Exception:
+            logger.exception("Dedup lookup failed for %s:%s", entity_type, key)
+            return key
+        if matches and matches[0].get("key") and matches[0]["key"] != key:
+            existing = matches[0]["key"]
+            logger.info(
+                "Dedup: reusing key %s (score=%.3f) for extracted fact %s",
+                existing,
+                matches[0]["score"],
+                key,
+            )
+            return existing
+        return key
+
+    def _save_insights(self, insights: list[dict], source: str, *, verbose: bool = False) -> int:
+        """Persist extracted knowledge insights to the KG (upsert by key).
+
+        Shared by conversation synthesis and compaction-time fact extraction.
+        Each insight is a dict shaped like {category, key, content, confidence, tags}.
+        Per-insight failures are logged and skipped so one bad item can't abort
+        the rest. Safe to call from a worker thread (sqlite conn is thread-shared).
+
+        Args:
+            insights: List of insight dicts to save.
+            source: Provenance tag stored in metadata (e.g. "auto_synthesis").
+            verbose: When True, print a per-insight "Learned" line (interactive use).
+
+        Returns:
+            Number of insights successfully saved.
+        """
+        if not self.knowledge_graph:
+            return 0
+
+        saved_count = 0
+        for insight in insights:
+            try:
+                key = insight["key"]
+                if insight["category"] == "project_context":
+                    key = self._resolve_dedup_key("project_context", key, insight["content"])
+                self.knowledge_graph.insert_knowledge(
+                    entity_type=insight["category"],
+                    key=key,
+                    content=insight["content"],
+                    metadata={
+                        "tags": insight.get("tags", []),
+                        "source": source,
+                        "synthesized_at": datetime.now().isoformat(),
+                    },
+                    confidence=insight.get("confidence", 1.0),
+                )
+                saved_count += 1
+                if verbose:
+                    print(f"💡 Learned: {insight['category']}:{key}")
+            except Exception as e:
+                logger.warning("Failed to save insight %s: %s", insight.get("key"), e)
+
+        return saved_count
+
     async def _run_synthesis(self, conversation_memory: ConversationMemory, focus: str = "all"):
         """Agent reflects on conversation and extracts learnings
 
@@ -3370,27 +3468,7 @@ class AiAssistAgent:
                 print("💭 Synthesis complete - no new learnings to save")
                 return
 
-            saved_count = 0
-            for insight in insights:
-                try:
-                    self.knowledge_graph.insert_knowledge(
-                        entity_type=insight["category"],
-                        key=insight["key"],
-                        content=insight["content"],
-                        metadata={
-                            "tags": insight.get("tags", []),
-                            "source": "auto_synthesis",
-                            "synthesized_at": datetime.now().isoformat(),
-                        },
-                        confidence=insight.get("confidence", 1.0),
-                    )
-                    saved_count += 1
-
-                    print(f"💡 Learned: {insight['category']}:{insight['key']}")
-
-                except Exception as e:
-                    logger.warning("Failed to save insight %s: %s", insight.get("key"), e)
-
+            saved_count = self._save_insights(insights, "auto_synthesis", verbose=True)
             print(f"✓ Saved {saved_count} new learnings to knowledge base")
 
         except json.JSONDecodeError as e:
@@ -3399,11 +3477,14 @@ class AiAssistAgent:
             logger.exception("Synthesis failed: %s", e)
 
     async def _run_synthesis_from_kg(self, hours: int = 24) -> str:
-        """Review recent conversation entities from KG and extract knowledge,
-        then discover connections between entities.
+        """Snapshot new/changed reports and discover connections between entities.
+
+        Conversation fact-extraction happens at compaction, ``/clear`` and on
+        exit in the interactive TUI, so this scheduled task focuses solely on
+        reports and cross-entity connection discovery.
 
         Args:
-            hours: How many hours back to look for conversations
+            hours: Retained for API/back-compat; no longer used.
 
         Returns:
             Summary of synthesis results
@@ -3412,127 +3493,37 @@ class AiAssistAgent:
             return "Knowledge graph not available"
 
         now = datetime.now()
-        cutoff = now - timedelta(hours=hours)
 
-        # Check for synthesis marker to avoid re-processing
+        # Recall which reports the previous synthesis run processed
         markers = self.knowledge_graph.query_as_of(now, entity_type="synthesis_marker", limit=1)
         previous_reports_processed: dict[str, str] = {}
         if markers:
-            last_synthesis = markers[0].valid_from
-            cutoff = max(cutoff, last_synthesis)
             previous_reports_processed = markers[0].data.get("reports_processed", {})
 
-        # Get conversation entities since cutoff
-        conversations = self.knowledge_graph.query_as_of(now, entity_type="conversation", valid_from_after=cutoff)
-
-        # Check for new/modified reports early to enable early exit
+        # Detect new/modified reports
         reports_processed = self._get_report_snapshots()
         has_new_reports = reports_processed != previous_reports_processed
 
-        # Early exit if nothing new to process
-        if not conversations and not has_new_reports:
-            print("💭 No new conversations or reports to synthesize")
-            return "No new conversations or reports to synthesize"
+        # Early exit if no reports changed since last run
+        if not has_new_reports:
+            print("💭 No new reports to synthesize")
+            return "No new reports to synthesize"
 
-        synthesis_summary = ""
-        synthesis_succeeded = True
-
-        if not conversations:
-            print("💭 No new conversations to synthesize")
-            synthesis_summary = "No new conversations to synthesize"
-        else:
-            # Use earliest conversation timestamp for synthesized knowledge
-            conv_valid_from = min(c.valid_from for c in conversations)
-
-            # Build conversation text
-            history_parts = []
-            for conv in conversations:
-                data = conv.data
-                history_parts.append(f"User: {data.get('user', '')}")
-                history_parts.append(f"Assistant: {data.get('assistant', '')}")
-            history_text = "\n\n".join(history_parts)
-
-            synthesis_prompt = SYNTHESIS_PROMPT_TEMPLATE.format(
-                focus="everything",
-                history_text=history_text,
-            )
-
-            try:
-                with self.anthropic.messages.stream(
-                    model=self._model_for("synthesis"),
-                    max_tokens=4096,
-                    messages=[{"role": "user", "content": synthesis_prompt}],
-                ) as stream:
-                    response = stream.get_final_message()
-                self._track_token_usage(response, turn=-1)
-
-                first_block = response.content[0]
-                response_text = first_block.text.strip() if hasattr(first_block, "text") else ""
-
-                if response_text.startswith("```"):
-                    response_text = response_text.split("```")[1]
-                    if response_text.startswith("json"):
-                        response_text = response_text[4:]
-
-                insights_data = json.loads(response_text)
-                insights = insights_data.get("insights", [])
-
-                if not insights:
-                    print("💭 Synthesis complete - no new learnings to save")
-                    synthesis_summary = "Synthesis complete - no new learnings"
-                else:
-                    saved_count = 0
-                    for insight in insights:
-                        try:
-                            self.knowledge_graph.insert_knowledge(
-                                entity_type=insight["category"],
-                                key=insight["key"],
-                                content=insight["content"],
-                                metadata={
-                                    "tags": insight.get("tags", []),
-                                    "source": "auto_synthesis",
-                                    "synthesized_at": now.isoformat(),
-                                },
-                                confidence=insight.get("confidence", 1.0),
-                                valid_from=conv_valid_from,
-                            )
-                            saved_count += 1
-                            print(f"💡 Learned: {insight['category']}:{insight['key']}")
-                        except Exception as e:
-                            logger.warning("Failed to save insight %s: %s", insight.get("key"), e)
-
-                    synthesis_summary = f"Saved {saved_count} new learnings from {len(conversations)} conversations"
-                    print(f"✓ {synthesis_summary}")
-
-            except json.JSONDecodeError as e:
-                logger.warning("Synthesis failed - invalid JSON: %s", e)
-                synthesis_summary = f"Synthesis failed - invalid JSON: {e}"
-                synthesis_succeeded = False
-            except Exception as e:
-                logger.exception("Synthesis failed: %s", e)
-                synthesis_summary = f"Synthesis failed: {e}"
-                synthesis_succeeded = False
-
-        # Run connection discovery before recording marker
+        # Discover connections between entities using the new reports as context
         try:
             connection_result = await self._run_connection_discovery(previous_reports_processed)
         except Exception as e:
             connection_result = f"Connection discovery error: {e}"
             logger.exception("%s", connection_result)
 
-        # Only record synthesis marker if synthesis succeeded, so failed
-        # conversations will be retried on the next run
-        if synthesis_succeeded:
-            self.knowledge_graph.insert_entity(
-                entity_type="synthesis_marker",
-                data={
-                    "synthesized_conversations": len(conversations),
-                    "reports_processed": reports_processed,
-                },
-                valid_from=now,
-            )
+        # Record synthesis marker so unchanged reports are skipped next run
+        self.knowledge_graph.insert_entity(
+            entity_type="synthesis_marker",
+            data={"reports_processed": reports_processed},
+            valid_from=now,
+        )
 
-        return f"{synthesis_summary}; {connection_result}"
+        return connection_result
 
     @staticmethod
     def _summarize_entities_for_prompt(entities: list) -> str:

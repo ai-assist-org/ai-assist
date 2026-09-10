@@ -774,7 +774,9 @@ The knowledge graph automatically stores:
 - Temporal changes (when created vs. when discovered)
 - Conversation exchanges (user/assistant pairs)
 
-**KG Synthesis**: A built-in scheduled task (`kg-synthesis`) runs at 22:00 on weekdays to review the day's conversations, extract structured knowledge (preferences, lessons, context, rationale), and discover connections between entities. The schedule is configurable in `event-schedules.json`.
+**KG Synthesis**: A built-in scheduled task (`kg-synthesis`) runs at 22:00 on weekdays to snapshot new or changed reports and discover connections between knowledge-graph entities. Extracting structured knowledge (preferences, lessons, context, rationale) from conversations is handled separately, at compaction/`/clear`/exit (see below). The schedule is configurable in `event-schedules.json`.
+
+**Compaction-time learning**: In interactive sessions, when the conversation is compacted, when you run `/clear`, or when you exit the session, durable facts you've stated — such as where a piece of code lives — are extracted into the knowledge graph in the background, so the assistant doesn't "forget" them as the context grows and short sessions still contribute knowledge. Re-stating a fact updates the existing entry instead of piling up duplicates.
 
 **Learning Reinforcement**: Synthesized knowledge from the KG is automatically injected into the system prompt:
 - **User preferences** are always present so the assistant remembers your communication style and choices
