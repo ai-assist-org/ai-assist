@@ -405,6 +405,104 @@ class TestConversationCompaction:
         assert mem.compaction_threshold == 5
 
 
+class TestCompactionFactExtraction:
+    """Tests for the split compaction primitives and fact extraction."""
+
+    def _mem_with(self, n):
+        mem = ConversationMemory(max_exchanges=10)
+        for i in range(n):
+            mem.add_exchange(f"q{i}", f"a{i}")
+        return mem
+
+    def test_summarize_and_extract_parses_summary_and_facts(self):
+        mem = self._mem_with(8)
+        text = (
+            "The user is working on the eco-gotests suite.\n\n"
+            "```json\n"
+            '{"facts": [{"category": "project_context", "key": "eco-gotests-location", '
+            '"content": "eco-gotests lives at ~/external/eco-gotests", '
+            '"confidence": 0.9, "tags": ["path"]}]}\n'
+            "```"
+        )
+        resp = MagicMock()
+        resp.content = [MagicMock(text=text)]
+        client = MagicMock()
+        client.messages.stream.return_value = _mock_stream_message(resp)
+
+        summary, facts = mem.summarize_and_extract(client, "m", mem.exchanges[:-4])
+
+        assert summary == "The user is working on the eco-gotests suite."
+        assert len(facts) == 1
+        assert facts[0]["category"] == "project_context"
+        assert facts[0]["key"] == "eco-gotests-location"
+
+    def test_summarize_and_extract_malformed_facts_keeps_summary(self):
+        text = "Just a summary.\n\n```json\n{not valid json]\n```"
+        resp = MagicMock()
+        resp.content = [MagicMock(text=text)]
+        client = MagicMock()
+        client.messages.stream.return_value = _mock_stream_message(resp)
+        mem = self._mem_with(8)
+
+        summary, facts = mem.summarize_and_extract(client, "m", mem.exchanges[:-4])
+
+        assert summary == "Just a summary."
+        assert facts == []
+
+    def test_summarize_and_extract_api_failure(self):
+        client = MagicMock()
+        client.messages.stream.side_effect = Exception("boom")
+        mem = self._mem_with(8)
+
+        summary, facts = mem.summarize_and_extract(client, "m", mem.exchanges[:-4])
+
+        assert summary is None
+        assert facts == []
+
+    def test_parse_facts_filters_incomplete(self):
+        text = (
+            '```json\n{"facts": [{"category": "project_context", "key": "k", "content": "c"}, ' '{"key": "nope"}]}\n```'
+        )
+        facts = ConversationMemory._parse_facts(text)
+        assert len(facts) == 1
+        assert facts[0]["key"] == "k"
+
+    def test_parse_facts_no_json(self):
+        assert ConversationMemory._parse_facts("no json here") == []
+
+    def test_finish_compaction_keeps_exchanges_added_during_call(self):
+        """Exchanges appended after the snapshot must survive compaction."""
+        mem = self._mem_with(8)  # q0..q7
+        old = mem.exchanges[:-4]  # q0..q3
+        old_ids = {id(ex) for ex in old}
+
+        # Simulate a new exchange arriving while the background summary runs
+        mem.add_exchange("during", "call")
+
+        mem.finish_compaction(old_ids, "SUMMARY")
+
+        users = [e["user"] for e in mem.exchanges]
+        assert users[0] == "[Conversation summary]"
+        assert "q0" not in users and "q3" not in users
+        assert users[1:] == ["q4", "q5", "q6", "q7", "during"]
+
+    def test_compacting_flag_guard(self):
+        mem = self._mem_with(8)
+        assert mem.is_compacting() is False
+        mem.mark_compacting()
+        assert mem.is_compacting() is True
+        mem.clear_compacting()
+        assert mem.is_compacting() is False
+
+    def test_clear_bumps_generation(self):
+        """clear() increments generation so in-flight tasks can detect a reset."""
+        mem = self._mem_with(3)
+        g0 = mem.generation
+        mem.clear()
+        assert mem.generation == g0 + 1
+        assert mem.exchanges == []
+
+
 class TestNativeContextWindow:
     """Tests for native 1M context window on Claude 4.6+ models"""
 

@@ -1,7 +1,7 @@
 """Tests for connection discovery in KG synthesis"""
 
 import json
-from datetime import datetime, timedelta
+from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -261,19 +261,8 @@ class TestConnectionDiscovery:
 
     @pytest.mark.asyncio
     async def test_synthesis_from_kg_runs_connection_discovery(self, agent, kg):
-        """_run_synthesis_from_kg should call _run_connection_discovery"""
-        now = datetime.now()
-        kg.insert_entity(
-            entity_type="conversation",
-            data={"user": "Test question", "assistant": "Test answer"},
-            valid_from=now - timedelta(hours=1),
-            tx_from=now - timedelta(hours=1),
-        )
-
-        synthesis_response = MagicMock()
-        synthesis_response.content = [MagicMock(text=json.dumps({"insights": []}))]
-
-        with patch.object(agent.anthropic.messages, "stream", return_value=_mock_stream_message(synthesis_response)):
+        """_run_synthesis_from_kg should call _run_connection_discovery when reports change"""
+        with patch.object(agent, "_get_report_snapshots", return_value={"report.md": "2026-02-25T10:00:00"}):
             with patch.object(
                 agent,
                 "_run_connection_discovery",

@@ -16,9 +16,9 @@ The agent automatically saves:
 ## How It Works
 
 1. Every conversation exchange is saved to the Knowledge Graph as it happens
-2. A **KG synthesis** task (configurable in `event-schedules.json`) reviews the day's conversations
-3. The synthesis extracts structured knowledge (preferences, lessons, context, rationale)
-4. Extracted insights are saved to the Knowledge Graph automatically
+2. Structured knowledge (preferences, lessons, context, rationale) is extracted from the conversation when it is **compacted**, **cleared** (`/clear`), or when you **exit** an interactive session — each runs as a background task (synchronously on exit) so facts you stated (for example, where a piece of code lives) survive a growing context window and short sessions still contribute
+3. Re-stating a fact updates the existing entry rather than creating a duplicate (semantic key-reuse)
+4. A nightly **KG synthesis** task (configurable in `event-schedules.json`) snapshots new/changed reports and discovers connections between entities — it no longer mines conversations
 5. Agent can recall saved knowledge in future conversations
 
 ## Example
