@@ -145,18 +145,36 @@ class TestGetKgLearningsSection:
         section = agent._get_kg_learnings_section()
         assert "vague_pattern" not in section
 
-    def test_hard_cap_truncation(self):
+    def test_cap_scales_with_context_window(self, caplog):
+        """The learnings cap is a fraction of the model's context window, so a
+        small window truncates while a large one leaves the same content intact."""
         kg = KnowledgeGraph(":memory:")
-        for i in range(50):
+        for i in range(15):
             kg.insert_knowledge(
                 entity_type="user_preference",
                 key=f"preference_{i}",
-                content=f"A verbose preference description number {i} with lots of detail " * 3,
+                content=f"A verbose preference description number {i} with lots of detail",
                 confidence=1.0,
             )
-        agent = _make_agent(kg=kg)
-        section = agent._get_kg_learnings_section()
-        assert len(section) <= 3600  # 3000 cap + header
+
+        # Tiny window → small cap → truncation kicks in and is logged.
+        small = AiAssistConfig(anthropic_api_key="test-key", mcp_servers={}, model_context_window=10000)
+        small_agent = AiAssistAgent(small, knowledge_graph=kg)
+        small_cap = int(10000 * small_agent.KG_LEARNINGS_CONTEXT_FRACTION * small_agent._CHARS_PER_TOKEN)
+        with caplog.at_level("WARNING"):
+            small_section = small_agent._get_kg_learnings_section()
+        assert "[...truncated]" in small_section
+        assert len(small_section) <= small_cap + 400  # cap + header/instruction slack
+        assert "KG learnings truncated" in caplog.text
+
+        # Large window → the same content fits, no truncation, no warning.
+        caplog.clear()
+        large = AiAssistConfig(anthropic_api_key="test-key", mcp_servers={}, model_context_window=1000000)
+        large_agent = AiAssistAgent(large, knowledge_graph=kg)
+        with caplog.at_level("WARNING"):
+            large_section = large_agent._get_kg_learnings_section()
+        assert "[...truncated]" not in large_section
+        assert "KG learnings truncated" not in caplog.text
 
     def test_learnings_in_system_prompt(self):
         kg = KnowledgeGraph(":memory:")

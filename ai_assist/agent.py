@@ -244,6 +244,15 @@ class AiAssistAgent:
     # labeled dup/distinct pairs (distinct top out ~0.66, restatements ~0.80+).
     DEDUP_SIM_THRESHOLD = 0.80
 
+    # Max share of the context window given to the KG learnings section, as a
+    # fraction of tokens (≈4 chars/token). Tuned to the smallest model (200k):
+    # 0.015 * 200000 * 4 ≈ 12000 chars, enough to fit the full retrieved set
+    # (limit=20 project + 10 lessons + 15 prefs). Larger windows are effectively
+    # uncapped since retrieval bounds the content; tiny custom endpoints scale
+    # down to protect their context.
+    KG_LEARNINGS_CONTEXT_FRACTION = 0.015
+    _CHARS_PER_TOKEN = 4
+
     # Model-specific max output tokens
     # Source: https://docs.anthropic.com/en/docs/about-claude/models
     MODEL_MAX_TOKENS = {
@@ -1729,8 +1738,18 @@ class AiAssistAgent:
             "being asked. Do not wait for the user to ask about them.\n\n"
         )
         full_text = "\n\n".join(parts)
-        if len(full_text) > 3000:
-            full_text = full_text[:3000] + "\n[...truncated]"
+        max_chars = int(self.get_context_window_size() * self.KG_LEARNINGS_CONTEXT_FRACTION * self._CHARS_PER_TOKEN)
+        if len(full_text) > max_chars:
+            kept = full_text[:max_chars]
+            dropped_entries = full_text.count("\n- ") - kept.count("\n- ")
+            logging.warning(
+                "KG learnings truncated: kept %d/%d chars (cap=%d), ~%d entries dropped",
+                max_chars,
+                len(full_text),
+                max_chars,
+                dropped_entries,
+            )
+            full_text = kept + "\n[...truncated]"
         return section + full_text
 
     def _get_kg_auto_context_section(self) -> str:
