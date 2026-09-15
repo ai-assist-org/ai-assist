@@ -1557,6 +1557,37 @@ async def test_compound_cd_validates_path_per_segment(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_path_prompt_includes_triggering_command(tmp_path, monkeypatch):
+    """A path prompt from a shell command shows the command as the reason."""
+    monkeypatch.setattr("ai_assist.filesystem_tools.get_config_dir", lambda: tmp_path)
+    config = AiAssistConfig(
+        anthropic_api_key="test",
+        allowed_commands=["find"],
+        allowed_paths=[str(tmp_path)],
+    )
+    tools = FilesystemTools(config, load_user_config=False)
+
+    descriptions = []
+
+    async def track_path_callback(description: str) -> bool:
+        descriptions.append(description)
+        return True
+
+    tools.path_confirmation_callback = track_path_callback
+
+    command = "find /some/outside/path -name data.txt"
+    await tools.execute_tool("execute_command", {"command": command})
+
+    assert len(descriptions) == 1
+    # First line is still the parseable "Access path: ..." (used by the
+    # "always" branch); the reason line explains why the path was needed.
+    first_line, _, rest = descriptions[0].partition("\n")
+    assert first_line.startswith("Access path: ")
+    assert "/some/outside/path" in first_line
+    assert command in rest
+
+
+@pytest.mark.asyncio
 async def test_compound_cd_allowed_path_skips_prompt(tmp_path, monkeypatch):
     """cd to an already-allowed path doesn't prompt"""
     monkeypatch.setattr("ai_assist.filesystem_tools.get_config_dir", lambda: tmp_path)
