@@ -222,6 +222,11 @@ class AiAssistConfig(BaseModel):
     anthropic_base_url: str | None = Field(default_factory=lambda: os.getenv("ANTHROPIC_BASE_URL"))
     # Generic API key for custom endpoints (falls back to anthropic_api_key).
     llm_api_key: str | None = Field(default_factory=lambda: os.getenv("AI_ASSIST_API_KEY"))
+    # Attribution headers sent to a custom endpoint (e.g. OpenRouter app rankings).
+    http_referer: str | None = Field(
+        default_factory=lambda: os.getenv("AI_ASSIST_HTTP_REFERER", "https://github.com/ai-assist-org/ai-assist"),
+    )
+    x_title: str | None = Field(default_factory=lambda: os.getenv("AI_ASSIST_X_TITLE", "ai-assist"))
 
     # Session model, aka the AWL `default` tier. Falls back to AI_ASSIST_MODEL_HIGH
     # when AI_ASSIST_MODEL is unset (bidirectional default<->high fallback).
@@ -265,6 +270,16 @@ class AiAssistConfig(BaseModel):
     def use_custom_endpoint(self) -> bool:
         """Check if a custom Anthropic-compatible endpoint is configured"""
         return bool(self.anthropic_base_url)
+
+    @property
+    def custom_endpoint_headers(self) -> dict[str, str]:
+        """Attribution headers to send to a custom endpoint (empty when none set)"""
+        headers: dict[str, str] = {}
+        if self.http_referer:
+            headers["HTTP-Referer"] = self.http_referer
+        if self.x_title:
+            headers["X-Title"] = self.x_title
+        return headers
 
     @property
     def effective_api_key(self) -> str:
@@ -348,11 +363,11 @@ class AiAssistConfig(BaseModel):
         # Validate combinations don't exceed 100%
         if self.message_limit_pct + self.reserve_pct >= 100.0:
             raise ValueError(
-                f"message_limit_pct ({self.message_limit_pct}) + reserve_pct ({self.reserve_pct}) " f"must be < 100"
+                f"message_limit_pct ({self.message_limit_pct}) + reserve_pct ({self.reserve_pct}) must be < 100"
             )
         if self.total_messages_pct + self.reserve_pct >= 100.0:
             raise ValueError(
-                f"total_messages_pct ({self.total_messages_pct}) + reserve_pct ({self.reserve_pct}) " f"must be < 100"
+                f"total_messages_pct ({self.total_messages_pct}) + reserve_pct ({self.reserve_pct}) must be < 100"
             )
 
         return self
@@ -383,6 +398,8 @@ class AiAssistConfig(BaseModel):
             vertex_region=os.getenv("ANTHROPIC_VERTEX_REGION"),
             anthropic_base_url=os.getenv("ANTHROPIC_BASE_URL"),
             llm_api_key=os.getenv("AI_ASSIST_API_KEY"),
+            http_referer=os.getenv("AI_ASSIST_HTTP_REFERER", "https://github.com/ai-assist-org/ai-assist"),
+            x_title=os.getenv("AI_ASSIST_X_TITLE", "ai-assist"),
             model=_env_session_model(),
             synthesis_model=os.getenv("AI_ASSIST_SYNTHESIS_MODEL"),
             compaction_model=os.getenv("AI_ASSIST_COMPACTION_MODEL"),

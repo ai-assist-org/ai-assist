@@ -384,10 +384,14 @@ class AiAssistAgent:
         self.anthropic: Anthropic | AnthropicVertex
         if config.use_custom_endpoint:
             print(f"Using custom endpoint: {config.anthropic_base_url}")
+            custom_kwargs: dict[str, Any] = {}
+            if config.custom_endpoint_headers:
+                custom_kwargs["default_headers"] = config.custom_endpoint_headers
             self.anthropic = Anthropic(
                 api_key=config.effective_api_key or "not-needed",
                 base_url=config.anthropic_base_url,
                 max_retries=5,
+                **custom_kwargs,
             )
         elif config.use_vertex:
             vertex_kwargs: dict[str, Any] = {"project_id": config.vertex_project_id}
@@ -466,7 +470,7 @@ class AiAssistAgent:
             if not_embedded == 0:
                 print(f"✓ Vector search enabled ({embedded} entities)")
             else:
-                print(f"✓ Vector search enabled ({embedded} entities, " f"{not_embedded} not yet embedded)")
+                print(f"✓ Vector search enabled ({embedded} entities, {not_embedded} not yet embedded)")
 
         # Track synthesis flag
         self._pending_synthesis: Any = None
@@ -2529,7 +2533,7 @@ class AiAssistAgent:
         # Validate server exists
         if server_name not in self.sessions:
             available = ", ".join(self.sessions.keys())
-            raise ValueError(f"MCP server '{server_name}' not connected. " f"Available servers: {available}")
+            raise ValueError(f"MCP server '{server_name}' not connected. Available servers: {available}")
 
         # Validate server has prompts
         if server_name not in self.available_prompts:
@@ -2539,7 +2543,7 @@ class AiAssistAgent:
         if prompt_name not in self.available_prompts[server_name]:
             available = ", ".join(self.available_prompts[server_name].keys())
             raise ValueError(
-                f"Prompt '{prompt_name}' not found in server '{server_name}'. " f"Available prompts: {available}"
+                f"Prompt '{prompt_name}' not found in server '{server_name}'. Available prompts: {available}"
             )
 
         # Get prompt definition
@@ -2650,7 +2654,7 @@ class AiAssistAgent:
 
         for arg in prompt_def.arguments:
             if arg.required and arg.name not in provided_args:
-                raise ValueError(f"Required argument '{arg.name}' missing. " f"Description: {arg.description}")
+                raise ValueError(f"Required argument '{arg.name}' missing. Description: {arg.description}")
 
     def _validate_tool_arguments(self, tool_name: str, arguments: dict) -> str | None:
         """Validate tool arguments against the tool's schema
