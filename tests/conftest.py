@@ -7,10 +7,16 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
-def isolate_config_dir(tmp_path):
-    """Prevent tests from writing to ~/.ai-assist by redirecting get_config_dir() to a temp directory."""
+def isolate_config_dir(tmp_path, monkeypatch):
+    """Prevent tests from writing to ~/.ai-assist by redirecting get_config_dir() to a temp directory.
+
+    Sets AI_ASSIST_CONFIG_DIR (read live inside get_config_dir) so modules that bound
+    the function at import time via ``from .config import get_config_dir`` are also
+    isolated, and additionally patches the symbol for callers referencing it directly.
+    """
     test_config_dir = tmp_path / ".ai-assist"
     test_config_dir.mkdir(exist_ok=True)
+    monkeypatch.setenv("AI_ASSIST_CONFIG_DIR", str(test_config_dir))
     with patch("ai_assist.config.get_config_dir", return_value=test_config_dir):
         yield test_config_dir
 

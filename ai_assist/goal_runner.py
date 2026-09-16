@@ -54,7 +54,7 @@ class GoalRunner:
         state = self.state_manager.load(self.goal_id)
 
         if state.status != "active":
-            print(f"Goal {self.goal_id} is {state.status}, stopping cycle")
+            logger.info("Goal %s is %s, stopping cycle", self.goal_id, state.status)
             raise asyncio.CancelledError()
 
         # Merge: builtin/local vars < persisted state < initial (caller) vars
@@ -79,7 +79,7 @@ class GoalRunner:
         if success_met:
             state.status = "completed"
             state.success_reason = result.variables.get("_goal_success_reason", "")
-            print(f"Goal {self.goal_id} completed: {state.success_reason}")
+            logger.info("Goal %s completed: %s", self.goal_id, state.success_reason)
 
         self.state_manager.save(self.goal_id, state)
         return result

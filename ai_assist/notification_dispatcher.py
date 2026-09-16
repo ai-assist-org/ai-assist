@@ -61,8 +61,8 @@ class NotificationDispatcher:
                 success = await channel.send(notification)
                 results[channel_name] = success
                 notification.delivered[channel_name] = success
-            except Exception as e:
-                logger.error("Error delivering to %s: %s", channel_name, e)
+            except Exception:
+                logger.exception("Error delivering to %s", channel_name)
                 results[channel_name] = False
 
         return results

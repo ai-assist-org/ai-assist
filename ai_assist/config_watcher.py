@@ -4,10 +4,13 @@ This module provides shared configuration file watching used by both
 monitor mode and interactive mode.
 """
 
+import logging
 from pathlib import Path
 
 from .config import get_config_dir
 from .file_watchdog import FileWatchdog
+
+logger = logging.getLogger(__name__)
 
 
 class ConfigWatcher:
@@ -41,7 +44,7 @@ class ConfigWatcher:
             watcher = FileWatchdog(mcp_file, self._on_mcp_change, debounce_seconds=1.0)
             await watcher.start()
             self.watchers.append(watcher)
-            print(f"Watching {mcp_file} for changes")
+            logger.info("Watching %s for changes", mcp_file)
 
         # Watch identity.yaml
         identity_file = config_dir / "identity.yaml"
@@ -49,7 +52,7 @@ class ConfigWatcher:
             watcher = FileWatchdog(identity_file, self._on_identity_change, debounce_seconds=1.0)
             await watcher.start()
             self.watchers.append(watcher)
-            print(f"Watching {identity_file} for changes")
+            logger.info("Watching %s for changes", identity_file)
 
         # Watch installed-skills.json
         skills_file = config_dir / "installed-skills.json"
@@ -57,7 +60,7 @@ class ConfigWatcher:
             watcher = FileWatchdog(skills_file, self._on_skills_change, debounce_seconds=1.0)
             await watcher.start()
             self.watchers.append(watcher)
-            print(f"Watching {skills_file} for changes")
+            logger.info("Watching %s for changes", skills_file)
 
         # Watch installed-plugins.json
         plugins_file = config_dir / "installed-plugins.json"
@@ -65,7 +68,7 @@ class ConfigWatcher:
             watcher = FileWatchdog(plugins_file, self._on_plugins_change, debounce_seconds=1.0)
             await watcher.start()
             self.watchers.append(watcher)
-            print(f"Watching {plugins_file} for changes")
+            logger.info("Watching %s for changes", plugins_file)
 
         # Watch individual SKILL.md files
         await self._watch_skill_files()
@@ -93,8 +96,8 @@ class ConfigWatcher:
         """Callback when mcp_servers.yaml changes"""
         try:
             await self.agent.reload_mcp_servers()
-        except Exception as e:
-            print(f"❌ Failed to reload MCP servers: {e}")
+        except Exception:
+            logger.exception("Failed to reload MCP servers")
 
     async def _on_identity_change(self):
         """Callback when identity.yaml changes"""
@@ -102,9 +105,9 @@ class ConfigWatcher:
             from .identity import get_identity
 
             self.agent.identity = get_identity(reload=True)
-            print("✅ Identity reloaded")
-        except Exception as e:
-            print(f"❌ Failed to reload identity: {e}")
+            logger.info("Identity reloaded")
+        except Exception:
+            logger.exception("Failed to reload identity")
 
     async def _on_skills_change(self):
         """Callback when installed-skills.json changes"""
@@ -115,17 +118,17 @@ class ConfigWatcher:
             if hasattr(self.agent, "plugins_manager"):
                 self.agent.plugins_manager.reapply_to_loaded_skills()
             await self._watch_skill_files()
-            print("✅ Skills reloaded")
-        except Exception as e:
-            print(f"❌ Failed to reload skills: {e}")
+            logger.info("Skills reloaded")
+        except Exception:
+            logger.exception("Failed to reload skills")
 
     async def _on_plugins_change(self):
         """Callback when installed-plugins.json changes"""
         try:
             self.agent.plugins_manager.load_installed_plugins()
-            print("✅ Plugins reloaded")
-        except Exception as e:
-            print(f"❌ Failed to reload plugins: {e}")
+            logger.info("Plugins reloaded")
+        except Exception:
+            logger.exception("Failed to reload plugins")
 
     def _make_skill_file_callback(self, skill_name: str):
         """Create a callback for a specific skill's SKILL.md."""
@@ -133,9 +136,9 @@ class ConfigWatcher:
         async def on_change():
             try:
                 self.agent.skills_manager.load_installed_skills()
-                print(f"✅ Skill '{skill_name}' reloaded")
-            except Exception as e:
-                print(f"❌ Failed to reload skill '{skill_name}': {e}")
+                logger.info("Skill '%s' reloaded", skill_name)
+            except Exception:
+                logger.exception("Failed to reload skill '%s'", skill_name)
 
         return on_change
 

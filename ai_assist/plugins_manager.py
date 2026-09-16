@@ -77,8 +77,8 @@ class PluginsManager:
 
         try:
             data = json.loads(self.installed_plugins_file.read_text())
-        except json.JSONDecodeError as e:
-            logger.error("Failed to parse %s: %s", self.installed_plugins_file, e)
+        except json.JSONDecodeError:
+            logger.exception("Failed to parse %s", self.installed_plugins_file)
             return
 
         for record in data.get("plugins", []):
@@ -91,8 +91,8 @@ class PluginsManager:
                 loaded = self.plugins_loader.load_plugin_from_local(cache_path)
                 self._register(plugin.name, loaded)
                 self.installed_plugins.append(plugin)
-            except Exception as e:
-                logger.warning("Failed to load installed plugin: %s", e)
+            except Exception:
+                logger.warning("Failed to load installed plugin", exc_info=True)
 
         self.reapply_to_loaded_skills()
 
@@ -459,14 +459,14 @@ class PluginsManager:
             return
         try:
             data = json.loads(self.marketplaces_file.read_text())
-        except json.JSONDecodeError as e:
-            logger.error("Failed to parse %s: %s", self.marketplaces_file, e)
+        except json.JSONDecodeError:
+            logger.exception("Failed to parse %s", self.marketplaces_file)
             return
         for record in data.get("marketplaces", []):
             try:
                 self.marketplaces.append(Marketplace(**record))
-            except Exception as e:
-                logger.warning("Failed to load marketplace: %s", e)
+            except Exception:
+                logger.warning("Failed to load marketplace", exc_info=True)
 
     def _save_marketplaces(self):
         """Persist registered marketplaces to JSON."""

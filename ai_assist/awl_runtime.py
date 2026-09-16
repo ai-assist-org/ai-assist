@@ -25,6 +25,7 @@ from .awl_ast import (
 )
 from .awl_expressions import AWLExpressionEvaluator
 from .filesystem_tools import extract_command_names
+from .output import console_print
 
 logger = logging.getLogger(__name__)
 
@@ -335,7 +336,7 @@ class AWLRuntime:
         var_warnings = validate_workflow_variables(workflow, set(self._variables.keys()))
         for w in var_warnings:
             logger.warning("AWL validation: %s", w)
-            print(f"  [!] {w}")
+            console_print(f"  [!] {w}")
 
         # Validate model levels (low/medium/high); resolution happens per-task.
         model_errors = _validate_workflow_models(workflow, AWL_MODEL_LEVELS)
@@ -434,7 +435,7 @@ class AWLRuntime:
 
         logger.info("AWL task '%s' starting", task.task_id)
         model_info = f" (model={task.model})" if task.model else ""
-        print(f"  > task '{task.task_id}'{model_info} ...", flush=True)
+        console_print(f"  > task '{task.task_id}'{model_info} ...", flush=True)
 
         # Pre-extract: if all expose vars can be found in existing reports, skip the model call
         if task.expose:
@@ -510,9 +511,9 @@ class AWLRuntime:
                     len(security_rejections),
                     detail_text,
                 )
-                print(f"    [!] {len(security_rejections)} security rejection(s) during task:")
+                console_print(f"    [!] {len(security_rejections)} security rejection(s) during task:")
                 for line in details:
-                    print(line)
+                    console_print(line)
 
             exposed, expose_methods = await self._resolve_exposed(task, response, tool_calls_before)
 
@@ -525,8 +526,8 @@ class AWLRuntime:
         except Exception as e:
             outcome = TaskOutcome(status="failed", summary=str(e))
             self._task_outcomes.append(outcome)
-            logger.error("AWL task '%s' failed: %s", task.task_id, e)
-            print(f"    [-] failed: {e}")
+            logger.exception("AWL task '%s' failed", task.task_id)
+            console_print(f"    [-] failed: {e}")
             if self._loop_depth == 0 and "continue-on-failure" not in task.hints:
                 raise _TaskFailedError(f"Task '{task.task_id}' failed: {e}") from e
 
@@ -585,7 +586,7 @@ class AWLRuntime:
                     list(exposed.keys()),
                     missing_vars,
                 )
-                print(f"    [!] missing exposed vars: {missing_vars}")
+                console_print(f"    [!] missing exposed vars: {missing_vars}")
                 for var in missing_vars:
                     self._variables[var] = None
 
@@ -595,7 +596,7 @@ class AWLRuntime:
                 if len(val_str) > 200:
                     val_str = val_str[:200] + "..."
                 method = expose_methods.get(key, "unknown")
-                print(f"    [+] {key} = {val_str} (via {method})")
+                console_print(f"    [+] {key} = {val_str} (via {method})")
             logger.info(
                 "AWL task '%s' succeeded, exposed: %s, methods: %s",
                 task.task_id,
@@ -603,7 +604,7 @@ class AWLRuntime:
                 expose_methods,
             )
         else:
-            print("    [+] success")
+            console_print("    [+] success")
             logger.info("AWL task '%s' succeeded (no exposed vars)", task.task_id)
 
     async def _retry_expose_extraction(
@@ -633,7 +634,7 @@ class AWLRuntime:
             f"infer it from context. Do NOT call any tools. Output nothing else."
         )
         logger.info("AWL task '%s': nudging for missing exposed vars: %s", task.task_id, missing_vars)
-        print(f"    [~] nudging for missing vars: {missing_vars}")
+        console_print(f"    [~] nudging for missing vars: {missing_vars}")
         try:
             retry_response = await self._agent.query(prompt, max_turns=2)
             retry_exposed = self._extract_exposed(retry_response, task.expose)
@@ -642,7 +643,7 @@ class AWLRuntime:
                 still_missing = [v for v in task.expose if v not in merged]
                 if not still_missing:
                     logger.info("AWL task '%s': nudge recovered all exposed vars", task.task_id)
-                    print(f"    [+] nudge recovered: {list(retry_exposed.keys())}")
+                    console_print(f"    [+] nudge recovered: {list(retry_exposed.keys())}")
                 else:
                     logger.warning(
                         "AWL task '%s': nudge recovered %s but still missing %s",
@@ -650,10 +651,12 @@ class AWLRuntime:
                         list(retry_exposed.keys()),
                         still_missing,
                     )
-                    print(f"    [~] nudge recovered {list(retry_exposed.keys())}, still missing {still_missing}")
+                    console_print(
+                        f"    [~] nudge recovered {list(retry_exposed.keys())}, still missing {still_missing}"
+                    )
                 return merged
-        except Exception as e:
-            logger.warning("AWL task '%s': nudge failed: %s", task.task_id, e)
+        except Exception:
+            logger.warning("AWL task '%s': nudge failed", task.task_id, exc_info=True)
         return partial_exposed
 
     @staticmethod
@@ -743,7 +746,7 @@ class AWLRuntime:
                 task.task_id,
                 list(result.keys()),
             )
-            print(f"    [+] pre-extracted from reports: {list(result.keys())}")
+            console_print(f"    [+] pre-extracted from reports: {list(result.keys())}")
 
         return result
 
@@ -761,7 +764,7 @@ class AWLRuntime:
                 task.task_id,
                 list(result.keys()),
             )
-            print(f"    [+] response section fallback recovered: {list(result.keys())}")
+            console_print(f"    [+] response section fallback recovered: {list(result.keys())}")
         return result
 
     def _extract_from_report_sections(
@@ -792,7 +795,7 @@ class AWLRuntime:
                 task.task_id,
                 list(result.keys()),
             )
-            print(f"    [+] report fallback recovered: {list(result.keys())}")
+            console_print(f"    [+] report fallback recovered: {list(result.keys())}")
 
         return result
 
@@ -811,7 +814,7 @@ class AWLRuntime:
                 expression,
                 names,
             )
-            print(f"  [!] {directive} '{expression}': undefined variable(s): {names}")
+            console_print(f"  [!] {directive} '{expression}': undefined variable(s): {names}")
 
     async def _execute_if(self, node: IfNode):
         self._check_undefined_variables(node.expression, "@if")
@@ -830,7 +833,7 @@ class AWLRuntime:
                 node.collection,
                 node.collection,
             )
-            print(f"  [!] @loop '{node.collection}': collection variable is not defined")
+            console_print(f"  [!] @loop '{node.collection}': collection variable is not defined")
         collection = self._variables.get(node.collection, [])
         collection = self._coerce_to_list(collection, node.collection)
         if not isinstance(collection, list | tuple):
@@ -839,7 +842,7 @@ class AWLRuntime:
                 f"Ensure the task exposes it as a JSON array."
             )
             logger.error("AWL %s", msg)
-            print(f"  [-] {msg}")
+            console_print(f"  [-] {msg}")
             return
 
         items = collection
@@ -860,7 +863,7 @@ class AWLRuntime:
             for i, item in enumerate(items, 1):
                 item_full = str(item)
                 item_short = item_full[:100] + "..." if len(item_full) > 100 else item_full
-                print(f"  loop {node.collection} [{i}/{len(items)}]: {node.item_var} = {item_short}")
+                console_print(f"  loop {node.collection} [{i}/{len(items)}]: {node.item_var} = {item_short}")
                 logger.info("AWL @loop iteration %d/%d: %s = %s", i, len(items), node.item_var, item_full)
                 self._variables[node.item_var] = item
                 outcomes_before = len(self._task_outcomes)
@@ -868,11 +871,11 @@ class AWLRuntime:
                     await self._execute_body(node.body)
                 except _ContinueSignal as sig:
                     logger.info("AWL @loop @continue: %s", sig.message)
-                    print(f"    [~] continue: {sig.message}")
+                    console_print(f"    [~] continue: {sig.message}")
                     continue
                 except _BreakSignal as sig:
                     logger.info("AWL @loop @break: %s", sig.message)
-                    print(f"    [~] break: {sig.message}")
+                    console_print(f"    [~] break: {sig.message}")
                     break
 
                 if node.collect is not None:
@@ -885,7 +888,7 @@ class AWLRuntime:
                         logger.warning(
                             "AWL @loop collect: iteration %d had %d failed task(s), skipping", i, len(failed)
                         )
-                        print(f"    [!] iteration {i} failed, skipping collect")
+                        console_print(f"    [!] iteration {i} failed, skipping collect")
                     else:
                         iteration_exposed: dict[str, Any] = {}
                         for outcome in new_outcomes:
@@ -897,7 +900,7 @@ class AWLRuntime:
                                 "including with _item only",
                                 i,
                             )
-                            print(f"    [!] iteration {i}: no exposed vars, including with _item")
+                            console_print(f"    [!] iteration {i}: no exposed vars, including with _item")
                             iteration_exposed = {"_item": item}
                         if node.collect_fields:
                             iteration_exposed = {k: v for k, v in iteration_exposed.items() if k in node.collect_fields}
@@ -909,7 +912,7 @@ class AWLRuntime:
             self._variables[node.collect] = collected
             logger.info("AWL @loop collected %d/%d items into '%s'", len(collected), len(items), node.collect)
             if len(collected) < len(items):
-                print(f"  [!] collect: {len(collected)}/{len(items)} iterations produced results")
+                console_print(f"  [!] collect: {len(collected)}/{len(items)} iterations produced results")
                 logger.warning(
                     "AWL @loop '%s' collect: only %d/%d iterations produced results",
                     node.collection,
@@ -925,7 +928,7 @@ class AWLRuntime:
         else:
             label = f"{node.duration_seconds}s"
         logger.info("AWL @wait %s (%d seconds)", label, node.duration_seconds)
-        print(f"  > waiting {label} ...", flush=True)
+        console_print(f"  > waiting {label} ...", flush=True)
         await asyncio.sleep(node.duration_seconds)
 
     async def _execute_while(self, node: WhileNode):
@@ -946,7 +949,7 @@ class AWLRuntime:
                     node.expression,
                     value,
                 )
-                print(
+                console_print(
                     f"  while [{iteration}/{node.max_iterations}]: {node.expression} = {value}",
                     flush=True,
                 )
@@ -954,18 +957,18 @@ class AWLRuntime:
                     await self._execute_body(node.body)
                 except _ContinueSignal as sig:
                     logger.info("AWL @while @continue: %s", sig.message)
-                    print(f"    [~] continue: {sig.message}")
+                    console_print(f"    [~] continue: {sig.message}")
                     continue
                 except _BreakSignal as sig:
                     logger.info("AWL @while @break: %s", sig.message)
-                    print(f"    [~] break: {sig.message}")
+                    console_print(f"    [~] break: {sig.message}")
                     break
         finally:
             self._loop_depth -= 1
 
         if iteration >= node.max_iterations:
             logger.warning("AWL @while reached max_iterations (%d)", node.max_iterations)
-            print(f"  [!] @while reached max_iterations ({node.max_iterations})")
+            console_print(f"  [!] @while reached max_iterations ({node.max_iterations})")
 
         logger.info("AWL @while exited after %d iteration(s)", iteration)
 
@@ -973,7 +976,7 @@ class AWLRuntime:
         message = self._expr.interpolate(node.message, self._variables)
         self._check_unresolved_interpolations("notify", [node.message])
         logger.info("AWL @notify: %s", message)
-        print(f"  [*] {message}", flush=True)
+        console_print(f"  [*] {message}", flush=True)
 
         # Send via notification dispatcher (desktop)
         from datetime import datetime
@@ -996,9 +999,9 @@ class AWLRuntime:
     def _progress_callback(self, status: str, turn: int, max_turns: int, tool_name: str | None):
         """Print agent progress during task execution (verbose mode)."""
         if status == "executing_tool":
-            print(f"    [{turn}/{max_turns}] calling {tool_name}", flush=True)
+            console_print(f"    [{turn}/{max_turns}] calling {tool_name}", flush=True)
         elif status == "calling_claude":
-            print(f"    [{turn}/{max_turns}] thinking...", flush=True)
+            console_print(f"    [{turn}/{max_turns}] thinking...", flush=True)
 
     def _coerce_to_list(self, value: Any, var_name: str) -> Any:
         """Try to coerce a value to a list for @loop iteration.
@@ -1101,7 +1104,7 @@ class AWLRuntime:
                 task_id,
                 names,
             )
-            print(f"  [!] task '{task_id}': unresolved variable(s): {names}")
+            console_print(f"  [!] task '{task_id}': unresolved variable(s): {names}")
 
     def _build_task_prompt(self, task: TaskNode) -> str:
         interp = self._expr.interpolate

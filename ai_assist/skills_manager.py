@@ -70,11 +70,11 @@ class SkillsManager:
                     else:
                         logger.warning("Skill cache not found for '%s' at %s", installed_skill.name, skill_path)
 
-                except Exception as e:
-                    logger.warning("Failed to load installed skill: %s", e)
+                except Exception:
+                    logger.warning("Failed to load installed skill", exc_info=True)
 
-        except json.JSONDecodeError as e:
-            logger.error("Failed to parse %s: %s", self.installed_skills_file, e)
+        except json.JSONDecodeError:
+            logger.exception("Failed to parse %s", self.installed_skills_file)
             self.installed_skills = []
             self.loaded_skills = {}
 

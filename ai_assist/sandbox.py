@@ -1,5 +1,6 @@
 """Sandbox management for isolated ai-assist instances via podman-compose"""
 
+import logging
 import os
 import shutil
 import subprocess
@@ -8,6 +9,10 @@ import time
 from pathlib import Path
 
 import yaml
+
+from .output import console_print
+
+logger = logging.getLogger(__name__)
 
 TEMPLATES_DIR = Path(__file__).parent / "sandbox_templates"
 
@@ -196,8 +201,8 @@ def _parse_features(feature_str: str | None) -> set[str]:
     features = {f.strip() for f in feature_str.split(",")}
     unknown = features - ALL_FEATURES
     if unknown:
-        print(f"Error: Unknown features: {', '.join(sorted(unknown))}")
-        print(f"Available features: {', '.join(sorted(ALL_FEATURES))}")
+        console_print(f"Error: Unknown features: {', '.join(sorted(unknown))}")
+        console_print(f"Available features: {', '.join(sorted(ALL_FEATURES))}")
         sys.exit(1)
     return features
 
@@ -209,7 +214,7 @@ def sandbox_init(name: str, features: set[str] | None = None, image: str = DEFAU
 
     instance = _instance_dir(name)
     if instance.exists():
-        print(f"Error: Instance '{name}' already exists at {instance}")
+        console_print(f"Error: Instance '{name}' already exists at {instance}")
         sys.exit(1)
 
     sandbox = instance / "sandbox"
@@ -231,16 +236,16 @@ def sandbox_init(name: str, features: set[str] | None = None, image: str = DEFAU
     shutil.copy2(TEMPLATES_DIR / ".env.example", instance / ".env.example")
 
     enabled = ", ".join(sorted(features)) if features else "none"
-    print(f"Sandbox '{name}' initialized at {instance}")
-    print(f"Image: {image}")
-    print(f"Features: {enabled}")
-    print("\nNext steps:")
-    print("  1. Copy .env.example to .env and fill in credentials:")
-    print(f"     cp {instance}/.env.example {instance}/.env")
-    print("  2. Edit identity:")
-    print(f"     $EDITOR {sandbox / '.ai-assist' / 'identity.yaml'}")
-    print("  3. Run:")
-    print(f"     ai-assist /sandbox run {name} /query 'hello'")
+    console_print(f"Sandbox '{name}' initialized at {instance}")
+    console_print(f"Image: {image}")
+    console_print(f"Features: {enabled}")
+    console_print("\nNext steps:")
+    console_print("  1. Copy .env.example to .env and fill in credentials:")
+    console_print(f"     cp {instance}/.env.example {instance}/.env")
+    console_print("  2. Edit identity:")
+    console_print(f"     $EDITOR {sandbox / '.ai-assist' / 'identity.yaml'}")
+    console_print("  3. Run:")
+    console_print(f"     ai-assist /sandbox run {name} /query 'hello'")
 
 
 def _wait_for_mcp_servers(compose: list[str], instance: Path, timeout: int = 30) -> None:
@@ -275,7 +280,7 @@ def _wait_for_mcp_servers(compose: list[str], instance: Path, timeout: int = 30)
                 break
             time.sleep(1)
         else:
-            print(f"Warning: {svc_name} did not become ready within {timeout}s")
+            logger.warning("%s did not become ready within %ss", svc_name, timeout)
 
 
 def _get_mcp_services(instance: Path) -> list[str]:
@@ -289,12 +294,12 @@ def sandbox_run(name: str, mode_args: list[str]) -> None:
     """Start the compose stack and run ai-assist with the given mode."""
     instance = _instance_dir(name)
     if not instance.exists():
-        print(f"Error: Instance '{name}' not found at {instance}")
+        console_print(f"Error: Instance '{name}' not found at {instance}")
         sys.exit(1)
 
     env_file = instance / ".env"
     if not env_file.exists():
-        print(f"Error: {env_file} not found. Copy .env.example to .env and add credentials.")
+        console_print(f"Error: {env_file} not found. Copy .env.example to .env and add credentials.")
         sys.exit(1)
 
     compose = _compose_cmd(instance)
@@ -322,7 +327,7 @@ def sandbox_run(name: str, mode_args: list[str]) -> None:
         cmd = [*compose, "run", *run_flags, "ai-assist", *mode_args]
         subprocess.run(cmd, cwd=instance, check=False)
     except KeyboardInterrupt:
-        print("\nInterrupted, stopping stack...")
+        console_print("\nInterrupted, stopping stack...")
     finally:
         subprocess.run([*compose, "down"], cwd=instance, capture_output=True, check=False)
 
@@ -331,24 +336,24 @@ def sandbox_stop(name: str) -> None:
     """Stop a running sandbox stack."""
     instance = _instance_dir(name)
     if not instance.exists():
-        print(f"Error: Instance '{name}' not found at {instance}")
+        console_print(f"Error: Instance '{name}' not found at {instance}")
         sys.exit(1)
 
     compose = _compose_cmd(instance)
     subprocess.run([*compose, "down"], cwd=instance, check=False)
-    print(f"Sandbox '{name}' stopped.")
+    console_print(f"Sandbox '{name}' stopped.")
 
 
 def sandbox_list() -> None:
     """List all sandbox instances."""
     instances_dir = get_instances_dir()
     if not instances_dir.exists():
-        print("No instances found.")
+        console_print("No instances found.")
         return
 
     instances = sorted(d.name for d in instances_dir.iterdir() if d.is_dir() and (d / "compose.yaml").exists())
     if not instances:
-        print("No instances found.")
+        console_print("No instances found.")
         return
 
     for name in instances:
@@ -366,7 +371,7 @@ def sandbox_list() -> None:
             )
             svc_status = result.stdout.strip()
             parts.append(f"service: {svc_status}")
-        print(f"  {name:20s}  {', '.join(parts)}")
+        console_print(f"  {name:20s}  {', '.join(parts)}")
 
 
 SERVICE_SUBCOMMANDS = {"install", "remove", "start", "stop", "restart", "status", "logs"}
@@ -414,11 +419,11 @@ def sandbox_service(name: str, action: str, extra_args: list[str] | None = None)
 
     if action == "install":
         if not instance.exists():
-            print(f"Error: Instance '{name}' not found at {instance}")
+            console_print(f"Error: Instance '{name}' not found at {instance}")
             sys.exit(1)
         env_file = instance / ".env"
         if not env_file.exists():
-            print(f"Error: {env_file} not found. Configure credentials first.")
+            console_print(f"Error: {env_file} not found. Configure credentials first.")
             sys.exit(1)
 
         # Set ai-assist command to /monitor in the compose
@@ -434,9 +439,9 @@ def sandbox_service(name: str, action: str, extra_args: list[str] | None = None)
         svc_file.write_text(_sandbox_service_content(name, instance))
         subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
         subprocess.run(["systemctl", "--user", "enable", "--now", svc_name], check=True)
-        print(f"Installed and started service {svc_name}")
-        print(f"  Logs: ai-assist /sandbox service logs {name}")
-        print(f"  Stop: ai-assist /sandbox service stop {name}")
+        console_print(f"Installed and started service {svc_name}")
+        console_print(f"  Logs: ai-assist /sandbox service logs {name}")
+        console_print(f"  Stop: ai-assist /sandbox service stop {name}")
 
     elif action == "remove":
         subprocess.run(["systemctl", "--user", "disable", "--now", svc_name], check=False)
@@ -453,7 +458,7 @@ def sandbox_service(name: str, action: str, extra_args: list[str] | None = None)
                 data["services"]["ai-assist"]["tty"] = True
                 with open(compose_file, "w") as f:
                     yaml.dump(data, f, default_flow_style=False, sort_keys=False)
-        print(f"Removed service {svc_name}")
+        console_print(f"Removed service {svc_name}")
 
     elif action == "status":
         subprocess.run(["systemctl", "--user", "status", svc_name], check=False)
@@ -468,7 +473,7 @@ def sandbox_service(name: str, action: str, extra_args: list[str] | None = None)
         subprocess.run(["systemctl", "--user", action, svc_name], check=True)
 
     else:
-        print(f"Unknown service action: {action}")
+        console_print(f"Unknown service action: {action}")
         sys.exit(1)
 
 
@@ -476,7 +481,7 @@ def sandbox_delete(name: str) -> None:
     """Delete a sandbox instance directory."""
     instance = _instance_dir(name)
     if not instance.exists():
-        print(f"Error: Instance '{name}' not found at {instance}")
+        console_print(f"Error: Instance '{name}' not found at {instance}")
         sys.exit(1)
 
     compose = _compose_cmd(instance)
@@ -484,11 +489,11 @@ def sandbox_delete(name: str) -> None:
 
     answer = input(f"Delete instance '{name}' at {instance}? [y/N] ")
     if answer.lower() != "y":
-        print("Cancelled.")
+        console_print("Cancelled.")
         return
 
     shutil.rmtree(instance)
-    print(f"Instance '{name}' deleted.")
+    console_print(f"Instance '{name}' deleted.")
 
 
 async def handle_sandbox_command(args: list[str]) -> None:
@@ -514,20 +519,20 @@ async def handle_sandbox_command(args: list[str]) -> None:
         sandbox_init(name, features, image=image)
     elif subcmd == "run":
         if len(args) < 3:
-            print("Usage: ai-assist /sandbox run <name> /mode [args...]")
+            console_print("Usage: ai-assist /sandbox run <name> /mode [args...]")
             sys.exit(1)
         sandbox_run(args[1], args[2:])
     elif subcmd == "stop":
         if len(args) < 2:
-            print("Usage: ai-assist /sandbox stop <name>")
+            console_print("Usage: ai-assist /sandbox stop <name>")
             sys.exit(1)
         sandbox_stop(args[1])
     elif subcmd == "list":
         sandbox_list()
     elif subcmd == "service":
         if len(args) < 3 or args[2] not in SERVICE_SUBCOMMANDS:
-            print("Usage: ai-assist /sandbox service <name> <action>")
-            print(f"Actions: {', '.join(sorted(SERVICE_SUBCOMMANDS))}")
+            console_print("Usage: ai-assist /sandbox service <name> <action>")
+            console_print(f"Actions: {', '.join(sorted(SERVICE_SUBCOMMANDS))}")
             sys.exit(1)
         sandbox_name = args[1]
         action = args[2]
@@ -535,36 +540,38 @@ async def handle_sandbox_command(args: list[str]) -> None:
         sandbox_service(sandbox_name, action, extra)
     elif subcmd == "delete":
         if len(args) < 2:
-            print("Usage: ai-assist /sandbox delete <name>")
+            console_print("Usage: ai-assist /sandbox delete <name>")
             sys.exit(1)
         sandbox_delete(args[1])
     else:
-        print(f"Unknown sandbox command: {subcmd}")
+        console_print(f"Unknown sandbox command: {subcmd}")
         _print_usage()
         sys.exit(1)
 
 
 def _print_init_usage():
-    print("Usage: ai-assist /sandbox init <name> [--features=ssh,gpg,git,gh,dci,dbus] [--image=NAME]")
-    print()
-    print(f"Available features: {', '.join(sorted(ALL_FEATURES))}")
-    print("Default: all features enabled")
-    print("Vertex AI (gcloud) is always included.")
-    print()
-    print(f"Default image: {DEFAULT_IMAGE}")
-    print("Build custom images from sandbox/profiles/ (e.g. ai-assist-dev)")
+    console_print("Usage: ai-assist /sandbox init <name> [--features=ssh,gpg,git,gh,dci,dbus] [--image=NAME]")
+    console_print()
+    console_print(f"Available features: {', '.join(sorted(ALL_FEATURES))}")
+    console_print("Default: all features enabled")
+    console_print("Vertex AI (gcloud) is always included.")
+    console_print()
+    console_print(f"Default image: {DEFAULT_IMAGE}")
+    console_print("Build custom images from sandbox/profiles/ (e.g. ai-assist-dev)")
 
 
 def _print_usage():
-    print("Usage: ai-assist /sandbox <command> [args...]")
-    print()
-    print("Commands:")
-    print("  init <name> [options]                         Create a new sandbox instance")
-    print("    --features=ssh,gpg,git,gh,dci,dbus          Features to enable (default: all)")
-    print("    --image=NAME                                 Container image (default: ai-assist-sandbox:latest)")
-    print("  run <name> /mode [args...]                    Run ai-assist in a sandbox")
-    print("  stop <name>                                   Stop a running sandbox")
-    print("  list                                          List sandbox instances")
-    print("  delete <name>                                 Delete a sandbox instance")
-    print("  service <name> <action>                       Manage as systemd service")
-    print(f"    Actions: {', '.join(sorted(SERVICE_SUBCOMMANDS))}")
+    console_print("Usage: ai-assist /sandbox <command> [args...]")
+    console_print()
+    console_print("Commands:")
+    console_print("  init <name> [options]                         Create a new sandbox instance")
+    console_print("    --features=ssh,gpg,git,gh,dci,dbus          Features to enable (default: all)")
+    console_print(
+        "    --image=NAME                                 Container image (default: ai-assist-sandbox:latest)"
+    )
+    console_print("  run <name> /mode [args...]                    Run ai-assist in a sandbox")
+    console_print("  stop <name>                                   Stop a running sandbox")
+    console_print("  list                                          List sandbox instances")
+    console_print("  delete <name>                                 Delete a sandbox instance")
+    console_print("  service <name> <action>                       Manage as systemd service")
+    console_print(f"    Actions: {', '.join(sorted(SERVICE_SUBCOMMANDS))}")

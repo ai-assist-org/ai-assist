@@ -72,8 +72,8 @@ class ScheduledActionManager:
 
             return self.actions
 
-        except (json.JSONDecodeError, ValueError) as e:
-            logger.error("Error loading scheduled actions: %s", e)
+        except json.JSONDecodeError, ValueError:
+            logger.exception("Error loading scheduled actions")
             return []
 
     async def save_action(self, action: ScheduledAction):
@@ -132,7 +132,7 @@ class ScheduledActionManager:
 
     async def _execute_action(self, action: ScheduledAction):
         """Execute a single scheduled action"""
-        print(f"🔔 Executing scheduled action: {action.description or action.prompt[:50]}")
+        logger.info("Executing scheduled action: %s", action.description or action.prompt[:50])
 
         action.status = "executing"
         await self._persist()
@@ -216,7 +216,7 @@ class ScheduledActionManager:
         # Persist cleaned JSON
         await self._persist()
 
-        print(f"Archived {len(to_archive)} old actions to {archive_file.name}")
+        logger.info("Archived %d old actions to %s", len(to_archive), archive_file.name)
         return len(to_archive)
 
     async def _notify_completion(self, action: ScheduledAction):
@@ -259,33 +259,35 @@ class ScheduledActionManager:
         pending_actions = [a for a in self.actions if a.status == "pending"]
 
         if not pending_actions:
-            print("No pending actions")
+            logger.debug("No pending actions")
             return None
 
         # Return earliest scheduled time
         next_time = min(a.scheduled_at for a in pending_actions)
         time_until = (next_time - datetime.now()).total_seconds()
-        print(f"Next action in {time_until:.1f}s at {next_time.strftime('%H:%M:%S')}")
+        logger.info("Next action in %.1fs at %s", time_until, next_time.strftime("%H:%M:%S"))
         return next_time
 
     async def on_file_change(self):
         """Called when scheduled-actions.json changes (FileWatchdog callback)"""
-        print("Scheduled actions file changed, reloading...")
+        logger.info("Scheduled actions file changed, reloading...")
         await self.load_actions()
-        print(
-            f"Loaded {len(self.actions)} total actions, {len([a for a in self.actions if a.status == 'pending'])} pending"
+        logger.info(
+            "Loaded %d total actions, %d pending",
+            len(self.actions),
+            len([a for a in self.actions if a.status == "pending"]),
         )
 
         # Wake up executor to check new actions
         if self._executor_event is not None:
-            print("Waking up executor...")
+            logger.debug("Waking up executor...")
             self._executor_event.set()
         else:
             logger.warning("Executor event not initialized yet")
 
     async def start_executor(self):
         """Start event-driven executor (no polling)"""
-        print("Starting scheduled action executor (event-driven)")
+        logger.info("Starting scheduled action executor (event-driven)")
 
         # Event to wake up executor on file changes
         self._executor_event = asyncio.Event()
@@ -300,26 +302,26 @@ class ScheduledActionManager:
 
                 if next_time is None:
                     # No pending actions - wait for file changes only
-                    print("Waiting for file changes...")
+                    logger.debug("Waiting for file changes...")
                     await self._executor_event.wait()
                     self._executor_event.clear()
-                    print("Woke up from file change")
+                    logger.debug("Woke up from file change")
                 else:
                     # Sleep until next action is due OR file changes (whichever comes first)
                     sleep_seconds = (next_time - datetime.now()).total_seconds()
 
                     if sleep_seconds > 0:
-                        print(f"Sleeping for {sleep_seconds:.1f}s until next action...")
+                        logger.debug("Sleeping for %.1fs until next action...", sleep_seconds)
                         try:
                             await asyncio.wait_for(self._executor_event.wait(), timeout=sleep_seconds)
                             self._executor_event.clear()
-                            print("Woke up from file change")
+                            logger.debug("Woke up from file change")
                         except TimeoutError:
                             # Timeout means we reached scheduled time
-                            print("Woke up from timeout (scheduled time reached)")
+                            logger.debug("Woke up from timeout (scheduled time reached)")
 
             except asyncio.CancelledError:
-                print("Scheduled action executor stopped")
+                logger.info("Scheduled action executor stopped")
                 break
             except Exception as e:
                 logger.exception("Error in scheduled action executor: %s", e)

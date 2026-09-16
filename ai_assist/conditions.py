@@ -177,11 +177,11 @@ class ActionExecutor:
         message = self._replace_placeholders(message, context)
 
         if level == "error":
-            print(f"🔴 {message}")
+            logger.error("%s", message)
         elif level == "warning":
-            print(f"⚠️  {message}")
+            logger.warning("%s", message)
         else:
-            print(f"ℹ️  {message}")
+            logger.info("%s", message)
 
     async def _log(self, action: dict, context: dict):
         """Write to log file"""
@@ -199,7 +199,7 @@ class ActionExecutor:
         with open(log_file, "a") as f:
             f.write(f"[{timestamp}] {message}\n")
 
-        print(f"📝 Logged to {log_file}")
+        logger.info("Logged to %s", log_file)
 
     async def _create_doc(self, action: dict, context: dict):
         """Create Google Doc with results"""
@@ -222,7 +222,7 @@ class ActionExecutor:
 
         try:
             await self.agent.query(prompt)
-            print(f"📄 Created Google Doc: {title}")
+            logger.info("Created Google Doc: %s", title)
         except Exception as e:
             logger.exception("Error creating Google Doc: %s", e)
 
@@ -231,7 +231,7 @@ class ActionExecutor:
         # This would integrate with the knowledge graph
         # For now, just print a message
         entity_type = action.get("entity_type", "task_result")
-        print(f"📊 Would store in KG as {entity_type}")
+        logger.info("Would store in KG as %s", entity_type)
         # TODO: Implement KG storage
 
     def _replace_placeholders(self, text: str, context: dict) -> str:

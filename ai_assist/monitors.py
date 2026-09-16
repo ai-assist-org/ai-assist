@@ -50,25 +50,28 @@ class MonitoringScheduler:
         while asyncio.get_event_loop().time() < deadline:
             connected = set(self.agent.sessions.keys())
             if expected <= connected:
-                print(f"All {len(expected)} MCP servers connected")
+                logger.info("All %d MCP servers connected", len(expected))
                 return True
             await asyncio.sleep(1.0)
 
         connected = set(self.agent.sessions.keys())
         missing = expected - connected
-        logger.warning("Timed out waiting for MCP servers: %s not connected", ", ".join(missing))
-        print(f"⚠️  {len(missing)} MCP server(s) not connected after {timeout_seconds}s: {', '.join(missing)}")
+        logger.warning(
+            "Timed out waiting for MCP servers after %ss: %s not connected",
+            timeout_seconds,
+            ", ".join(missing),
+        )
         return len(connected) > 0
 
     async def start(self):
         """Start the monitoring loop"""
         self.running = True
-        print("Starting monitoring scheduler...")
-        print(f"State directory: {self.state_manager.state_dir}")
+        logger.info("Starting monitoring scheduler...")
+        logger.info("State directory: %s", self.state_manager.state_dir)
 
         removed = self.state_manager.cleanup_expired_cache()
         if removed:
-            print(f"Cleaned up {removed} expired cache entries")
+            logger.info("Cleaned up %d expired cache entries", removed)
 
         await self._wait_for_mcp_servers()
 
@@ -96,27 +99,26 @@ class MonitoringScheduler:
         )
         suspend_task = asyncio.create_task(self.suspend_detector.watch(self._handle_wake_event))
         tasks.append(suspend_task)
-        print("Suspension detection enabled")
+        logger.info("Suspension detection enabled")
 
         await asyncio.gather(*tasks)
 
     async def _handle_wake_event(self, wall_jump_seconds: float, now=None) -> None:
         """Handle system wake event after suspension."""
-        print("\n" + "=" * 60)
-        print(f"⚠️  Suspension detected: {abs(wall_jump_seconds):.0f} seconds")
-        print("Checking for missed scheduled runs...")
-        print("=" * 60)
+        logger.warning(
+            "Suspension detected: %.0f seconds; checking for missed scheduled runs",
+            abs(wall_jump_seconds),
+        )
 
         self.action_scheduler.notify_resume()
         await self.action_scheduler.run_missed_at_startup(now=now)
 
-        print("✓ Suspension recovery complete")
-        print("=" * 60 + "\n")
+        logger.info("Suspension recovery complete")
 
     async def stop(self):
         """Stop the monitoring loop"""
         self.running = False
-        print("Stopping monitoring scheduler...")
+        logger.info("Stopping monitoring scheduler...")
 
         await self.action_scheduler.stop()
         if self.action_scheduler_file_watchdog:

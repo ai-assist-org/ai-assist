@@ -45,8 +45,8 @@ class ScheduleLoader:
                 )
                 task.validate()
                 tasks.append(task)
-            except (KeyError, ValueError) as e:
-                logger.warning("Skipping invalid monitor '%s': %s", monitor_data.get("name", "unknown"), e)
+            except KeyError, ValueError:
+                logger.warning("Skipping invalid monitor '%s'", monitor_data.get("name", "unknown"), exc_info=True)
 
         return tasks
 
@@ -73,8 +73,8 @@ class ScheduleLoader:
                 task = TaskDefinition.from_dict(task_data)
                 task.validate()
                 tasks.append(task)
-            except (KeyError, ValueError) as e:
-                logger.warning("Skipping invalid task '%s': %s", task_data.get("name", "unknown"), e)
+            except KeyError, ValueError:
+                logger.warning("Skipping invalid task '%s'", task_data.get("name", "unknown"), exc_info=True)
 
         return tasks
 
@@ -107,7 +107,7 @@ class ScheduleLoader:
         if added:
             self._save_json(data)
             for name in added:
-                print(f"Added default task to schedules: {name}")
+                logger.info("Added default task to schedules: %s", name)
 
     def _save_json(self, data: dict):
         """Save data to JSON file"""
@@ -136,6 +136,6 @@ class ScheduleLoader:
 
             return data
 
-        except json.JSONDecodeError as e:
-            logger.error("Failed to parse %s: %s; returning empty schedules", self.json_file, e)
+        except json.JSONDecodeError:
+            logger.exception("Failed to parse %s; returning empty schedules", self.json_file)
             return {"version": "1.0", "monitors": [], "tasks": []}

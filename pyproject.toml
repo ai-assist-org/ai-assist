@@ -111,6 +111,7 @@ max-positional-args = 6
 "__init__.py" = ["F401"]  # Unused imports in __init__.py
 "tests/*" = ["PLR2004"]  # magic values are fine in test assertions
 "ai_assist/agent.py" = ["PLR0911", "PLR0912", "PLR0915"]  # complex agent methods with many branches/returns/statements
+"ai_assist/system_prompt_builder.py" = ["PLR0915"]  # _build_system_prompt is a long linear prompt assembly
 "ai_assist/main.py" = ["PLR0912", "PLR0915"]  # main_async is inherently complex entry point
 "ai_assist/tui.py" = ["PLR0912"]  # completion handler has many branches
 "ai_assist/tui_interactive.py" = ["PLR0912", "PLR0915"]  # interactive REPL loop is inherently complex

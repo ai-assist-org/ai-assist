@@ -1,12 +1,15 @@
 """Notification channel implementations"""
 
 import json
+import logging
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ai_assist.notification_dispatcher import Notification
+
+logger = logging.getLogger(__name__)
 
 
 class ConsoleNotificationChannel:
@@ -91,10 +94,10 @@ class DesktopNotificationChannel:
             elif system == "Windows":
                 return await self._send_windows(notification)
             else:
-                print(f"Desktop notifications not supported on {system}")
+                logger.warning("Desktop notifications not supported on %s", system)
                 return False
-        except Exception as e:
-            print(f"Desktop notification failed: {e}")
+        except Exception:
+            logger.exception("Desktop notification failed")
             return False
 
     async def _send_dbus(self, notification: Notification) -> bool:

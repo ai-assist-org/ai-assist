@@ -397,7 +397,7 @@ class SkillsLoader:
                     text=True,
                 )
             except subprocess.CalledProcessError as e:
-                print(f"Warning: Failed to update repository: {e.stderr}")
+                logger.warning("Failed to update repository: %s", e.stderr)
                 # Continue with cached version
         else:
             # Clone new repo

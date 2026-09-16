@@ -212,7 +212,7 @@ async def run_awl_script(
         try:
             result = await runtime.execute(workflow, variables=merged)
         except AWLRuntimeError as e:
-            logger.error("AWL workflow aborted: %s", e)
+            logger.exception("AWL workflow aborted")
             raise RuntimeError(f"AWL workflow aborted: {e}") from e
         if not result.success:
             raise RuntimeError(

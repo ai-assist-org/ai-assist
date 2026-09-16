@@ -12,6 +12,17 @@ if TYPE_CHECKING:
     from rich.console import Console
 
 
+def console_print(*args: Any, **kwargs: Any) -> None:
+    """Single sink for interactive/CLI status lines.
+
+    Distinct from the OutputRenderer agent-activity methods below and from
+    background diagnostics (which use ``logger``). Centralized here so this
+    user-facing status output can later be silenced or redirected without
+    touching every call site. Writes to stdout, like ``print``.
+    """
+    print(*args, **kwargs)
+
+
 def _format_display_name(tool_name: str) -> str:
     """Format a tool name for user-friendly display."""
     return tool_name.replace("mcp__", "").replace("__", " → ").replace("_", " ")

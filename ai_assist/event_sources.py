@@ -76,10 +76,10 @@ class EventSourceManager:
 
                 mqtt_source = MqttEventSource(configs["mqtt"])
                 self.register_source("mqtt", mqtt_source)
-                print(f"Event source enabled: MQTT (broker: {mqtt_source.broker}:{mqtt_source.port})")
+                logger.info("Event source enabled: MQTT (broker: %s:%s)", mqtt_source.broker, mqtt_source.port)
             else:
-                print(
-                    "WARNING: MQTT event source configured but aiomqtt not installed. "
+                logger.warning(
+                    "MQTT event source configured but aiomqtt not installed. "
                     "Install with: pip install ai-assist[mqtt]"
                 )
 
@@ -89,10 +89,10 @@ class EventSourceManager:
 
                 dbus_source = DbusEventSource(configs["dbus"])
                 self.register_source("dbus", dbus_source)
-                print(f"Event source enabled: D-Bus ({dbus_source.default_bus_type} bus)")
+                logger.info("Event source enabled: D-Bus (%s bus)", dbus_source.default_bus_type)
             else:
-                print(
-                    "WARNING: D-Bus event source configured but dbus-next not installed. "
+                logger.warning(
+                    "D-Bus event source configured but dbus-next not installed. "
                     "Install with: pip install ai-assist[dbus]"
                 )
 
@@ -101,7 +101,7 @@ class EventSourceManager:
 
             file_source = FileEventSource(configs["file"])
             self.register_source("file", file_source)
-            print("Event source enabled: File watcher")
+            logger.info("Event source enabled: File watcher")
 
     def configure(self, triggered_tasks: list[tuple[str, dict[str, Any], Any]]) -> None:
         for task_name, trigger_config, runner in triggered_tasks:

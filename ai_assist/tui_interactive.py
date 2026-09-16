@@ -107,8 +107,8 @@ class NotificationWatcher:
                         await display_notification(self.console, notification)
                     except json.JSONDecodeError:
                         pass  # Skip malformed lines
-        except Exception as e:
-            logger.warning("Error reading notification log: %s", e)
+        except Exception:
+            logger.exception("Error reading notification log")
 
     async def start(self):
         """Start watching notification log"""
