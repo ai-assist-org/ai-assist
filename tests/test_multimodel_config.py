@@ -84,6 +84,122 @@ def test_agent_uses_custom_endpoint_client():
                 api_key="sk-or-test",
                 base_url="https://openrouter.ai/api",
                 max_retries=5,
+                default_headers={
+                    "HTTP-Referer": "https://github.com/ai-assist-org/ai-assist",
+                    "X-Title": "ai-assist",
+                },
+            )
+
+
+def test_custom_endpoint_headers_default_to_project_attribution():
+    """Attribution headers default to the ai-assist project when env vars are unset"""
+    with patch.dict(
+        os.environ,
+        {"ANTHROPIC_BASE_URL": "http://localhost:8000", "ANTHROPIC_API_KEY": ""},
+        clear=True,
+    ):
+        config = AiAssistConfig.from_env()
+
+        assert config.custom_endpoint_headers == {
+            "HTTP-Referer": "https://github.com/ai-assist-org/ai-assist",
+            "X-Title": "ai-assist",
+        }
+
+
+def test_custom_endpoint_headers_from_env():
+    """Attribution env vars map to the OpenRouter HTTP-Referer / X-Title headers"""
+    with patch.dict(
+        os.environ,
+        {
+            "ANTHROPIC_BASE_URL": "https://openrouter.ai/api",
+            "AI_ASSIST_HTTP_REFERER": "https://app.example.com",
+            "AI_ASSIST_X_TITLE": "ai-assist",
+            "ANTHROPIC_API_KEY": "",
+        },
+        clear=True,
+    ):
+        config = AiAssistConfig.from_env()
+
+        assert config.http_referer == "https://app.example.com"
+        assert config.x_title == "ai-assist"
+        assert config.custom_endpoint_headers == {
+            "HTTP-Referer": "https://app.example.com",
+            "X-Title": "ai-assist",
+        }
+
+
+def test_custom_endpoint_headers_omit_blank_values():
+    """An empty attribution value disables that header (no blank header sent)"""
+    with patch.dict(
+        os.environ,
+        {
+            "ANTHROPIC_BASE_URL": "http://localhost:8000",
+            "AI_ASSIST_HTTP_REFERER": "",
+            "AI_ASSIST_X_TITLE": "",
+            "ANTHROPIC_API_KEY": "",
+        },
+        clear=True,
+    ):
+        config = AiAssistConfig.from_env()
+
+        assert config.custom_endpoint_headers == {}
+
+
+def test_agent_passes_attribution_headers_to_client():
+    """The agent forwards attribution headers to the custom-endpoint client"""
+    with patch.dict(
+        os.environ,
+        {
+            "ANTHROPIC_BASE_URL": "https://openrouter.ai/api",
+            "AI_ASSIST_API_KEY": "sk-or-test",
+            "AI_ASSIST_HTTP_REFERER": "https://app.example.com",
+            "AI_ASSIST_X_TITLE": "ai-assist",
+            "ANTHROPIC_API_KEY": "",
+        },
+        clear=True,
+    ):
+        config = AiAssistConfig.from_env()
+
+        with patch("ai_assist.agent.Anthropic") as mock_anthropic:
+            mock_anthropic.return_value = MagicMock()
+
+            _agent = AiAssistAgent(config)
+
+            mock_anthropic.assert_called_once_with(
+                api_key="sk-or-test",
+                base_url="https://openrouter.ai/api",
+                max_retries=5,
+                default_headers={
+                    "HTTP-Referer": "https://app.example.com",
+                    "X-Title": "ai-assist",
+                },
+            )
+
+
+def test_agent_omits_default_headers_when_attribution_blank():
+    """No default_headers kwarg is passed when attribution values are blank"""
+    with patch.dict(
+        os.environ,
+        {
+            "ANTHROPIC_BASE_URL": "https://openrouter.ai/api",
+            "AI_ASSIST_API_KEY": "sk-or-test",
+            "AI_ASSIST_HTTP_REFERER": "",
+            "AI_ASSIST_X_TITLE": "",
+            "ANTHROPIC_API_KEY": "",
+        },
+        clear=True,
+    ):
+        config = AiAssistConfig.from_env()
+
+        with patch("ai_assist.agent.Anthropic") as mock_anthropic:
+            mock_anthropic.return_value = MagicMock()
+
+            _agent = AiAssistAgent(config)
+
+            mock_anthropic.assert_called_once_with(
+                api_key="sk-or-test",
+                base_url="https://openrouter.ai/api",
+                max_retries=5,
             )
 
 
@@ -108,6 +224,10 @@ def test_agent_uses_placeholder_key_when_none_provided():
                 api_key="not-needed",
                 base_url="http://localhost:11434",
                 max_retries=5,
+                default_headers={
+                    "HTTP-Referer": "https://github.com/ai-assist-org/ai-assist",
+                    "X-Title": "ai-assist",
+                },
             )
 
 
