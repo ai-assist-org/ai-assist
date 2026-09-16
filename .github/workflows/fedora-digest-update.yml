@@ -24,7 +24,7 @@ jobs:
           dockerfile="sandbox/ai-assist/Dockerfile"
           new_digest="$(skopeo inspect docker://registry.fedoraproject.org/fedora:44 --format '{{.Digest}}')"
           echo "Current registry digest: ${new_digest}"
-          sed -i -E "s|(FROM fedora:44@)sha256:[0-9a-f]+|\1${new_digest}|" "${dockerfile}"
+          sed -i -E "s|(FROM registry.fedoraproject.org/fedora:44@)sha256:[0-9a-f]+|\1${new_digest}|" "${dockerfile}"
           echo "NEW_DIGEST=${new_digest}" >> "${GITHUB_ENV}"
 
       - name: Create pull request
