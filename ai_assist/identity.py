@@ -72,8 +72,8 @@ class Identity(BaseModel):
 
             return cls(**data)
 
-        except (yaml.YAMLError, TypeError, ValueError) as e:
-            logger.warning("Error loading identity from %s: %s; using default identity", path, e)
+        except yaml.YAMLError, TypeError, ValueError:
+            logger.warning("Error loading identity from %s; using default identity", path, exc_info=True)
             return cls()
 
     def save_to_file(self, path: Path | None = None):

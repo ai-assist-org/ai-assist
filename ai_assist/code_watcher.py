@@ -12,6 +12,8 @@ from typing import Any
 from watchdog.events import FileSystemEvent, FileSystemEventHandler
 from watchdog.observers import Observer
 
+from .output import console_print
+
 
 class CodeWatcher:
     """Watch Python code files and restart process on changes
@@ -40,7 +42,7 @@ class CodeWatcher:
         self.observer = Observer()
         self.observer.schedule(handler, str(self.watch_dir), recursive=True)
         self.observer.start()
-        print(f"🔧 Dev mode: Watching {self.watch_dir} for code changes")
+        console_print(f"🔧 Dev mode: Watching {self.watch_dir} for code changes")
 
     def _restart(self, filepath: str):
         """Restart the process when code changes
@@ -48,8 +50,8 @@ class CodeWatcher:
         Args:
             filepath: Path to the file that changed
         """
-        print(f"\n🔄 Code changed: {filepath}")
-        print("🔄 Restarting...")
+        console_print(f"\n🔄 Code changed: {filepath}")
+        console_print("🔄 Restarting...")
 
         # Use os.execv to replace current process with new one
         # This preserves the same PID and command line arguments

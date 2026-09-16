@@ -342,6 +342,13 @@ Files: `config.py`, `state.py`, `config_watcher.py`, `file_watchdog.py`
 
 **MCP tools** from configured servers are dynamically loaded and prefixed with server name.
 
+**`AiAssistAgent` collaborators**: to keep `agent.py` focused, three cohesive responsibilities live in their own modules, constructed in `AiAssistAgent.__init__` and reached via `self.<name>`:
+- `tool_result_router.py` (`ToolResultRouter`) - parses/handles the `__save_to_file`/`__write_to_report`/`__append_to_report`/`__jq_filter`/`__collect_to_report` result-redirection and pagination parameters.
+- `synthesis_engine.py` (`SynthesisEngine`) - conversation synthesis, `_save_insights`, and scheduled KG connection discovery.
+- `system_prompt_builder.py` (`SystemPromptBuilder`) - assembles the system prompt and the query-specific KG learnings/auto-context sections.
+
+Each holds an agent back-reference so it reads collaborators (`sessions`, `report_tools`, `knowledge_graph`, …) live. `AiAssistAgent` keeps thin delegating wrappers for the method names referenced by tests and other modules.
+
 **Large tool results**: All tools support `__save_to_file`, `__write_to_report`, `__append_to_report`, `__collect_to_report`, and `__jq_filter` parameters. Add to any tool call to redirect raw results to a file or report. Agent receives a summary. `__jq_filter` applies a jq filter inline before returning or saving — composes with the other parameters (filter runs first). `__collect_to_report` auto-paginates and collects all results in one call (requires server pagination config in `mcp_servers.yaml`).
 
 ## Documentation
@@ -820,6 +827,9 @@ Actions older than 7 days are archived to `scheduled-actions-archive.jsonl`.
 ai_assist/
 ├── main.py                    # CLI entry point
 ├── agent.py                   # MCP agent with tool execution
+├── tool_result_router.py      # Result redirection/pagination (agent collaborator)
+├── synthesis_engine.py        # Conversation synthesis + KG connections (agent collaborator)
+├── system_prompt_builder.py   # System prompt + KG context assembly (agent collaborator)
 ├── config.py                  # Pydantic configuration models
 ├── service.py                 # Cross-platform service management (systemd/launchd)
 ├── awl_*.py                   # AWL parser, runtime, AST, expressions

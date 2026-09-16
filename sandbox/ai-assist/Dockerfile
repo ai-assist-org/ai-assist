@@ -1,4 +1,4 @@
-FROM fedora:44@sha256:43b29f65a41eb9c35e1cd5323e3bdf3b655c2357a9f4f1ff2f9c2798e5045d80
+FROM fedora:44@sha256:61beafd34111e1cb85fb49377ceadeee0a53622dbc20670ed8ca303f0e17ed9c
 
 RUN dnf install -y \
         python3.14 python3.14-pip \

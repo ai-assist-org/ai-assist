@@ -53,5 +53,5 @@ class ScheduleRecalculator:
             if next_run <= now:
                 try:
                     await monitor.execute()
-                except Exception as e:
-                    logger.error("Error executing missed task: %s", e)
+                except Exception:
+                    logger.exception("Error executing missed task")

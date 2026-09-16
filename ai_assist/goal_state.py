@@ -49,8 +49,8 @@ class GoalStateManager:
                 created_at=data.get("created_at", datetime.now().isoformat()),
                 success_reason=data.get("success_reason"),
             )
-        except (json.JSONDecodeError, ValueError) as e:
-            logger.error("Error loading goal state for %s: %s", goal_id, e)
+        except json.JSONDecodeError, ValueError:
+            logger.exception("Error loading goal state for %s", goal_id)
             return GoalState()
 
     def save(self, goal_id: str, state: GoalState):

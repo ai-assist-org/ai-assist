@@ -34,8 +34,8 @@ class ActionLoader:
                 action = ActionDefinition.from_dict(action_data)
                 action.validate_definition()
                 actions.append(action)
-            except (KeyError, ValueError) as e:
-                logger.warning("Skipping invalid action '%s': %s", action_data.get("name", "unknown"), e)
+            except KeyError, ValueError:
+                logger.warning("Skipping invalid action '%s'", action_data.get("name", "unknown"), exc_info=True)
         return actions
 
     def load_event_source_configs(self) -> dict[str, Any]:
@@ -60,7 +60,7 @@ class ActionLoader:
         if added:
             self._save_json(data)
             for name in added:
-                print(f"Added default action: {name}")
+                logger.info("Added default action: %s", name)
 
     def migrate_from_old_format(self, old_schedules_file: Path) -> None:
         if not old_schedules_file.exists():
@@ -94,7 +94,7 @@ class ActionLoader:
 
         data["actions"].extend(new_actions)
         self._save_json(data)
-        print(f"Migrated {len(new_actions)} action(s) from {old_schedules_file}")
+        logger.info("Migrated %d action(s) from %s", len(new_actions), old_schedules_file)
 
     def migrate_scheduled_actions(self, old_actions_file: Path) -> None:
         if not old_actions_file.exists():
@@ -136,7 +136,7 @@ class ActionLoader:
 
         if count > 0:
             self._save_json(data)
-            print(f"Migrated {count} scheduled action(s) from {old_actions_file}")
+            logger.info("Migrated %d scheduled action(s) from %s", count, old_actions_file)
 
     @staticmethod
     def _convert_old_task(task_data: dict[str, Any]) -> dict[str, Any] | None:
@@ -178,7 +178,7 @@ class ActionLoader:
                 data["actions"] = []
             return data
         except json.JSONDecodeError:
-            logger.error("Failed to parse %s; returning empty actions", self.json_file)
+            logger.exception("Failed to parse %s; returning empty actions", self.json_file)
             return {"version": "2.0", "actions": []}
 
     def _save_json(self, data: dict[str, Any]) -> None:

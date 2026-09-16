@@ -60,7 +60,7 @@ class ActionScheduler:
 
         for action in self.actions:
             if not action.enabled:
-                print(f"Skipping disabled action: {action.name}")
+                logger.warning("Skipping disabled action: %s", action.name)
                 continue
 
             if action.trigger_type == "once" and action.status in ("completed", "failed"):
@@ -70,9 +70,9 @@ class ActionScheduler:
                 handle = asyncio.create_task(self._schedule_timer_action(action), name=action.name)
                 self.timer_handles.append(handle)
                 tasks.append(handle)
-                print(f"Scheduled action: {action.name} (trigger: {action.trigger_type})")
+                logger.info("Scheduled action: %s (trigger: %s)", action.name, action.trigger_type)
             elif action.is_event_based:
-                print(f"Loaded event action: {action.name} (trigger: {action.trigger_type})")
+                logger.info("Loaded event action: %s (trigger: %s)", action.name, action.trigger_type)
 
         await self._start_event_sources()
 
@@ -84,7 +84,7 @@ class ActionScheduler:
         if time.monotonic() - self._self_write_time < 2.0:
             return
 
-        print("\nReloading actions...")
+        logger.info("Reloading actions...")
 
         await self._stop_event_sources()
 
@@ -112,7 +112,7 @@ class ActionScheduler:
                 self.timer_handles.append(handle)
 
         await self._start_event_sources()
-        print(f"Reloaded {len(self.actions)} action(s)")
+        logger.info("Reloaded %d action(s)", len(self.actions))
 
     async def stop(self) -> None:
         self.running = False
@@ -130,8 +130,10 @@ class ActionScheduler:
         if not event_actions:
             return
         if not event_configs:
-            print(
-                f"WARNING: {len(event_actions)} event action(s) configured but no event_sources in {self.schedule_file}"
+            logger.warning(
+                "%d event action(s) configured but no event_sources in %s",
+                len(event_actions),
+                self.schedule_file,
             )
             return
 
@@ -146,7 +148,11 @@ class ActionScheduler:
 
         self.event_source_manager._event_handler = self._handle_event
         await self.event_source_manager.start()
-        print(f"Started {len(self.event_source_manager._sources)} event source(s) for {len(event_actions)} action(s)")
+        logger.info(
+            "Started %d event source(s) for %d action(s)",
+            len(self.event_source_manager._sources),
+            len(event_actions),
+        )
 
     async def _stop_event_sources(self) -> None:
         if self.event_source_manager:
@@ -197,16 +203,14 @@ class ActionScheduler:
                 timestamp=events[0].timestamp,
             )
 
-        print(
-            f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Event matched: {action.name} ({len(events)} signal(s))"
-        )
+        logger.info("Event matched: %s (%d signal(s))", action.name, len(events))
         self._executing.add(action.name)
         try:
             result = await self.engine.execute_action(action, event_context=combined)
             if result.success:
-                print(f"{action.name}: completed")
+                logger.info("%s: completed", action.name)
             else:
-                print(f"{action.name}: failed - {result.output[:200]}")
+                logger.warning("%s: failed - %s", action.name, result.output[:200])
         except Exception:
             logger.exception("Error executing event action '%s'", action.name)
         finally:
@@ -253,7 +257,7 @@ class ActionScheduler:
                     target_time = datetime.fromisoformat(trigger["at"])
                     if (target_time - datetime.now()).total_seconds() <= 0:
                         break
-                    print(f"{action.name}: scheduled for {target_time.strftime('%Y-%m-%d %H:%M')}")
+                    logger.info("%s: scheduled for %s", action.name, target_time.strftime("%Y-%m-%d %H:%M"))
                     await self._sleep_until(target_time)
                     await self._execute_timer_action(action)
                     self._mark_once_completed(action)
@@ -264,7 +268,7 @@ class ActionScheduler:
                     schedule = TaskLoader.parse_time_schedule(schedule_str)
                     next_run = TaskLoader.calculate_next_run(schedule)
                     if (next_run - datetime.now()).total_seconds() > 0:
-                        print(f"{action.name}: next run at {next_run.strftime('%Y-%m-%d %H:%M')}")
+                        logger.info("%s: next run at %s", action.name, next_run.strftime("%Y-%m-%d %H:%M"))
                         await self._sleep_until(next_run)
 
                 elif trigger_type == "interval_range":
@@ -274,7 +278,7 @@ class ActionScheduler:
                     schedule = TaskLoader.parse_interval_with_range(range_str)
                     next_run = TaskLoader.calculate_next_interval_run(schedule)
                     if (next_run - datetime.now()).total_seconds() > 0:
-                        print(f"{action.name}: next run at {next_run.strftime('%Y-%m-%d %H:%M')}")
+                        logger.info("%s: next run at %s", action.name, next_run.strftime("%Y-%m-%d %H:%M"))
                         await self._sleep_until(next_run)
 
                 elif trigger_type == "interval":
@@ -300,14 +304,14 @@ class ActionScheduler:
     async def _execute_timer_action(self, action: ActionDefinition) -> None:
         self._executing.add(action.name)
         try:
-            print(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Running {action.name}...")
+            logger.info("Running %s...", action.name)
             result = await self.engine.execute_action(action)
             if result.success:
-                print(f"{action.name}: completed")
+                logger.info("%s: completed", action.name)
                 if result.output:
-                    print(f"\n{result.output}")
+                    logger.debug("%s", result.output)
             else:
-                print(f"{action.name}: failed - {result.output[:200]}")
+                logger.warning("%s: failed - %s", action.name, result.output[:200])
         finally:
             self._executing.discard(action.name)
 
@@ -345,8 +349,10 @@ class ActionScheduler:
                     continue
                 if target_time > now or target_time < lookback:
                     continue
-                print(
-                    f"Running missed once-action: {action.name} (was due at {target_time.strftime('%Y-%m-%d %H:%M')})"
+                logger.info(
+                    "Running missed once-action: %s (was due at %s)",
+                    action.name,
+                    target_time.strftime("%Y-%m-%d %H:%M"),
                 )
                 try:
                     await self.engine.execute_action(action)
@@ -374,7 +380,9 @@ class ActionScheduler:
                 if last_run_state.last_results.get("last_success", True):
                     continue
 
-            print(f"Running missed action: {action.name} (was due at {last_scheduled.strftime('%Y-%m-%d %H:%M')})")
+            logger.info(
+                "Running missed action: %s (was due at %s)", action.name, last_scheduled.strftime("%Y-%m-%d %H:%M")
+            )
             try:
                 await self.engine.execute_action(action)
             except Exception:

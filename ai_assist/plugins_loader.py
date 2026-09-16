@@ -120,8 +120,8 @@ class PluginsLoader:
                 # source_type "plugin" skips the dir-name==name check enforced for "local"
                 metadata, body = self.skills_loader._parse_skill_file(skill_file, skill_dir, "plugin", source_url)
                 found[metadata.name] = self.skills_loader._build_skill_content(skill_dir, metadata, body)
-            except (ValueError, FileNotFoundError) as e:
-                logger.warning("Skipping invalid skill in %s: %s", skill_dir, e)
+            except ValueError, FileNotFoundError:
+                logger.warning("Skipping invalid skill in %s", skill_dir, exc_info=True)
         return found
 
     def _scan_commands(self, plugin_path: Path, source_url: str | None) -> dict[str, SkillContent]:
@@ -135,8 +135,8 @@ class PluginsLoader:
             try:
                 content = self._parse_command_file(command_file, source_url)
                 found[content.metadata.name] = content
-            except ValueError as e:
-                logger.warning("Skipping invalid command %s: %s", command_file, e)
+            except ValueError:
+                logger.warning("Skipping invalid command %s", command_file, exc_info=True)
         return found
 
     def _parse_command_file(self, command_file: Path, source_url: str | None) -> SkillContent:
@@ -188,8 +188,8 @@ class PluginsLoader:
 
         try:
             data = json.loads(mcp_file.read_text())
-        except json.JSONDecodeError as e:
-            logger.warning("Invalid .mcp.json in %s: %s", plugin_path, e)
+        except json.JSONDecodeError:
+            logger.warning("Invalid .mcp.json in %s", plugin_path, exc_info=True)
             return {}
 
         type_to_transport = {"http": "streamablehttp", "sse": "sse", "stdio": None}

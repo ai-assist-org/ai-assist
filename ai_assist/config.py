@@ -464,14 +464,14 @@ def load_mcp_servers_from_yaml(path: Path) -> dict[str, MCPServerConfig]:
 
         return servers
 
-    except yaml.YAMLError as e:
-        logger.error("Error parsing MCP servers YAML: %s", e)
+    except yaml.YAMLError:
+        logger.exception("Error parsing MCP servers YAML")
         return {}
-    except KeyError as e:
-        logger.error("Missing required field in MCP server config: %s", e)
+    except KeyError:
+        logger.exception("Missing required field in MCP server config")
         return {}
-    except Exception as e:
-        logger.error("Error loading MCP servers: %s", e)
+    except Exception:
+        logger.exception("Error loading MCP servers")
         return {}
 
 

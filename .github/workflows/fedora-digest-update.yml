@@ -1,0 +1,45 @@
+name: Update fedora base digest
+
+on:
+  schedule:
+    - cron: "17 7 * * 1"  # Monday 7:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update-digest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Install skopeo
+        run: sudo apt-get update && sudo apt-get install -y skopeo
+
+      - name: Resolve current fedora:44 digest and re-pin
+        run: |
+          set -euo pipefail
+          dockerfile="sandbox/ai-assist/Dockerfile"
+          new_digest="$(skopeo inspect docker://registry.fedoraproject.org/fedora:44 --format '{{.Digest}}')"
+          echo "Current registry digest: ${new_digest}"
+          sed -i -E "s|(FROM fedora:44@)sha256:[0-9a-f]+|\1${new_digest}|" "${dockerfile}"
+          echo "NEW_DIGEST=${new_digest}" >> "${GITHUB_ENV}"
+
+      - name: Create pull request
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1  # v8.1.1
+        with:
+          branch: docker/fedora-digest-update
+          title: "docker: bump fedora:44 base image digest"
+          body: |
+            Automated re-pin of the `fedora:44` base image digest in
+            `sandbox/ai-assist/Dockerfile` to `${{ env.NEW_DIGEST }}`.
+
+            Fedora re-pushes the `:44` rolling tag and prunes old manifests, so a
+            stale digest pin eventually fails to pull (`manifest unknown`). This
+            keeps the pin resolvable while preserving reproducible builds.
+          commit-message: "docker: bump fedora:44 base image digest"
+          labels: |
+            dependencies
+            docker
