@@ -471,6 +471,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#configure-identity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configure identity
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#run" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -958,6 +969,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#configure-identity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configure identity
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#run" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1049,11 +1071,39 @@ takes precedence over the other methods.</p>
 </div>
 </div>
 </div>
+<h2 id="configure-identity">Configure identity<a class="headerlink" href="#configure-identity" title="Permanent link">&para;</a></h2>
+<p>Set up your identity so the assistant knows who you are and adapts to your
+preferences:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>uv<span class="w"> </span>run<span class="w"> </span>ai-assist<span class="w"> </span>/identity-init<span class="w">   </span><span class="c1"># creates ~/.ai-assist/identity.yaml</span>
+</code></pre></div>
+<p>Edit <code>~/.ai-assist/identity.yaml</code> to configure your name, role, organization,
+and communication preferences:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="nt">version</span><span class="p">:</span><span class="w"> </span><span class="s">'1.0'</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="nt">user</span><span class="p">:</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="s">'Your</span><span class="nv"> </span><span class="s">Name'</span>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="w">  </span><span class="nt">role</span><span class="p">:</span><span class="w"> </span><span class="s">'Your</span><span class="nv"> </span><span class="s">Role'</span>
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="w">  </span><span class="nt">organization</span><span class="p">:</span><span class="w"> </span><span class="s">'Your</span><span class="nv"> </span><span class="s">Company'</span>
+<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="w">  </span><span class="nt">context</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">|</span>
+<a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a><span class="w">    </span><span class="no">Describe your work context, team, and priorities here.</span>
+<a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a><span class="nt">assistant</span><span class="p">:</span>
+<a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a><span class="w">  </span><span class="nt">nickname</span><span class="p">:</span><span class="w"> </span><span class="s">'Nexus'</span>
+<a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a><span class="nt">preferences</span><span class="p">:</span>
+<a id="__codelineno-7-11" name="__codelineno-7-11" href="#__codelineno-7-11"></a><span class="w">  </span><span class="nt">formality</span><span class="p">:</span><span class="w"> </span><span class="s">'professional'</span>
+<a id="__codelineno-7-12" name="__codelineno-7-12" href="#__codelineno-7-12"></a><span class="w">  </span><span class="nt">verbosity</span><span class="p">:</span><span class="w"> </span><span class="s">'concise'</span>
+<a id="__codelineno-7-13" name="__codelineno-7-13" href="#__codelineno-7-13"></a><span class="w">  </span><span class="nt">emoji_usage</span><span class="p">:</span><span class="w"> </span><span class="s">'moderate'</span>
+</code></pre></div>
+<p>The <code>user.context</code> field is especially important — it is injected into the system
+prompt and gives the assistant awareness of your team, tools, and workflows.</p>
+<div class="admonition tip">
+<p class="admonition-title">Tip</p>
+<p>Changes to <code>identity.yaml</code> are <strong>auto-reloaded</strong> — no restart needed.</p>
+</div>
+<p>📖 <strong>Full identity guide:</strong> <a href="../IDENTITY/">Identity Configuration</a></p>
 <h2 id="run">Run<a class="headerlink" href="#run" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>uv<span class="w"> </span>run<span class="w"> </span>ai-assist<span class="w">                      </span><span class="c1"># interactive mode (default)</span>
-<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>uv<span class="w"> </span>run<span class="w"> </span>ai-assist<span class="w"> </span>/monitor<span class="w">             </span><span class="c1"># start monitoring mode</span>
-<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>uv<span class="w"> </span>run<span class="w"> </span>ai-assist<span class="w"> </span>/query<span class="w"> </span><span class="s2">"..."</span><span class="w">         </span><span class="c1"># one-off query</span>
-<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>uv<span class="w"> </span>run<span class="w"> </span>ai-assist<span class="w"> </span>/run<span class="w"> </span>workflow.awl<span class="w">    </span><span class="c1"># execute an AWL workflow</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>uv<span class="w"> </span>run<span class="w"> </span>ai-assist<span class="w">                      </span><span class="c1"># interactive mode (default)</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>uv<span class="w"> </span>run<span class="w"> </span>ai-assist<span class="w"> </span>/monitor<span class="w">             </span><span class="c1"># start monitoring mode</span>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>uv<span class="w"> </span>run<span class="w"> </span>ai-assist<span class="w"> </span>/query<span class="w"> </span><span class="s2">"..."</span><span class="w">         </span><span class="c1"># one-off query</span>
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>uv<span class="w"> </span>run<span class="w"> </span>ai-assist<span class="w"> </span>/run<span class="w"> </span>workflow.awl<span class="w">    </span><span class="c1"># execute an AWL workflow</span>
 </code></pre></div>
 <h2 id="next-steps">Next steps<a class="headerlink" href="#next-steps" title="Permanent link">&para;</a></h2>
 <ul>
