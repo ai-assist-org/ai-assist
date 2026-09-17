@@ -1,6 +1,13 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo-wordmark-dark.svg">
+    <img alt="ai-assist" src="docs/assets/logo-wordmark.svg" width="320">
+  </picture>
+</p>
+
 # ai-assist - AI Assistant for Knowledge Workers
 
-An intelligent AI assistant powered by Claude, Skills and MCP (Model Context Protocol) that helps knowledge workers with periodic automated monitoring and interactive querying.
+An intelligent AI assistant powered by an LLM through the Anthropic Messages API, Skills and MCP (Model Context Protocol) that helps knowledge workers with periodic automated monitoring and interactive querying.
 
 Works with MCP servers like:
 - [DCI MCP Server](https://github.com/redhat-community-ai-tools/dci-mcp-server) for DCI and Jira
