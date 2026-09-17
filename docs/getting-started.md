@@ -67,6 +67,42 @@ cp .env.example .env   # then edit .env
     export AI_ASSIST_MODEL='anthropic/claude-sonnet-4.6'
     ```
 
+## Configure identity
+
+Set up your identity so the assistant knows who you are and adapts to your
+preferences:
+
+```bash
+uv run ai-assist /identity-init   # creates ~/.ai-assist/identity.yaml
+```
+
+Edit `~/.ai-assist/identity.yaml` to configure your name, role, organization,
+and communication preferences:
+
+```yaml
+version: '1.0'
+user:
+  name: 'Your Name'
+  role: 'Your Role'
+  organization: 'Your Company'
+  context: |
+    Describe your work context, team, and priorities here.
+assistant:
+  nickname: 'Nexus'
+preferences:
+  formality: 'professional'
+  verbosity: 'concise'
+  emoji_usage: 'moderate'
+```
+
+The `user.context` field is especially important — it is injected into the system
+prompt and gives the assistant awareness of your team, tools, and workflows.
+
+!!! tip
+    Changes to `identity.yaml` are **auto-reloaded** — no restart needed.
+
+📖 **Full identity guide:** [Identity Configuration](IDENTITY.md)
+
 ## Run
 
 ```bash

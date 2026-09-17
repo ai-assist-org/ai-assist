@@ -903,6 +903,25 @@ ai-assist/
 - **[AGENTS.md](AGENTS.md)** - Development philosophy (TDD/DRY/Tracer Bullet)
 - **[presentation/](presentation/)** - Project presentation slides (LaTeX/Beamer)
 
+## Documentation Site
+
+The documentation is built with [MkDocs Material](https://squidfunk.github.io/mkdocs-material/).
+
+### Preview locally
+
+```bash
+pip install mkdocs-material     # install once
+mkdocs serve                    # run from the repo root
+```
+
+Then open **http://127.0.0.1:8000** in your browser. Pages auto-reload on save.
+
+### Build static site
+
+```bash
+mkdocs build                    # outputs to site/
+```
+
 ## Development
 
 ### Auto-Reload
