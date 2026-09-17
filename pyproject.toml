@@ -26,6 +26,10 @@ mlflow = ["mlflow-skinny>=3.16.0", "sqlalchemy>=2.0", "alembic>=1.19.2"]
 eval = [
     "agent-eval-harness @ git+https://github.com/opendatahub-io/agent-eval-harness.git",
 ]
+docs = [
+    "mkdocs-material>=9.5",
+    "pymdown-extensions>=10.7",
+]
 dev = [
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",

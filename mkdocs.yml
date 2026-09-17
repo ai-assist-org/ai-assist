@@ -1,0 +1,81 @@
+site_name: ai-assist
+site_description: AI assistant with MCP integration, agent skills, knowledge graph, and automated monitoring
+site_url: https://ai-assist-org.github.io/ai-assist/
+repo_url: https://github.com/ai-assist-org/ai-assist
+repo_name: ai-assist-org/ai-assist
+edit_uri: edit/main/docs/
+copyright: Licensed under the Apache License 2.0
+
+theme:
+  name: material
+  logo: assets/logo.svg
+  favicon: assets/logo-badge.svg
+  icon:
+    repo: fontawesome/brands/github
+  font:
+    text: Red Hat Text
+    code: Red Hat Mono
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - navigation.instant
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.tabs.link
+    - toc.follow
+
+extra_css:
+  - stylesheets/extra.css
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+
+plugins:
+  - search
+
+hooks:
+  - docs_hooks/external_links.py
+
+nav:
+  - Home: index.md
+  - Getting Started: getting-started.md
+  - Guides:
+      - Knowledge Quick Start: KNOWLEDGE_QUICK_START.md
+      - Knowledge Management: KNOWLEDGE_MANAGEMENT.md
+      - Inspecting Knowledge: INSPECTING_KNOWLEDGE.md
+      - Scheduled Actions: SCHEDULED_ACTIONS.md
+      - Personal Skills: PERSONAL_SKILLS.md
+      - Plugins: PLUGINS.md
+      - Multi-Instance: MULTI_INSTANCE.md
+      - Identity: IDENTITY.md
+      - Logging: LOGGING.md
+  - Reference:
+      - AWL Specifications: AWL_SPECIFICATIONS.md
