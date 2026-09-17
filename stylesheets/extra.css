@@ -1,0 +1,66 @@
+/* Red Hat Display for headings (Red Hat Text/Mono come from theme.font) */
+@import url("https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@400;500;700;900&display=swap");
+
+/* PatternFly palette — applies to both light and dark schemes */
+:root {
+  --md-primary-fg-color: #0066cc;
+  --md-primary-fg-color--light: #2b9af3;
+  --md-primary-fg-color--dark: #004080;
+  --md-accent-fg-color: #004080;
+}
+
+/* Lighter PatternFly blue for links in the dark (slate) scheme */
+[data-md-color-scheme="slate"] {
+  --md-typeset-a-color: #73bcf7;
+}
+
+/* Brand display font for headings and the header title */
+.md-typeset h1,
+.md-typeset h2,
+.md-typeset h3,
+.md-typeset h4,
+.md-header__title,
+.hero h1,
+.hero h3 {
+  font-family: "Red Hat Display", var(--md-text-font-family), sans-serif;
+  font-weight: 700;
+}
+
+/* Landing page hero */
+.hero {
+  text-align: center;
+  padding: 3rem 1rem 2rem;
+}
+
+.hero-logo {
+  display: block;
+  margin: 0 auto 1rem;
+}
+
+.hero h1 {
+  font-size: 3rem;
+  font-weight: 800;
+  margin-bottom: 0.25rem;
+}
+
+.hero h3 {
+  color: var(--md-default-fg-color--light);
+  font-weight: 400;
+  margin-top: 0;
+}
+
+.hero p {
+  max-width: 42rem;
+  margin: 1rem auto 1.5rem;
+  font-size: 1.05rem;
+  color: var(--md-default-fg-color--light);
+}
+
+.hero .md-button {
+  margin: 0.25rem;
+}
+
+/* Give the feature cards a little more breathing room */
+.md-typeset .grid.cards > ul > li {
+  border-radius: 0.5rem;
+}

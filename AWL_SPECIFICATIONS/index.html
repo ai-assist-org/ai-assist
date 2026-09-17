@@ -1,0 +1,1880 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="AI assistant with MCP integration, agent skills, knowledge graph, and automated monitoring">
+      
+      
+      
+        <link rel="canonical" href="https://ai-assist-org.github.io/ai-assist/AWL_SPECIFICATIONS/">
+      
+      
+        <link rel="prev" href="../LOGGING/">
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/logo-badge.svg">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>AWL Specifications - ai-assist</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Red+Hat+Text:300,300i,400,400i,700,700i%7CRed+Hat+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Red Hat Text";--md-code-font:"Red Hat Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#agent-workflow-language-awl-specification" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="ai-assist" class="md-header__button md-logo" aria-label="ai-assist" data-md-component="logo">
+      
+  <img src="../assets/logo.svg" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            ai-assist
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              AWL Specifications
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/ai-assist-org/ai-assist" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    ai-assist-org/ai-assist
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href=".." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../getting-started/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Getting Started
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../KNOWLEDGE_QUICK_START/" class="md-tabs__link">
+          
+  
+  
+  Guides
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="./" class="md-tabs__link">
+          
+  
+  
+  Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="ai-assist" class="md-nav__button md-logo" aria-label="ai-assist" data-md-component="logo">
+      
+  <img src="../assets/logo.svg" alt="logo">
+
+    </a>
+    ai-assist
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/ai-assist-org/ai-assist" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    ai-assist-org/ai-assist
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guides
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Guides
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../KNOWLEDGE_QUICK_START/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Knowledge Quick Start
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../KNOWLEDGE_MANAGEMENT/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Knowledge Management
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../INSPECTING_KNOWLEDGE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Inspecting Knowledge
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../SCHEDULED_ACTIONS/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Scheduled Actions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../PERSONAL_SKILLS/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Personal Skills
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../PLUGINS/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Plugins
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../MULTI_INSTANCE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Multi-Instance
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../IDENTITY/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Identity
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../LOGGING/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Logging
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AWL Specifications
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AWL Specifications
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Overview
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Overview
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="agent-workflow-language-awl-specification">Agent Workflow Language (AWL) Specification<a class="headerlink" href="#agent-workflow-language-awl-specification" title="Permanent link">&para;</a></h1>
+<h2 id="overview">Overview<a class="headerlink" href="#overview" title="Permanent link">&para;</a></h2>
+<p>The <strong>Agent Workflow Language (AWL)</strong> is a lightweight scripting language used to orchestrate AI agent workflows.</p>
+<p>AWL focuses on <strong>intent-driven orchestration</strong> rather than explicit tool invocation.</p>
+<p>Instead of specifying which tools to call, AWL scripts define:</p>
+<ul>
+<li>goals</li>
+<li>workflow structure</li>
+<li>conditions</li>
+<li>loops</li>
+<li>variable propagation</li>
+</ul>
+<p>The <strong>agent remains responsible for selecting tools and strategies</strong> to accomplish each task.</p>
+<p>This design keeps AWL:</p>
+<ul>
+<li>human readable</li>
+<li>LLM-friendly</li>
+<li>flexible</li>
+<li>safe</li>
+</ul>
+<hr />
+<h1 id="design-principles">Design Principles<a class="headerlink" href="#design-principles" title="Permanent link">&para;</a></h1>
+<h2 id="intent-driven-workflows">Intent-driven workflows<a class="headerlink" href="#intent-driven-workflows" title="Permanent link">&para;</a></h2>
+<p>Scripts describe <strong>what must be achieved</strong>, not <strong>how to implement it</strong>.</p>
+<h2 id="agent-autonomy">Agent autonomy<a class="headerlink" href="#agent-autonomy" title="Permanent link">&para;</a></h2>
+<p>The agent determines:</p>
+<ul>
+<li>which tools to use</li>
+<li>how to search or analyze</li>
+<li>when a task is complete</li>
+</ul>
+<h2 id="minimal-syntax">Minimal syntax<a class="headerlink" href="#minimal-syntax" title="Permanent link">&para;</a></h2>
+<p>The language remains simple so that both humans and LLMs can easily produce and edit scripts.</p>
+<h2 id="deterministic-structure">Deterministic structure<a class="headerlink" href="#deterministic-structure" title="Permanent link">&para;</a></h2>
+<p>Although the agent reasons dynamically, the workflow structure is deterministic and validated by the runtime.</p>
+<hr />
+<h1 id="script-structure">Script Structure<a class="headerlink" href="#script-structure" title="Permanent link">&para;</a></h1>
+<p>An AWL script begins with <code>@start</code> and ends with <code>@end</code>.</p>
+<p>Example:</p>
+<p>@start</p>
+<p>@task find_server
+Goal: Find where the HTTP server is initialized.
+Success: Identify the file and function responsible for startup.
+Expose: server_file, server_function
+@end</p>
+<p>@end</p>
+<hr />
+<h1 id="directives">Directives<a class="headerlink" href="#directives" title="Permanent link">&para;</a></h1>
+<p>AWL defines the following directives.</p>
+<table>
+<thead>
+<tr>
+<th>Directive</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>@start</td>
+<td>start workflow</td>
+</tr>
+<tr>
+<td>@end</td>
+<td>end block</td>
+</tr>
+<tr>
+<td>@task</td>
+<td>define agent task</td>
+</tr>
+<tr>
+<td>@set</td>
+<td>assign variable</td>
+</tr>
+<tr>
+<td>@if</td>
+<td>conditional execution</td>
+</tr>
+<tr>
+<td>@else</td>
+<td>alternate branch</td>
+</tr>
+<tr>
+<td>@loop</td>
+<td>iterate collection</td>
+</tr>
+<tr>
+<td>@continue</td>
+<td>skip current loop iteration</td>
+</tr>
+<tr>
+<td>@break</td>
+<td>exit loop early</td>
+</tr>
+<tr>
+<td>@return</td>
+<td>return workflow result</td>
+</tr>
+<tr>
+<td>@goal</td>
+<td>autonomous goal pursuit</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h1 id="task-hints">Task Hints<a class="headerlink" href="#task-hints" title="Permanent link">&para;</a></h1>
+<p>Tasks may include <strong>execution hints</strong> placed after the task name.</p>
+<p>Hints influence the <strong>context available to the agent</strong>, but do not prescribe specific tools.</p>
+<p>Example:</p>
+<p>@task fresh_search @no-history @no-kg
+Goal: Re-evaluate where the HTTP server is initialized.
+Success: Identify the startup path using only repository evidence.
+Expose: server_file, server_function
+@end</p>
+<hr />
+<h1 id="supported-hints">Supported Hints<a class="headerlink" href="#supported-hints" title="Permanent link">&para;</a></h1>
+<h2 id="no-history">@no-history<a class="headerlink" href="#no-history" title="Permanent link">&para;</a></h2>
+<p>The agent must ignore prior conversation history and previous reasoning context.</p>
+<p>This ensures that the task is evaluated with a <strong>fresh reasoning context</strong>.</p>
+<p>Example:</p>
+<p>@task fresh_analysis @no-history
+Goal: Analyze the repository structure without using previous conclusions.
+@end</p>
+<hr />
+<h2 id="no-kg">@no-kg<a class="headerlink" href="#no-kg" title="Permanent link">&para;</a></h2>
+<p>The agent must not consult the external knowledge graph or knowledge base.</p>
+<p>Only live data sources such as repository inspection or runtime tools may be used.</p>
+<p>Example:</p>
+<p>@task repository_only @no-kg
+Goal: Determine how the system initializes using only source code evidence.
+@end</p>
+<hr />
+<h2 id="max_tool_callsn-and-max_timen">max_tool_calls=N and max_time=N<a class="headerlink" href="#max_tool_callsn-and-max_timen" title="Permanent link">&para;</a></h2>
+<p><code>max_tool_calls</code> overrides the default tool call budget (100) for a single task.</p>
+<p><code>max_time</code> overrides the default wall-clock timeout (600 seconds) for a single task.
+This is useful for tasks that involve long-running operations like RCA analysis.</p>
+<p>Use this when a task may need many tool calls, such as running a detailed analysis before creating a ticket.</p>
+<p>Example:</p>
+<p>@task analyze_and_report max_tool_calls=200 max_time=1800
+Goal: Run a root cause analysis on the job and create a Jira ticket.
+Expose: jira_ticket
+@end</p>
+<hr />
+<h2 id="modellevel">model=\&lt;level&gt;<a class="headerlink" href="#modellevel" title="Permanent link">&para;</a></h2>
+<p><code>model</code> selects an abstract <strong>capability level</strong> for a single task, so scripts
+stay provider-neutral. The valid values are <code>low</code>, <code>medium</code>, <code>high</code>, and
+<code>default</code>. Use a lower level for cheap/mechanical work and a higher level for
+deep analysis. <strong>A task with no <code>model=</code> uses <code>default</code></strong> (the session model).</p>
+<p>Each level maps to a concrete model via env vars:</p>
+<table>
+<thead>
+<tr>
+<th>level</th>
+<th>env var</th>
+<th>fallback when unset</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>low</code></td>
+<td><code>AI_ASSIST_MODEL_LOW</code></td>
+<td><code>default</code></td>
+</tr>
+<tr>
+<td><code>medium</code></td>
+<td><code>AI_ASSIST_MODEL_MEDIUM</code></td>
+<td><code>default</code></td>
+</tr>
+<tr>
+<td><code>high</code></td>
+<td><code>AI_ASSIST_MODEL_HIGH</code></td>
+<td><code>default</code></td>
+</tr>
+<tr>
+<td><code>default</code></td>
+<td><code>AI_ASSIST_MODEL</code></td>
+<td><code>high</code>, then <code>claude-sonnet-4-6</code></td>
+</tr>
+</tbody>
+</table>
+<p><code>default</code> is the session model — the same one used for interactive sessions and
+set by <code>--model</code>. <code>default</code> and <code>high</code> <strong>fall back to each other</strong>: set only
+<code>AI_ASSIST_MODEL</code> and <code>high</code> tracks it; set only <code>AI_ASSIST_MODEL_HIGH</code> and the
+session model tracks that (so a config that defines only the AWL levels still
+runs on a sensible model). Set both explicitly to make them differ.</p>
+<p>The value is validated at workflow load time. Any value other than <code>low</code>,
+<code>medium</code>, <code>high</code>, or <code>default</code> (including a concrete model id) fails the
+workflow before any task executes.</p>
+<p>Example:</p>
+<p>@task search_jobs model=low @no-kg
+Goal: Search DCI for failed jobs in the last 24 hours.
+Expose: failed_jobs
+@end</p>
+<p>@task root_cause model=high
+Goal: Perform root cause analysis on ${failed_jobs}.
+Expose: rca_result
+@end</p>
+<hr />
+<h2 id="continue-on-failure">@continue-on-failure<a class="headerlink" href="#continue-on-failure" title="Permanent link">&para;</a></h2>
+<p>By default, if a top-level task (outside a loop) fails, the workflow <strong>stops immediately</strong> and returns <code>success: false</code>. This prevents cascading errors from missing variables.</p>
+<p>Tasks inside loops are not affected — loop iterations that fail are skipped, and the loop continues to the next item.</p>
+<p>The <code>@continue-on-failure</code> hint overrides the default fail-fast behavior, allowing the workflow to continue even if the task fails.</p>
+<p>Example:</p>
+<p>@task optional_cleanup @continue-on-failure
+Goal: Clean up temporary files. Not critical if this fails.
+@end</p>
+<hr />
+<h1 id="tasks">Tasks<a class="headerlink" href="#tasks" title="Permanent link">&para;</a></h1>
+<p>Tasks represent <strong>objectives for the agent</strong>.</p>
+<p>Syntax:</p>
+<p>@task <task_id> [hints...] [max_tool_calls=N] [max_time=N] [model=<model_name>]
+...
+@end</p>
+<p>Example:</p>
+<p>@task locate_config
+Goal: Find where the server configuration is loaded.
+Context: Focus on startup code and configuration parsing.
+Success: Identify the entrypoint and parser.
+Expose: config_entrypoint, config_parser
+@end</p>
+<hr />
+<h1 id="task-fields">Task Fields<a class="headerlink" href="#task-fields" title="Permanent link">&para;</a></h1>
+<p>Inside a task block the following fields may appear.</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Goal</td>
+<td>task objective</td>
+</tr>
+<tr>
+<td>Context</td>
+<td>additional context</td>
+</tr>
+<tr>
+<td>Constraints</td>
+<td>optional limitations</td>
+</tr>
+<tr>
+<td>Success</td>
+<td>completion criteria</td>
+</tr>
+<tr>
+<td>Expose</td>
+<td>variables produced</td>
+</tr>
+</tbody>
+</table>
+<h2 id="shell-commands-in-tasks">Shell Commands in Tasks<a class="headerlink" href="#shell-commands-in-tasks" title="Permanent link">&para;</a></h2>
+<p>When a task requires the agent to run a specific shell command, enclose it in backticks:</p>
+<p>@task update_repo
+Goal: Fetch the latest changes using <code>git -C /path/to/repo fetch origin master</code>.
+@end</p>
+<p>Commands in backticks are <strong>auto-authorized</strong> by the runtime: they are temporarily added to the allowed commands list for the duration of the workflow, so the user is not prompted for confirmation each time.</p>
+<p>Commands written without backticks will require manual authorization in interactive mode.</p>
+<hr />
+<h1 id="variables">Variables<a class="headerlink" href="#variables" title="Permanent link">&para;</a></h1>
+<p>Variables can be defined using <code>@set</code>.</p>
+<p>Example:</p>
+<p>@set target = "HTTP server"</p>
+<p>Variables can be referenced using interpolation:</p>
+<p>${target}</p>
+<p>Example:</p>
+<p>Goal: Find where ${target} is initialized.</p>
+<h2 id="initial-variables">Initial Variables<a class="headerlink" href="#initial-variables" title="Permanent link">&para;</a></h2>
+<p>Variables can be injected before the script runs, without needing <code>@set</code>.</p>
+<p><strong>From the CLI:</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>ai-assist<span class="w"> </span>/run<span class="w"> </span>workflow.awl<span class="w"> </span><span class="nv">target</span><span class="o">=</span><span class="s2">"HTTP server"</span><span class="w"> </span><span class="nv">days</span><span class="o">=</span><span class="m">7</span>
+</code></pre></div>
+<p><strong>From an agent prompt:</strong> ask the agent to run a <code>.awl</code> file and it will call the
+<code>introspection__execute_awl_script</code> tool with the variables you specify.</p>
+<p>Injected variables are available from the first node, just like <code>@set</code> variables.</p>
+<h2 id="built-in-variables">Built-in Variables<a class="headerlink" href="#built-in-variables" title="Permanent link">&para;</a></h2>
+<p>AWL automatically injects built-in variables into every execution. These are available without any CLI arguments or <code>@set</code> directives.</p>
+<p><strong>Date/time (generated fresh per execution):</strong></p>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Example</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>date</code></td>
+<td><code>2026-07-17</code></td>
+<td>Local date</td>
+</tr>
+<tr>
+<td><code>time</code></td>
+<td><code>14:30:05</code></td>
+<td>Local time</td>
+</tr>
+<tr>
+<td><code>datetime</code></td>
+<td><code>2026-07-17 14:30:05</code></td>
+<td>Local date+time</td>
+</tr>
+<tr>
+<td><code>utc_date</code></td>
+<td><code>2026-07-17</code></td>
+<td>UTC date</td>
+</tr>
+<tr>
+<td><code>utc_time</code></td>
+<td><code>12:30:05</code></td>
+<td>UTC time</td>
+</tr>
+<tr>
+<td><code>utc_datetime</code></td>
+<td><code>2026-07-17 12:30:05</code></td>
+<td>UTC date+time</td>
+</tr>
+<tr>
+<td><code>timezone</code></td>
+<td><code>CEST</code></td>
+<td>Local timezone abbreviation</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Paths:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>config_dir</code></td>
+<td>Config directory (<code>~/.ai-assist</code>)</td>
+</tr>
+<tr>
+<td><code>reports_dir</code></td>
+<td>Reports directory (<code>~/ai-assist/reports</code>)</td>
+</tr>
+<tr>
+<td><code>logs_dir</code></td>
+<td>Logs directory (<code>~/.ai-assist/logs</code>)</td>
+</tr>
+<tr>
+<td><code>tmpdir</code></td>
+<td>Session-scoped temporary directory (created at startup, cleaned up on exit)</td>
+</tr>
+</tbody>
+</table>
+<h2 id="user-defined-variables-variablesyaml">User-Defined Variables (<code>variables.yaml</code>)<a class="headerlink" href="#user-defined-variables-variablesyaml" title="Permanent link">&para;</a></h2>
+<p>Define custom variables in <code>~/.ai-assist/variables.yaml</code> to make them available in all AWL scripts. This makes scripts location-independent — different users can run the same script with their own settings.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">workspace</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">~/ai-assist/workspace</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="nt">team</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">dci</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="nt">jira_project</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">CILAB</span>
+</code></pre></div>
+<p>Values support <code>~</code> expansion and <code>$ENV_VAR</code> substitution. The file is optional.</p>
+<p><strong>Precedence</strong> (highest wins):</p>
+<ol>
+<li>CLI / caller-provided variables (<code>ai-assist /run script.awl key=value</code>)</li>
+<li>User-defined variables from <code>variables.yaml</code></li>
+<li>Built-in variables (date/time, paths)</li>
+</ol>
+<h2 id="variable-validation">Variable Validation<a class="headerlink" href="#variable-validation" title="Permanent link">&para;</a></h2>
+<p>AWL performs static analysis before execution to detect variables that are used
+before they are defined.  This catches common mistakes such as:</p>
+<ul>
+<li>Typos in variable names (e.g., <code>@if failure_count &gt; 0</code> when only <code>failed_jobs</code> was exposed)</li>
+<li>Referencing a <code>collect</code> variable inside the loop that produces it (the <code>collect</code> variable is only available <strong>after</strong> the loop)</li>
+<li>Using <code>${var}</code> in a task goal when no prior task exposed that variable</li>
+</ul>
+<p>Validation warnings are reported in three places:</p>
+<ol>
+<li><strong><code>inspect_awl_script</code></strong> — included as <code>variable_warnings</code> in the result</li>
+<li><strong><code>execute_awl_script</code></strong> — blocks execution and returns an error</li>
+<li><strong>Runtime</strong> — printed to the console before execution starts</li>
+</ol>
+<h3 id="scoping-rules">Scoping rules<a class="headerlink" href="#scoping-rules" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Source</th>
+<th>Available where</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>@set</code></td>
+<td>All subsequent nodes</td>
+</tr>
+<tr>
+<td><code>Expose:</code></td>
+<td>All subsequent nodes</td>
+</tr>
+<tr>
+<td><code>@loop ... as item</code></td>
+<td>Inside the loop body</td>
+</tr>
+<tr>
+<td><code>collect=var</code></td>
+<td><strong>After</strong> the loop (not inside the body)</td>
+</tr>
+<tr>
+<td>Initial variables</td>
+<td>Everywhere</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h1 id="failure-handling">Failure Handling<a class="headerlink" href="#failure-handling" title="Permanent link">&para;</a></h1>
+<h2 id="fail">@fail<a class="headerlink" href="#fail" title="Permanent link">&para;</a></h2>
+<p>Aborts the workflow immediately with an error message.</p>
+<p>Syntax:</p>
+<p>@fail <message></p>
+<p>Example — abort unconditionally:</p>
+<p>@fail Jira server is in maintenance</p>
+<p>Example — abort when a task did not produce the expected result:</p>
+<p>@if not jira_report
+  @fail Jira collection failed - aborting quarterly review
+@end</p>
+<p>The error is reported to the caller. Combine with <code>@if</code>/<code>@else</code> for conditional
+abort vs. alternative path.</p>
+<p><strong>Agent guidance</strong>: When a task's upstream service is unavailable or returns an
+error, do NOT expose the expected variables — leave them unset. The script can
+then detect the failure with <code>@if not &lt;variable&gt;</code> and abort with <code>@fail</code>.</p>
+<hr />
+<h2 id="continue">@continue<a class="headerlink" href="#continue" title="Permanent link">&para;</a></h2>
+<p>Skips the rest of the current loop iteration and proceeds to the next item
+(like Python's <code>continue</code>). Only valid inside <code>@loop</code> or <code>@while</code> blocks.
+Outside a loop, behaves like <code>@fail</code>.</p>
+<p>Syntax:</p>
+<p>@continue <message></p>
+<p>The message is required and supports <code>${variable}</code> interpolation. It is logged
+for debugging. When used inside a <code>@loop</code> with <code>collect=</code>, skipped iterations
+contribute nothing to the collected results.</p>
+<p>Example — skip a loop iteration when a task returns unexpected state:</p>
+<p>@loop pull_requests as pr
+  @task checkout_branch
+    goal: Check out the branch for PR ${pr.number}.
+    Expose: branch_ready
+  @end
+  @if branch_ready == 'unknown'
+    @continue checkout nudged -- branch state unknown, skipping PR ${pr.number}
+  @end
+  @task analyze_pr
+    goal: Analyze the PR.
+  @end
+@end</p>
+<hr />
+<h2 id="break">@break<a class="headerlink" href="#break" title="Permanent link">&para;</a></h2>
+<p>Exits the enclosing loop immediately (like Python's <code>break</code>). Only valid
+inside <code>@loop</code> or <code>@while</code> blocks. Outside a loop, behaves like <code>@fail</code>.</p>
+<p>Syntax:</p>
+<p>@break <message></p>
+<p>The message is required and supports <code>${variable}</code> interpolation. When used
+inside a <code>@loop</code> with <code>collect=</code>, items collected before <code>@break</code> are preserved.</p>
+<p>Example — stop processing after finding the first match:</p>
+<p>@loop candidates as candidate
+  @task evaluate
+    goal: Evaluate ${candidate}.
+    Expose: score
+  @end
+  @if score &gt; 90
+    @set winner ${candidate}
+    @break found a winner with score ${score}
+  @end
+@end</p>
+<h3 id="nested-loops">Nested loops<a class="headerlink" href="#nested-loops" title="Permanent link">&para;</a></h3>
+<p><code>@continue</code> and <code>@break</code> only affect the <strong>innermost enclosing loop</strong> (same
+semantics as Python). To exit an outer loop from inside a nested loop, use a
+variable:</p>
+<p>@set done = false
+@loop repos as repo
+  @if not done
+    @loop branches as branch
+      @task check
+        Goal: Check ${repo} ${branch}.
+        Expose: found
+      @end
+      @if found
+        @set done = true
+        @break found target in ${repo}/${branch}
+      @end
+    @end
+  @end
+@end</p>
+<hr />
+<h1 id="conditional-execution">Conditional Execution<a class="headerlink" href="#conditional-execution" title="Permanent link">&para;</a></h1>
+<p>Syntax:</p>
+<p>@if <expression>
+...
+@else
+...
+@end</p>
+<p>Example:</p>
+<p>@if handlers</p>
+<p>@task analyze_handlers
+Goal: Understand the detected handlers.
+Expose: handler_summaries
+@end</p>
+<p>@else</p>
+<p>@task search_handlers
+Goal: Search more broadly for request entry points.
+Expose: handlers
+@end</p>
+<p>@end</p>
+<hr />
+<h1 id="expressions">Expressions<a class="headerlink" href="#expressions" title="Permanent link">&para;</a></h1>
+<p>Expressions are intentionally simple.</p>
+<p>Supported operations:</p>
+<table>
+<thead>
+<tr>
+<th>Expression</th>
+<th>Example</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>variable</td>
+<td>handlers</td>
+</tr>
+<tr>
+<td>negation</td>
+<td>not report_exists</td>
+</tr>
+<tr>
+<td>property</td>
+<td>config.entrypoint</td>
+</tr>
+<tr>
+<td>index</td>
+<td>handlers[0]</td>
+</tr>
+<tr>
+<td>length</td>
+<td>len(handlers)</td>
+</tr>
+<tr>
+<td>comparison</td>
+<td>len(handlers) &gt; 0</td>
+</tr>
+<tr>
+<td>string literal</td>
+<td>status == 'unknown'</td>
+</tr>
+</tbody>
+</table>
+<p>String literals use single or double quotes (<code>'value'</code> or <code>"value"</code>). Smart/curly
+quotes are automatically normalized to straight quotes. Comparison operators:
+<code>==</code>, <code>!=</code>, <code>&gt;</code>, <code>&lt;</code>, <code>&gt;=</code>, <code>&lt;=</code>.</p>
+<hr />
+<h1 id="loops">Loops<a class="headerlink" href="#loops" title="Permanent link">&para;</a></h1>
+<p>Loops iterate over collections.</p>
+<p>Syntax:</p>
+<p>@loop <collection> as <item> [limit=N] [collect=<var>[(<fields>)]]
+...
+@end</p>
+<p>The optional <code>limit=N</code> parameter caps the number of iterations.</p>
+<h2 id="collecting-results">Collecting Results<a class="headerlink" href="#collecting-results" title="Permanent link">&para;</a></h2>
+<p>The optional <code>collect=&lt;var&gt;</code> parameter accumulates exposed variables from each successful iteration into a list.</p>
+<p>Example:</p>
+<p>@loop handlers as handler limit=5 collect=summaries</p>
+<p>@task inspect_handler
+Goal: Understand what ${handler} does.
+Expose: handler_summary, handler_priority
+@end</p>
+<p>@end</p>
+<p>After the loop, <code>summaries</code> contains:</p>
+<p>[
+  {"handler_summary": "...", "handler_priority": "high"},
+  {"handler_summary": "...", "handler_priority": "low"}
+]</p>
+<p>To collect only specific fields, use parentheses:</p>
+<p>@loop handlers as handler collect=summaries(handler_summary)</p>
+<p>This produces:</p>
+<p>[
+  {"handler_summary": "..."},
+  {"handler_summary": "..."}
+]</p>
+<p>Failed iterations are skipped and do not appear in the collected list.</p>
+<p><strong>Important:</strong> The <code>collect</code> variable is only available <strong>after</strong> the loop completes.
+Referencing it inside the loop body (e.g., <code>${summaries}</code> in a task goal) will
+trigger a validation error, because the variable has not been populated yet.</p>
+<h2 id="basic-loop">Basic Loop<a class="headerlink" href="#basic-loop" title="Permanent link">&para;</a></h2>
+<p>Example without collect:</p>
+<p>@loop handlers as handler limit=5</p>
+<p>@task inspect_handler
+Goal: Understand what ${handler} does.
+Expose: handler_summary
+@end</p>
+<p>@end</p>
+<hr />
+<h1 id="conditional-loop">Conditional Loop<a class="headerlink" href="#conditional-loop" title="Permanent link">&para;</a></h1>
+<p><code>@while</code> repeats its body while an expression is truthy.</p>
+<p>Syntax:</p>
+<p>@while <expression> [max_iterations=N]
+...
+@end</p>
+<p>The optional <code>max_iterations=N</code> parameter limits the number of iterations (default: 100)
+as a safety guard against infinite loops.</p>
+<p>Example:</p>
+<p>@while running_count &gt; 0 max_iterations=24</p>
+<p>@task check_status @no-history @no-kg
+Goal: Count running DCI jobs. Do NOT fetch details.
+Expose: running_count
+@end</p>
+<p>@end</p>
+<p>Tasks inside <code>@while</code> do <strong>not</strong> count against the workflow's <code>max_steps</code> limit,
+since iteration count is already bounded by <code>max_iterations</code>.</p>
+<hr />
+<h1 id="wait">Wait<a class="headerlink" href="#wait" title="Permanent link">&para;</a></h1>
+<p><code>@wait</code> pauses execution for a specified duration.</p>
+<p>Syntax:</p>
+<p>@wait <N>s|m|h</p>
+<p>Examples:</p>
+<p>@wait 30s
+@wait 5m
+@wait 1h</p>
+<p>Useful for rate-limiting API calls or spacing out polling iterations.</p>
+<hr />
+<h1 id="notify">Notify<a class="headerlink" href="#notify" title="Permanent link">&para;</a></h1>
+<p><code>@notify</code> emits a user-facing message with variable interpolation.
+No agent call is made — this is a pure runtime operation.</p>
+<p>Syntax:</p>
+<p>@notify <message></p>
+<p>Example:</p>
+<p>@notify ${running_count} jobs still running
+@notify All daily DCI jobs have completed</p>
+<hr />
+<h1 id="return">Return<a class="headerlink" href="#return" title="Permanent link">&para;</a></h1>
+<p>Workflows can return a result.</p>
+<p>@return handlers</p>
+<hr />
+<h1 id="polling-example">Polling Example<a class="headerlink" href="#polling-example" title="Permanent link">&para;</a></h1>
+<p>This workflow polls for running DCI jobs, notifies progress, and exits when done:</p>
+<p>@start</p>
+<p>@task check_jobs @no-history @no-kg
+Goal: Search for daily DCI jobs still running. Count them.
+Expose: running_count
+@end</p>
+<p>@while running_count &gt; 0 max_iterations=24</p>
+<p>@notify ${running_count} DCI jobs still running</p>
+<p>@wait 1h</p>
+<p>@task recheck_jobs @no-history @no-kg @continue-on-failure
+Goal: Search for daily DCI jobs still running. Count them.
+Expose: running_count
+@end</p>
+<p>@end</p>
+<p>@notify All daily DCI jobs have completed</p>
+<p>@end</p>
+<hr />
+<h1 id="example-workflow">Example Workflow<a class="headerlink" href="#example-workflow" title="Permanent link">&para;</a></h1>
+<p>@start</p>
+<p>@task find_handlers @no-kg
+Goal: Find HTTP handlers defined in the repository.
+Expose: handlers
+@end</p>
+<p>@if len(handlers) &gt; 0</p>
+<p>@loop handlers as handler limit=5</p>
+<p>@task inspect_handler @no-history
+Goal: Understand what ${handler} does.
+Expose: handler_summary
+@end</p>
+<p>@end</p>
+<p>@else</p>
+<p>@task fallback_search
+Goal: Search more broadly for request entry points.
+Expose: handlers
+@end</p>
+<p>@end</p>
+<p>@return handlers</p>
+<p>@end</p>
+<hr />
+<h1 id="runtime-architecture">Runtime Architecture<a class="headerlink" href="#runtime-architecture" title="Permanent link">&para;</a></h1>
+<p>The runtime contains four main components.</p>
+<table>
+<thead>
+<tr>
+<th>Component</th>
+<th>Responsibility</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Workflow Engine</td>
+<td>executes AWL scripts</td>
+</tr>
+<tr>
+<td>Agent</td>
+<td>performs reasoning</td>
+</tr>
+<tr>
+<td>Tool Runtime</td>
+<td>executes tools safely</td>
+</tr>
+<tr>
+<td>Memory System</td>
+<td>stores workflow state</td>
+</tr>
+</tbody>
+</table>
+<p>Execution pipeline:</p>
+<p>AWL Script
+↓
+Parser
+↓
+Workflow AST
+↓
+Runtime Engine
+↓
+Agent reasoning loop
+↓
+Tool execution
+↓
+Memory updates</p>
+<hr />
+<h1 id="task-execution-model">Task Execution Model<a class="headerlink" href="#task-execution-model" title="Permanent link">&para;</a></h1>
+<p>Each task runs an <strong>agent reasoning loop</strong>.</p>
+<p>Lifecycle:</p>
+<p>task start
+↓
+build task context
+↓
+agent reasoning loop
+↓
+success detection
+↓
+store exposed variables
+↓
+task end</p>
+<hr />
+<h1 id="task-context">Task Context<a class="headerlink" href="#task-context" title="Permanent link">&para;</a></h1>
+<p>Before executing a task, the runtime builds a context object.</p>
+<p>Example:</p>
+<p>{
+  "task_id": "find_server",
+  "goal": "Find where the HTTP server is initialized.",
+  "success": "Identify the file and function responsible for startup.",
+  "expose": ["server_file","server_function"],
+  "variables": {}
+}</p>
+<p>Hints such as <code>@no-history</code> and <code>@no-kg</code> are included in this context.</p>
+<hr />
+<h1 id="task-outcomes">Task Outcomes<a class="headerlink" href="#task-outcomes" title="Permanent link">&para;</a></h1>
+<p>A task may terminate with one of several outcomes.</p>
+<table>
+<thead>
+<tr>
+<th>Status</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>success</td>
+<td>goal achieved</td>
+</tr>
+<tr>
+<td>failed</td>
+<td>task attempted but not successful</td>
+</tr>
+<tr>
+<td>blocked</td>
+<td>task cannot proceed due to missing dependency</td>
+</tr>
+<tr>
+<td>aborted</td>
+<td>execution intentionally stopped</td>
+</tr>
+</tbody>
+</table>
+<p>Example success result:</p>
+<p>{
+  "status": "success",
+  "summary": "Server initialized in cmd/server/main.go",
+  "exposed": {
+    "server_file": "cmd/server/main.go"
+  }
+}</p>
+<p>Example blocked result:</p>
+<p>{
+  "status": "blocked",
+  "reason": "repository_not_loaded",
+  "message": "Cannot analyze repository because none is loaded."
+}</p>
+<hr />
+<h1 id="runtime-limits">Runtime Limits<a class="headerlink" href="#runtime-limits" title="Permanent link">&para;</a></h1>
+<p>Safety limits enforced by the runtime.</p>
+<table>
+<thead>
+<tr>
+<th>Limit</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>max_steps</td>
+<td>maximum reasoning steps</td>
+</tr>
+<tr>
+<td>max_tool_calls</td>
+<td>maximum tool executions</td>
+</tr>
+<tr>
+<td>timeout</td>
+<td>maximum task duration</td>
+</tr>
+</tbody>
+</table>
+<p>Example configuration:</p>
+<p>max_steps = 12
+max_tool_calls = 20
+timeout = 30s</p>
+<hr />
+<h1 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h1>
+<p>Goals enable <strong>autonomous agent behavior</strong> by scheduling periodic execution of an AWL body.</p>
+<p>Syntax:</p>
+<p>@goal <goal_id> [max_actions=<N>]
+  Success: <natural language criterion>
+<br />
+<body>
+@end
+
+Parameters:
+
+| Parameter | Required | Description |
+|---|---|---|
+| max_actions | no | Max tool calls per cycle (default: 5) |
+
+Scheduling is independent from the goal definition. Goals can be run:
+
+- From the CLI: `ai-assist /run goal.awl`
+- Via `event-schedules.json`: `{"prompt": "goals/track_failures.awl", "trigger": {"type": "interval", "every": "30m"}}`
+- As a one-shot scheduled action
+
+The `Success:` field is mandatory. After each cycle, Claude evaluates whether the criterion is met. When met, the goal status is set to "completed" and scheduling stops.
+
+## Variable Persistence
+
+Variables exposed by tasks inside the goal body persist between cycles via a JSON sidecar file. This allows the goal to track state across executions.
+
+## Example
+
+@start
+
+@goal track_failures max_actions=5
+  Success: Failure rate stays below 10%
+
+  @task check_status @no-history
+  Goal: Check DCI failure rate for OCP 4.19.
+  Expose: failure_rate, failures
+  @end
+
+  @if failure_rate > 10
+    @task create_alert
+    Goal: Write a failure report about ${failures}.
+    @end
+  @end
+
+@end
+
+@end
+
+## Goal Files
+
+Goal AWL scripts live in `~/.ai-assist/goals/`. The monitor mode scans this directory and schedules active goals. State is persisted in `~/.ai-assist/state/goal_<id>.json`.
+
+## Goal Management
+
+The agent can create, list, and update goals via built-in tools:
+
+- `goal__create` -- generates a `.awl` file
+- `goal__list` -- scans the goals directory
+- `goal__update` -- changes goal status (pause, resume, cancel)
+
+---
+
+# Summary
+
+The Agent Workflow Language enables structured orchestration of AI agents.
+
+Key properties:
+
+- intent-driven workflows
+- agent autonomy
+- task hints controlling context
+- deterministic execution
+- extensible architecture
+
+
+</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Licensed under the Apache License 2.0
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "navigation.instant", "search.suggest", "search.highlight", "content.code.copy", "content.tabs.link", "toc.follow"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>
