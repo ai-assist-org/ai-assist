@@ -260,7 +260,7 @@ def _run_synthesis(kg, client, model: str, turns: list[dict], sample_id: str) ->
 
 def _run_connection_discovery(kg, client, model: str) -> int:
     """Phase C: Discover relationships between knowledge entities."""
-    from ai_assist.agent import CONNECTION_DISCOVERY_PROMPT_TEMPLATE
+    from ai_assist.synthesis_engine import CONNECTION_DISCOVERY_PROMPT_TEMPLATE
 
     all_entities = []
     for et in KNOWLEDGE_TYPES:
