@@ -15,7 +15,7 @@ dependencies = [
     "pyyaml>=6.0.3",
     "prompt-toolkit>=3.0.53",
     "rich>=15.0.0",
-    "fastembed>=0.8.0",
+    "fastembed>=0.8.1",
     "sqlite-vec>=0.1.9",
 ]
 
