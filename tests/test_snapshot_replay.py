@@ -106,8 +106,7 @@ async def test_tool_call_then_answer_stream_path(make_replay_agent):
     assert [tc["tool_name"] for tc in agent.last_tool_calls] == ["internal__think"]
 
 
-async def test_tool_call_then_answer_create_path(make_replay_agent):
-    # max_output_tokens <= 8192 routes query() through messages.create()
+async def test_tool_call_then_answer_small_output_limit(make_replay_agent):
     agent = await make_replay_agent(
         [
             {
@@ -194,3 +193,85 @@ def test_recording_client_round_trips_through_replay(tmp_path):
     replay = FakeAnthropicClient(Cassette(turns=cassette.turns))
     assert replay.messages.stream().get_final_message().content[0].name == "internal__think"
     assert replay.messages.create().content[0].text == "answer"
+
+
+async def test_query_collects_only_final_answer(make_replay_agent):
+    agent = await make_replay_agent(
+        [
+            {
+                "content": [
+                    {"type": "text", "text": "Let me check."},
+                    {"type": "tool_use", "id": "t1", "name": "internal__think", "input": {"thought": "check"}},
+                ],
+                "stop_reason": "tool_use",
+            },
+            {"content": [{"type": "text", "text": "Final answer"}], "stop_reason": "end_turn"},
+        ]
+    )
+    assert await agent.query("go") == "Final answer"
+
+
+async def test_query_uses_streaming_entry_point(make_replay_agent, monkeypatch):
+    agent = await make_replay_agent([])
+
+    async def stream(**kwargs):
+        assert kwargs["prompt"] == "go"
+        yield "Final answer"
+        yield {"type": "done", "turns": 1, "text": "Final answer"}
+
+    monkeypatch.setattr(agent, "query_streaming", stream)
+    assert await agent.query("go") == "Final answer"
+
+
+async def test_streaming_retries_empty_responses(make_replay_agent):
+    agent = await make_replay_agent(
+        [
+            {"content": [], "stop_reason": "end_turn"},
+            {"content": [{"type": "text", "text": "Recovered"}], "stop_reason": "end_turn"},
+        ]
+    )
+    events = [event async for event in agent.query_streaming("go")]
+    assert "Recovered" in "".join(event for event in events if isinstance(event, str))
+    assert events[-1]["turns"] == 2
+
+
+async def test_streaming_no_history_keeps_only_current_request(make_replay_agent):
+    agent = await make_replay_agent(
+        [
+            {"content": [{"type": "text", "text": "Done"}], "stop_reason": "end_turn"},
+        ]
+    )
+    history = [
+        {"role": "user", "content": "Old question"},
+        {"role": "assistant", "content": "Old answer"},
+        {"role": "user", "content": "@no-history Current question"},
+    ]
+    from unittest.mock import patch
+
+    with patch.object(agent.anthropic.messages, "stream", wraps=agent.anthropic.messages.stream) as stream:
+        events = [event async for event in agent.query_streaming(messages=history)]
+    assert events[-1]["text"] == "Done"
+    sent = stream.call_args.kwargs["messages"]
+    assert not any("Old" in str(message) for message in sent)
+    assert len(history) == 3
+
+
+async def test_streaming_stops_after_repeated_empty_responses(make_replay_agent):
+    agent = await make_replay_agent([{"content": [], "stop_reason": "end_turn"}] * 10)
+    events = [event async for event in agent.query_streaming("go")]
+    assert events[-1] == {"type": "error", "message": "Agent stopped responding (no progress detected)"}
+    assert agent._query_depth == 0
+
+
+async def test_closing_stream_early_cleans_query_state(make_replay_agent):
+    agent = await make_replay_agent(
+        [
+            {"content": [{"type": "text", "text": "Done"}], "stop_reason": "end_turn"},
+        ]
+    )
+    stream = agent.query_streaming("go")
+    assert await anext(stream) == "Done"
+    await stream.aclose()
+    assert agent._query_depth == 0
+    assert agent._query_deadline is None
+    assert agent._mlflow_root_span is None

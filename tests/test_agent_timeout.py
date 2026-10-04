@@ -16,131 +16,77 @@ def agent():
     return AiAssistAgent(config=config)
 
 
-@pytest.mark.asyncio
-async def test_query_timeout_fires_during_slow_inner(agent):
-    """asyncio.wait_for should enforce max_time even when _query_inner blocks."""
+@pytest.mark.parametrize("streaming", [False, True])
+async def test_timeout_interrupts_tool_and_cleans_query(make_replay_agent, streaming):
+    agent = await make_replay_agent(
+        [
+            {
+                "content": [{"type": "tool_use", "id": "t1", "name": "internal__think", "input": {"thought": "wait"}}],
+                "stop_reason": "tool_use",
+            },
+        ]
+    )
+    cancelled = False
+    captured_deadline = None
 
-    async def slow_inner(*args, **kwargs):
-        await asyncio.sleep(100)
-        return "should not reach"
+    async def slow_tools(*args, **kwargs):
+        nonlocal cancelled, captured_deadline
+        captured_deadline = agent._query_deadline
+        try:
+            await asyncio.sleep(100)
+        finally:
+            cancelled = True
 
-    with patch.object(agent, "_query_inner", side_effect=slow_inner):
-        start = time.time()
-        result = await agent.query("test", max_turns=5, max_time_seconds=1)
-        elapsed = time.time() - start
-
-    assert "timeout" in result.lower()
-    assert elapsed < 5, f"Should have timed out in ~1s but took {elapsed:.1f}s"
-
-
-@pytest.mark.asyncio
-async def test_query_timeout_returns_message(agent):
-    """Timeout should return a descriptive message, not raise."""
-
-    async def slow_inner(*args, **kwargs):
-        await asyncio.sleep(100)
-
-    with patch.object(agent, "_query_inner", side_effect=slow_inner):
-        result = await agent.query("test", max_turns=5, max_time_seconds=1)
+    with patch.object(agent, "_execute_tools_concurrently", side_effect=slow_tools):
+        start = time.monotonic()
+        if streaming:
+            events = [event async for event in agent.query_streaming("test", max_time_seconds=1)]
+            result = events[-1]["message"]
+        else:
+            result = await agent.query("test", max_time_seconds=1)
 
     assert "timeout" in result.lower()
     assert "1 seconds" in result
-
-
-@pytest.mark.asyncio
-async def test_query_no_timeout_without_explicit_max_time(agent):
-    """Without max_time_seconds, query should NOT use asyncio.wait_for."""
-
-    async def fast_inner(*args, **kwargs):
-        return "done"
-
-    with patch.object(agent, "_query_inner", side_effect=fast_inner):
-        result = await agent.query("test", max_turns=5)
-
-    assert result == "done"
-    assert agent._query_deadline is None
-
-
-@pytest.mark.asyncio
-async def test_query_sets_and_clears_deadline(agent):
-    """Outermost query should set _query_deadline only when max_time_seconds is explicit."""
-    assert agent._query_deadline is None
-
-    captured_deadline = None
-
-    async def capture_deadline(*args, **kwargs):
-        nonlocal captured_deadline
-        captured_deadline = agent._query_deadline
-        return "done"
-
-    with patch.object(agent, "_query_inner", side_effect=capture_deadline):
-        await agent.query("test", max_time_seconds=60)
-
+    assert time.monotonic() - start < 5
+    assert cancelled
     assert captured_deadline is not None
+    assert agent._query_depth == 0
+    assert agent._query_deadline is None
+    assert agent._mlflow_root_span is None
+
+
+async def test_query_default_deadline_and_cleanup(make_replay_agent):
+    agent = await make_replay_agent(
+        [
+            {"content": [{"type": "text", "text": "done"}], "stop_reason": "end_turn"},
+        ]
+    )
+    deadlines = []
+    with patch.object(agent, "_execute_tools_concurrently", new=AsyncMock(return_value=([], False))) as execute:
+
+        async def capture(*args, **kwargs):
+            deadlines.append(agent._query_deadline)
+            return [], False
+
+        execute.side_effect = capture
+        before = time.time()
+        assert await agent.query("test") == "done"
+    assert before + 599 <= deadlines[0] <= time.time() + 600
     assert agent._query_deadline is None
 
 
-@pytest.mark.asyncio
-async def test_query_deadline_not_overwritten_by_nested_query(agent):
-    """Nested queries (depth > 1) should not overwrite _query_deadline."""
+async def test_query_deadline_not_overwritten_by_nested_query(make_replay_agent):
+    agent = await make_replay_agent(
+        [
+            {"content": [{"type": "text", "text": "done"}], "stop_reason": "end_turn"},
+        ]
+    )
     outer_deadline = time.time() + 300
     agent._query_deadline = outer_deadline
-    agent._query_depth = 1  # Simulate already being inside a query
-
-    async def fast_inner(*args, **kwargs):
-        return "done"
-
-    with patch.object(agent, "_query_inner", side_effect=fast_inner):
-        await agent.query("nested test", max_time_seconds=10)
-
-    # Deadline should still be the outer one (depth was > 1 when query ran)
+    agent._query_depth = 1
+    assert await agent.query("nested test", max_time_seconds=10) == "done"
     assert agent._query_deadline == outer_deadline
-
-    # Clean up
-    agent._query_depth = 0
-    agent._query_deadline = None
-
-
-@pytest.mark.asyncio
-async def test_query_streaming_timeout_check(agent):
-    """query_streaming should yield error when max_time_seconds is exceeded."""
-
-    async def slow_tool(*args, **kwargs):
-        await asyncio.sleep(10)
-        return [], False
-
-    mock_content_block = MagicMock()
-    mock_content_block.type = "tool_use"
-    mock_content_block.name = "internal__think"
-    mock_content_block.id = "tool-1"
-    mock_content_block.input = {"thought": "test"}
-
-    mock_response = MagicMock()
-    mock_response.content = [mock_content_block]
-    mock_response.stop_reason = "tool_use"
-    mock_response.usage = MagicMock(input_tokens=100, output_tokens=50)
-
-    with patch.object(agent.anthropic.messages, "stream") as mock_stream:
-        mock_ctx = MagicMock()
-        mock_ctx.__enter__ = MagicMock(return_value=mock_ctx)
-        mock_ctx.__exit__ = MagicMock(return_value=False)
-        mock_ctx.get_final_message.return_value = mock_response
-        mock_stream.return_value = mock_ctx
-
-        with patch.object(agent, "_execute_tools_concurrently", side_effect=slow_tool):
-            chunks = []
-            start = time.time()
-            async for chunk in agent.query_streaming("test", max_turns=5, max_time_seconds=1):
-                chunks.append(chunk)
-            elapsed = time.time() - start
-
-    # The soft timeout check fires between turns, but the tool sleeps 10s.
-    # The streaming loop will block on _execute_tools_concurrently.
-    # Since streaming doesn't use asyncio.timeout, this test checks the
-    # between-turn soft check works when the tool eventually returns.
-    # For truly blocking tools, the outer query()'s asyncio.wait_for handles it.
-    # We verify at least that the parameter is accepted and used.
-    assert elapsed < 15
+    assert agent._query_depth == 1
 
 
 @pytest.mark.asyncio
