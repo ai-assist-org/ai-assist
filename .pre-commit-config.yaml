@@ -22,7 +22,7 @@ repos:
 
   # Python code formatting with black
   - repo: https://github.com/psf/black
-    rev: 87928e6d6761a4a6d22250e1fee5601b3998086e  # 26.5.1
+    rev: 4f1883b1f15305a0e83a7c87991f46292bf09f85  # frozen: 26.10.0
     hooks:
       - id: black
         args: ['--line-length=120']
@@ -36,7 +36,7 @@ repos:
 
   # Python linting with ruff (includes isort, flake8, pyupgrade)
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: e8f7d69b957a30acb2c875078d5fd012de24b64c  # frozen: v0.16.7
+    rev: f12be1ebaa5351c1fc76472de98db2c3446c8253  # frozen: v0.16.10
     hooks:
       - id: ruff
         args: ['--fix', '--line-length=120']
