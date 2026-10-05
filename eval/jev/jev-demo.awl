@@ -1,0 +1,20 @@
+# jev-demo.awl — smallest script that exercises the jev goal-success check.
+#
+# The @goal body only sets a variable (no @task, so no LLM call). After the
+# body runs, the AWL runtime evaluates the Success criterion. With jev
+# configured, that decision is made by jev and the printed "Success:" line
+# shows "jev Noul p(yes)=...". Without jev, an LLM makes the same call and the
+# line shows an LLM-written reason instead.
+#
+# Run:  uv run ai-assist /run eval/jev/jev-demo.awl
+@start
+
+@set test_status = "all unit tests passed, zero failures"
+
+@goal jev_demo
+  Success: The test suite passed with no failures.
+
+  @set evaluated = true
+  @end
+
+@end

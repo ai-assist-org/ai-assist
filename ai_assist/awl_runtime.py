@@ -25,9 +25,13 @@ from .awl_ast import (
 )
 from .awl_expressions import AWLExpressionEvaluator
 from .filesystem_tools import extract_command_names
+from .jev_client import JevError, jev_configured, jev_decide, noul, noul_probability
 from .output import console_print
 
 logger = logging.getLogger(__name__)
+
+# A jev Noul yes-probability at or above this counts as "success met".
+_JEV_SUCCESS_THRESHOLD = 0.5
 
 
 class AWLRuntimeError(Exception):
@@ -61,6 +65,9 @@ class TaskOutcome:
     summary: str
     exposed: dict[str, Any] = field(default_factory=dict)
     expose_methods: dict[str, str] = field(default_factory=dict)
+    # Optional jev verification of the task's Success: criterion (p(yes)), set
+    # only when jev task verification is enabled. None means not checked.
+    success_confidence: float | None = None
 
 
 @dataclass
@@ -523,6 +530,7 @@ class AWLRuntime:
             )
             self._task_outcomes.append(outcome)
             self._log_exposed(task, exposed, expose_methods)
+            await self._verify_task_success_jev(task, outcome)
         except Exception as e:
             outcome = TaskOutcome(status="failed", summary=str(e))
             self._task_outcomes.append(outcome)
@@ -530,6 +538,45 @@ class AWLRuntime:
             console_print(f"    [-] failed: {e}")
             if self._loop_depth == 0 and "continue-on-failure" not in task.hints:
                 raise _TaskFailedError(f"Task '{task.task_id}' failed: {e}") from e
+
+    async def _verify_task_success_jev(self, task: TaskNode, outcome: TaskOutcome) -> None:
+        """Optionally ask jev whether a @task's Success: criterion was met.
+
+        Observability only: records the probability on the outcome and surfaces
+        low-confidence tasks. It never changes control flow. Enabled by
+        ``config.jev_verify_tasks`` and requires jev to be configured; otherwise
+        this is a no-op. jev errors are logged and ignored so a task is never
+        disrupted by verification.
+        """
+        config = self._agent.config
+        if not (task.success and getattr(config, "jev_verify_tasks", False) and jev_configured(config)):
+            return
+
+        criterion = self._expr.interpolate(task.success, self._variables)
+        evidence = "\n".join(f"  {k} = {v}" for k, v in outcome.exposed.items()) or "  (no exposed variables)"
+        state = f"Task: {self._expr.interpolate(task.goal, self._variables)}\nResult:\n{evidence}"
+        try:
+            response = await jev_decide(config, state=state, questions={"task_success": noul(criterion)})
+        except JevError:
+            logger.exception("jev task-success verification failed for '%s'", task.task_id)
+            return
+
+        probability = noul_probability(response, "task_success")
+        if probability is None:
+            logger.warning("AWL task '%s': jev verification returned no probability", task.task_id)
+            return
+
+        outcome.success_confidence = probability
+        logger.info("AWL task '%s': jev success confidence p(yes)=%.2f", task.task_id, probability)
+        if probability < _JEV_SUCCESS_THRESHOLD:
+            logger.warning(
+                "AWL task '%s': jev low confidence that success was met, p(yes)=%.2f",
+                task.task_id,
+                probability,
+            )
+            console_print(f"    [?] jev: success criterion may not be met (p(yes)={probability:.2f})")
+        else:
+            console_print(f"    [✓] jev verified success (p(yes)={probability:.2f})")
 
     async def _resolve_exposed(
         self,
@@ -1068,8 +1115,41 @@ class AWLRuntime:
         await self._evaluate_goal_success(goal)
 
     async def _evaluate_goal_success(self, goal: GoalNode):
-        """Ask the agent whether the goal's success criterion is met."""
+        """Decide whether the goal's success criterion is met.
+
+        Uses jev (a fast, calibrated yes/no decision model) when configured,
+        falling back to an LLM judgment otherwise. Both paths set the same
+        ``_goal_success_met`` / ``_goal_success_reason`` variables, so this is
+        transparent to existing workflows.
+        """
         var_summary = "\n".join(f"  {k} = {v}" for k, v in self._variables.items() if not k.startswith("_goal_"))
+
+        if jev_configured(self._agent.config):
+            try:
+                await self._evaluate_goal_success_jev(goal, var_summary)
+                return
+            except JevError:
+                logger.exception("jev goal-success check failed; falling back to LLM")
+
+        await self._evaluate_goal_success_llm(goal, var_summary)
+
+    async def _evaluate_goal_success_jev(self, goal: GoalNode, var_summary: str) -> None:
+        """Evaluate goal success with a jev Noul question (typed, no text parsing)."""
+        state = f"Goal: {goal.goal_id}\nCurrent state after this cycle:\n{var_summary}"
+        response = await jev_decide(
+            self._agent.config,
+            state=state,
+            questions={"success_met": noul(goal.success_criteria)},
+        )
+        probability = noul_probability(response, "success_met")
+        if probability is None:
+            raise JevError("jev response missing success_met probability")
+
+        self._variables["_goal_success_met"] = probability >= _JEV_SUCCESS_THRESHOLD
+        self._variables["_goal_success_reason"] = f"jev Noul p(yes)={probability:.2f}"
+
+    async def _evaluate_goal_success_llm(self, goal: GoalNode, var_summary: str) -> None:
+        """Ask the agent whether the goal's success criterion is met (original behavior)."""
         prompt = (
             f"You are evaluating whether a goal's success criterion has been met.\n\n"
             f"Goal: {goal.goal_id}\n"

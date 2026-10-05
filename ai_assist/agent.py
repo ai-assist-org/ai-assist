@@ -19,6 +19,7 @@ from .config import AiAssistConfig, MCPServerConfig
 from .filesystem_tools import FilesystemTools
 from .identity import get_identity
 from .introspection_tools import IntrospectionTools
+from .jev_client import jev_configured
 from .json_tools import JsonTools
 from .mcp_stdio_fix import stdio_client_fixed
 from .mlflow_tracing import end_span, record_query_trace, setup_mlflow, start_query_span, start_tool_span
@@ -311,6 +312,8 @@ class AiAssistAgent:
         # Display model configuration
         max_tokens = self.get_max_tokens()
         console_print(f"🤖 Model: {config.model} (max output tokens: {max_tokens:,})")
+        if jev_configured(config):
+            console_print(f"⚖️  jev: goal-success decisions via {config.jev_model}")
         self.sessions: dict[str, ClientSession] = {}
         self.tool_result_router = ToolResultRouter(
             agent=self,

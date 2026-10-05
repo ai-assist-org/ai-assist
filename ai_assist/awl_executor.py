@@ -48,6 +48,21 @@ def _get_session_tmpdir() -> str:
     return path
 
 
+def _allow_session_tmpdir(agent: object) -> None:
+    """Whitelist the session tmpdir for the agent's filesystem/json tools.
+
+    The result router auto-saves large tool outputs into the session tmpdir
+    (also exposed to scripts as ``${tmpdir}``). Unless that dir is in the
+    filesystem allowlist, read-back tools like internal__json_query reject it.
+    """
+    fs_tools = getattr(agent, "filesystem_tools", None)
+    if fs_tools is None:
+        return
+    tmp_path = Path(_get_session_tmpdir()).resolve()
+    if tmp_path not in fs_tools.allowed_paths:
+        fs_tools.allowed_paths.append(tmp_path)
+
+
 def _generate_builtin_variables() -> dict[str, str]:
     """Generate built-in date/time and path variables for AWL execution."""
     now_local = datetime.now().astimezone()
@@ -153,6 +168,7 @@ async def run_awl_script(
     from .awl_ast import GoalNode
 
     merged = _merge_all_variables(variables)
+    _allow_session_tmpdir(agent)
 
     workflow, _awl_path = load_awl_workflow(prompt)
 

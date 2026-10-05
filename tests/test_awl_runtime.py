@@ -30,6 +30,7 @@ from ai_assist.awl_runtime import (
     _validate_workflow_models,
     validate_workflow_variables,
 )
+from ai_assist.jev_client import JevError
 
 
 @pytest.fixture
@@ -38,6 +39,11 @@ def mock_agent():
     agent.query = AsyncMock()
     agent.config.model = "claude-sonnet-4-6"
     agent.config.model_tiers = {}
+    # jev off by default so goal-success tests use the LLM path (see the
+    # jev-specific tests below for the configured path).
+    agent.config.jev_enabled = False
+    agent.config.jev_api_key = None
+    agent.config.jev_verify_tasks = False
     return agent
 
 
@@ -1861,3 +1867,158 @@ async def test_pre_extract_no_substring_collision(mock_agent, tmp_path):
 
     assert result["needs_code_changes"] is True
     assert result["abandon_requested"] is False
+
+
+# ---- jev-backed goal success evaluation ------------------------------------
+
+
+def _goal():
+    return GoalNode(goal_id="g", success_criteria="Failure rate below 10%")
+
+
+@pytest.mark.asyncio
+async def test_goal_success_uses_jev_when_configured(mock_agent, runtime):
+    mock_agent.config.jev_enabled = True
+    mock_agent.config.jev_api_key = "k"
+    runtime._variables = {"failure_rate": 2}
+
+    async def fake_decide(config, state, questions):
+        return {"answers": {"success_met": {"type": "noul", "noul": 0.9}}}
+
+    with patch("ai_assist.awl_runtime.jev_decide", side_effect=fake_decide):
+        await runtime._evaluate_goal_success(_goal())
+
+    assert runtime._variables["_goal_success_met"] is True
+    assert "jev" in runtime._variables["_goal_success_reason"]
+    mock_agent.query.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_goal_success_jev_below_threshold_not_met(mock_agent, runtime):
+    mock_agent.config.jev_enabled = True
+    mock_agent.config.jev_api_key = "k"
+
+    async def fake_decide(config, state, questions):
+        return {"answers": {"success_met": {"type": "noul", "noul": 0.3}}}
+
+    with patch("ai_assist.awl_runtime.jev_decide", side_effect=fake_decide):
+        await runtime._evaluate_goal_success(_goal())
+
+    assert runtime._variables["_goal_success_met"] is False
+    mock_agent.query.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_goal_success_jev_error_falls_back_to_llm(mock_agent, runtime):
+    mock_agent.config.jev_enabled = True
+    mock_agent.config.jev_api_key = "k"
+    mock_agent.query.return_value = '```json\n{"success_met": true, "reason": "done"}\n```'
+
+    async def fake_decide(config, state, questions):
+        raise JevError("boom")
+
+    with patch("ai_assist.awl_runtime.jev_decide", side_effect=fake_decide):
+        await runtime._evaluate_goal_success(_goal())
+
+    mock_agent.query.assert_called_once()
+    assert runtime._variables["_goal_success_met"] is True
+    assert runtime._variables["_goal_success_reason"] == "done"
+
+
+@pytest.mark.asyncio
+async def test_goal_success_unconfigured_uses_llm(mock_agent, runtime):
+    # Default fixture has jev disabled.
+    mock_agent.query.return_value = '```json\n{"success_met": false, "reason": "not yet"}\n```'
+
+    with patch("ai_assist.awl_runtime.jev_decide") as decide:
+        await runtime._evaluate_goal_success(_goal())
+        decide.assert_not_called()
+
+    mock_agent.query.assert_called_once()
+    assert runtime._variables["_goal_success_met"] is False
+
+
+# ---- jev-backed @task success verification (opt-in observability) ----------
+
+
+def _verify_workflow():
+    return WorkflowNode(
+        body=[
+            TaskNode(
+                task_id="triage",
+                goal="Triage the failures.",
+                success="All failures were categorized.",
+                expose=["categorized"],
+            ),
+        ]
+    )
+
+
+@pytest.mark.asyncio
+async def test_task_verify_sets_confidence_when_enabled(mock_agent, runtime):
+    mock_agent.config.jev_enabled = True
+    mock_agent.config.jev_api_key = "k"
+    mock_agent.config.jev_verify_tasks = True
+    mock_agent.query.return_value = '```json\n{"categorized": true}\n```'
+
+    async def fake_decide(config, state, questions):
+        assert "task_success" in questions
+        return {"answers": {"task_success": {"type": "noul", "noul": 0.95}}}
+
+    with patch("ai_assist.awl_runtime.jev_decide", side_effect=fake_decide) as decide:
+        result = await runtime.execute(_verify_workflow())
+
+    decide.assert_called_once()
+    assert result.success is True
+    assert result.task_outcomes[0].success_confidence == 0.95
+
+
+@pytest.mark.asyncio
+async def test_task_verify_low_confidence_still_succeeds(mock_agent, runtime):
+    mock_agent.config.jev_enabled = True
+    mock_agent.config.jev_api_key = "k"
+    mock_agent.config.jev_verify_tasks = True
+    mock_agent.query.return_value = '```json\n{"categorized": true}\n```'
+
+    async def fake_decide(config, state, questions):
+        return {"answers": {"task_success": {"type": "noul", "noul": 0.2}}}
+
+    with patch("ai_assist.awl_runtime.jev_decide", side_effect=fake_decide):
+        result = await runtime.execute(_verify_workflow())
+
+    # Verification is observability only: control flow is unchanged.
+    assert result.success is True
+    assert result.task_outcomes[0].status == "success"
+    assert result.task_outcomes[0].success_confidence == 0.2
+
+
+@pytest.mark.asyncio
+async def test_task_verify_off_by_default(mock_agent, runtime):
+    # jev configured but verify flag off (fixture default) -> no jev call.
+    mock_agent.config.jev_enabled = True
+    mock_agent.config.jev_api_key = "k"
+    mock_agent.query.return_value = '```json\n{"categorized": true}\n```'
+
+    with patch("ai_assist.awl_runtime.jev_decide") as decide:
+        result = await runtime.execute(_verify_workflow())
+        decide.assert_not_called()
+
+    assert result.task_outcomes[0].success_confidence is None
+
+
+@pytest.mark.asyncio
+async def test_task_verify_error_does_not_disrupt_task(mock_agent, runtime):
+    mock_agent.config.jev_enabled = True
+    mock_agent.config.jev_api_key = "k"
+    mock_agent.config.jev_verify_tasks = True
+    mock_agent.query.return_value = '```json\n{"categorized": true}\n```'
+
+    async def fake_decide(config, state, questions):
+        raise JevError("boom")
+
+    with patch("ai_assist.awl_runtime.jev_decide", side_effect=fake_decide):
+        result = await runtime.execute(_verify_workflow())
+
+    assert result.success is True
+    assert result.task_outcomes[0].status == "success"
+    assert result.task_outcomes[0].success_confidence is None

@@ -266,6 +266,24 @@ class AiAssistConfig(BaseModel):
         ),
     )
 
+    # jev (TypeSafe System One decision model) — optional, off unless a key is set.
+    # Reachable via OpenRouter (default) or TypeSafe directly; both expose an
+    # identical System One endpoint, so only URL / model / key differ.
+    jev_api_key: str | None = Field(default_factory=lambda: os.getenv("AI_ASSIST_JEV_API_KEY"))
+    jev_api_url: str = Field(
+        default_factory=lambda: os.getenv("AI_ASSIST_JEV_URL", "https://openrouter.ai/api/v1/systemone"),
+    )
+    jev_model: str = Field(default_factory=lambda: os.getenv("AI_ASSIST_JEV_MODEL", "~typesafe/jev-latest"))
+    jev_enabled: bool = Field(
+        default_factory=lambda: os.getenv("AI_ASSIST_JEV_ENABLED", "true").lower() == "true",
+    )
+    # Opt-in: after each @task with a Success: criterion, ask jev whether that
+    # criterion was met and surface low-confidence tasks. Observability only —
+    # never changes workflow control flow. Off by default; needs jev configured.
+    jev_verify_tasks: bool = Field(
+        default_factory=lambda: os.getenv("AI_ASSIST_JEV_VERIFY_TASKS", "false").lower() == "true",
+    )
+
     @property
     def use_custom_endpoint(self) -> bool:
         """Check if a custom Anthropic-compatible endpoint is configured"""
@@ -416,6 +434,11 @@ class AiAssistConfig(BaseModel):
                 if os.getenv("AI_ASSIST_MODEL_CONTEXT_WINDOW")
                 else None
             ),
+            jev_api_key=os.getenv("AI_ASSIST_JEV_API_KEY"),
+            jev_api_url=os.getenv("AI_ASSIST_JEV_URL", "https://openrouter.ai/api/v1/systemone"),
+            jev_model=os.getenv("AI_ASSIST_JEV_MODEL", "~typesafe/jev-latest"),
+            jev_enabled=os.getenv("AI_ASSIST_JEV_ENABLED", "true").lower() == "true",
+            jev_verify_tasks=os.getenv("AI_ASSIST_JEV_VERIFY_TASKS", "false").lower() == "true",
             mcp_servers=mcp_servers,
         )
 
