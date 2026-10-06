@@ -99,9 +99,27 @@ the LLM) is the obvious next experiment.
 > Caveats: n=12, single model, single run; labels on the two subjective cases
 > are themselves arguable. Re-run before trusting the exact numbers.
 
+## Interactive jev tools — no system-prompt nudge (and why)
+
+When jev is configured the interactive agent also gets three decision tools
+(`internal__jev_decide`/`choose`/`score`) for ad-hoc calibrated judgments. There is
+**deliberately no system-prompt guidance nudging the agent to use them** — the agent
+reaches for them on its own when a decision fits.
+
+We measured a nudge before removing it. A controlled A/B (claude-opus-4-6, 15
+labeled decision prompts, guidance on vs off, jev tools available in both arms)
+showed the nudge made **no measurable difference**: adoption 0.93/0.93 when jev was
+the only decision tool, and 0.80/0.80 when it competed with ~50 other internal tools
+— guided and unguided identical in both settings, accuracy 0.93 throughout.
+Accuracy was in fact slightly *higher* when the agent answered itself (1.00, n=3)
+than when it used jev (0.92), the persistent miss being an all-green release the jev
+path called "don't ship". So nudging toward *more* jev adoption had no upside and a
+small accuracy-downside risk. We dropped the nudge (and its `AI_ASSIST_JEV_TOOL_
+GUIDANCE` flag and the A/B harness) rather than keep unjustified complexity.
+
 ## Extending the dataset
 
-Add cases to `cases.yaml` or `cases_hard.yaml`. Each case is the variable state
-after a cycle, a goal with a success criterion, and the ground-truth `expected`
-yes/no. Keep cases generic (English, no personal data) so both arms see
+Add cases to `cases.yaml` or `cases_hard.yaml` (goal-success A/B). Each case is the
+variable state after a cycle, a goal with a success criterion, and the ground-truth
+`expected` yes/no. Keep cases generic (English, no personal data) so both arms see
 identical neutral inputs.

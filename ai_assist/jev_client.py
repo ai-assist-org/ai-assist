@@ -41,6 +41,22 @@ def noul(question: str) -> dict[str, Any]:
     return {"type": "noul", "instructions": question}
 
 
+def choice(question: str, options: dict[str, str]) -> dict[str, Any]:
+    """Shape a Choice question: pick one named option from ``options``.
+
+    ``options`` maps each option name to a short description jev judges against.
+    """
+    return {"type": "choice", "instructions": question, "criteria": options}
+
+
+def score(question: str, levels: list[str]) -> dict[str, Any]:
+    """Shape a Score question: rate on an ordered rubric.
+
+    ``levels`` is the rubric ordered low → high; jev returns a score on that scale.
+    """
+    return {"type": "score", "instructions": question, "criteria": levels}
+
+
 async def jev_decide(config: Any, state: str, questions: dict[str, dict[str, Any]]) -> dict[str, Any]:
     """Call jev's System One endpoint and return the parsed JSON response.
 
@@ -84,3 +100,47 @@ def noul_probability(response: dict[str, Any], name: str) -> float | None:
     if isinstance(val, (int, float)) and not isinstance(val, bool):
         return float(val)
     return None
+
+
+def choice_result(response: dict[str, Any], name: str) -> dict[str, Any] | None:
+    """Extract a Choice answer: the winning option, its distribution, confidence.
+
+    Returns ``{"choice", "probabilities", "confidence"}`` or None if absent.
+    """
+    answer = _answer(response, name)
+    if answer is None or not isinstance(answer.get("choice"), str):
+        return None
+    return {
+        "choice": answer["choice"],
+        "probabilities": answer.get("probabilities", {}),
+        "confidence": answer.get("confidence"),
+    }
+
+
+def score_result(response: dict[str, Any], name: str) -> dict[str, Any] | None:
+    """Extract a Score answer: the numeric score, rubric legend, distribution.
+
+    Returns ``{"score", "legend", "probabilities", "confidence", "nearest"}`` or
+    None if absent. ``nearest`` is the rubric label closest to the score.
+    """
+    answer = _answer(response, name)
+    if answer is None or not isinstance(answer.get("score"), (int, float)) or isinstance(answer.get("score"), bool):
+        return None
+    legend = answer.get("legend", {})
+    nearest = legend.get(str(round(float(answer["score"])))) if isinstance(legend, dict) else None
+    return {
+        "score": float(answer["score"]),
+        "legend": legend,
+        "probabilities": answer.get("probabilities", {}),
+        "confidence": answer.get("confidence"),
+        "nearest": nearest,
+    }
+
+
+def _answer(response: dict[str, Any], name: str) -> dict[str, Any] | None:
+    """Return the answer record for question ``name``, or None if missing."""
+    answers = response.get("answers")
+    if not isinstance(answers, dict):
+        return None
+    answer = answers.get(name)
+    return answer if isinstance(answer, dict) else None
