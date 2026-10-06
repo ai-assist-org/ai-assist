@@ -1,0 +1,135 @@
+# Harder, judgment-heavy dataset for the jev-vs-LLM goal-success A/B.
+#
+# Unlike cases.yaml (clean-cut, deterministic lookups that both arms ace), each
+# case here needs real interpretation: weighing several signals, respecting the
+# precise wording of the criterion, or resisting a distractor variable. The
+# labels are defensible — a careful human reasoning from the state would reach
+# them — but they are NOT a single-field comparison, so the set discriminates
+# decision quality rather than just speed. Keep cases generic (English, no
+# personal data) so both arms see identical, neutral inputs.
+#
+# Run with:  uv run --extra eval python eval/jev/measure_goal_success.py \
+#              --cases eval/jev/cases_hard.yaml
+cases:
+  # Precise wording: the criterion is about CRITICAL issues only; high/medium
+  # vulnerabilities are present but do not count against it.
+  - name: no-critical-vulns-but-highs-remain
+    goal_id: security_gate
+    success_criteria: "No critical security vulnerabilities remain."
+    variables:
+      vulnerabilities_critical: 0
+      vulnerabilities_high: 3
+      vulnerabilities_medium: 12
+    expected: true
+
+  # Conflicting signals: the deploy "completed" but health checks are failing,
+  # so the deployment did not actually succeed.
+  - name: deploy-completed-but-unhealthy
+    goal_id: ship_release
+    success_criteria: "The deployment succeeded and the service is healthy."
+    variables:
+      deploy_status: "completed"
+      health_checks_passing: 7
+      health_checks_failing: 2
+    expected: false
+
+  # Distractor: most docs exist, but the criterion requires completeness and the
+  # API reference is missing.
+  - name: docs-mostly-but-api-missing
+    goal_id: finish_docs
+    success_criteria: "Project documentation is complete."
+    variables:
+      readme_exists: true
+      changelog_exists: true
+      api_reference_exists: false
+    expected: false
+
+  # One high-priority item still open defeats an "all ... fixed" criterion even
+  # though the large majority are done.
+  - name: almost-all-high-prio-fixed
+    goal_id: bug_burndown
+    success_criteria: "All high-priority bugs are fixed."
+    variables:
+      high_priority_open: 1
+      high_priority_fixed: 8
+      low_priority_open: 14
+    expected: false
+
+  # Reversibility requires BOTH directions; only the up-migration exists.
+  - name: migration-no-down-script
+    goal_id: safe_migration
+    success_criteria: "The database migration is reversible."
+    variables:
+      has_up_script: true
+      has_down_script: false
+    expected: false
+
+  # Qualitative threshold with no hard number given: sub-second p95 is broadly
+  # acceptable for interactive use.
+  - name: latency-acceptable-subsecond
+    goal_id: perf_gate
+    success_criteria: "Response time is acceptable for interactive use."
+    variables:
+      p95_latency_ms: 920
+      p99_latency_ms: 1400
+    expected: true
+
+  # Marginal improvement that does not reach the stated baseline: the regression
+  # is not actually resolved.
+  - name: regression-only-marginally-better
+    goal_id: fix_regression
+    success_criteria: "The performance regression has been resolved (back to baseline)."
+    variables:
+      baseline_ms: 300
+      before_fix_ms: 420
+      after_fix_ms: 408
+    expected: false
+
+  # Readiness criterion that implies review; tests pass but code is unreviewed.
+  - name: feature-tested-but-unreviewed
+    goal_id: ship_feature
+    success_criteria: "The feature is ready to ship."
+    variables:
+      tests_passing: true
+      code_reviewed: false
+      docs_updated: true
+    expected: false
+
+  # Weighing a ratio: a clear majority positive leans to "positive overall".
+  - name: feedback-clearly-positive
+    goal_id: launch_review
+    success_criteria: "User feedback is positive overall."
+    variables:
+      positive_reviews: 164
+      negative_reviews: 22
+      neutral_reviews: 31
+    expected: true
+
+  # Same criterion, lukewarm split: not clearly positive overall.
+  - name: feedback-lukewarm-split
+    goal_id: launch_review
+    success_criteria: "User feedback is positive overall."
+    variables:
+      positive_reviews: 58
+      negative_reviews: 49
+      neutral_reviews: 20
+    expected: false
+
+  # Coverage is high but the criterion is qualitative ("well-tested") and a
+  # critical module is explicitly untested — numbers alone do not satisfy it.
+  - name: high-coverage-but-critical-gap
+    goal_id: test_quality
+    success_criteria: "The codebase is well-tested, including critical paths."
+    variables:
+      line_coverage_percent: 88
+      critical_module_covered: false
+    expected: false
+
+  # Boundary read: the criterion says "at least 3 reviewers"; exactly 3 meets it.
+  - name: exactly-min-reviewers
+    goal_id: review_policy
+    success_criteria: "The change was approved by at least 3 reviewers."
+    variables:
+      approvals: 3
+      requested_changes: 0
+    expected: true

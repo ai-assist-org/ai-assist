@@ -152,3 +152,37 @@ class TestRunAwlScriptLocking:
             fh = _try_lock_script(awl_path)
             assert fh is not None, "Lock should be released after error"
             fh.close()
+
+
+class TestAllowSessionTmpdir:
+    def test_whitelists_session_tmpdir(self, tmp_path):
+        from ai_assist.awl_executor import _allow_session_tmpdir
+
+        agent = MagicMock()
+        agent.filesystem_tools.allowed_paths = [Path("/tmp/ai-assist")]
+        session_dir = tmp_path / "ai-assist-xyz"
+        session_dir.mkdir()
+
+        with patch("ai_assist.awl_executor._get_session_tmpdir", return_value=str(session_dir)):
+            _allow_session_tmpdir(agent)
+
+        assert session_dir.resolve() in agent.filesystem_tools.allowed_paths
+
+    def test_no_duplicate_entry(self, tmp_path):
+        from ai_assist.awl_executor import _allow_session_tmpdir
+
+        agent = MagicMock()
+        session_dir = tmp_path / "ai-assist-xyz"
+        session_dir.mkdir()
+        agent.filesystem_tools.allowed_paths = [session_dir.resolve()]
+
+        with patch("ai_assist.awl_executor._get_session_tmpdir", return_value=str(session_dir)):
+            _allow_session_tmpdir(agent)
+
+        assert agent.filesystem_tools.allowed_paths.count(session_dir.resolve()) == 1
+
+    def test_no_filesystem_tools_is_noop(self):
+        from ai_assist.awl_executor import _allow_session_tmpdir
+
+        agent = MagicMock(spec=[])  # no filesystem_tools attribute
+        _allow_session_tmpdir(agent)  # must not raise

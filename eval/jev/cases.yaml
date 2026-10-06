@@ -1,0 +1,72 @@
+# Labeled dataset for measuring jev goal-success accuracy against an LLM baseline.
+#
+# Each case gives the AWL variable state after a cycle, a goal with a success
+# criterion, and the ground-truth answer (expected) for whether the criterion is
+# met. Keep cases generic (English, no personal data): they are the yardstick for
+# the jev-on vs jev-off A/B, so both arms must see identical, neutral inputs.
+cases:
+  - name: tests-all-passing
+    goal_id: make_tests_green
+    success_criteria: "All unit tests pass with no failures."
+    variables:
+      test_total: 142
+      test_failures: 0
+      last_run_status: "passed"
+    expected: true
+
+  - name: tests-still-failing
+    goal_id: make_tests_green
+    success_criteria: "All unit tests pass with no failures."
+    variables:
+      test_total: 142
+      test_failures: 3
+      last_run_status: "failed"
+    expected: false
+
+  - name: coverage-above-threshold
+    goal_id: reach_coverage
+    success_criteria: "Line coverage is at or above 80 percent."
+    variables:
+      coverage_percent: 86
+      threshold_percent: 80
+    expected: true
+
+  - name: coverage-below-threshold
+    goal_id: reach_coverage
+    success_criteria: "Line coverage is at or above 80 percent."
+    variables:
+      coverage_percent: 72
+      threshold_percent: 80
+    expected: false
+
+  - name: file-created
+    goal_id: write_config
+    success_criteria: "A configuration file was written to disk."
+    variables:
+      file_written: true
+      file_path: "config.yaml"
+    expected: true
+
+  - name: file-not-created
+    goal_id: write_config
+    success_criteria: "A configuration file was written to disk."
+    variables:
+      file_written: false
+      file_path: null
+    expected: false
+
+  - name: all-issues-closed
+    goal_id: triage_issues
+    success_criteria: "Every open issue in the queue has been resolved."
+    variables:
+      open_issues: 0
+      resolved_issues: 11
+    expected: true
+
+  - name: issues-remaining
+    goal_id: triage_issues
+    success_criteria: "Every open issue in the queue has been resolved."
+    variables:
+      open_issues: 4
+      resolved_issues: 7
+    expected: false

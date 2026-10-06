@@ -10,6 +10,7 @@ from typing import Any, Literal
 from uuid import uuid4
 
 from .config import get_config_dir
+from .jev_client import jev_configured, rerank_candidates_sync
 
 
 @dataclass
@@ -133,6 +134,8 @@ class KnowledgeGraph:
         self.conn = sqlite3.connect(db_path, timeout=30, check_same_thread=False)
         self._batch_mode = False
         self._backfill_done = False
+        # Optional jev config for reranking semantic_search; None => never rerank.
+        self._jev_config: Any = None
         try:
             self.conn.enable_load_extension(True)
         except AttributeError:
@@ -153,6 +156,14 @@ class KnowledgeGraph:
         except sqlite3.OperationalError:
             pass  # WAL mode is best-effort; falls back to default journal mode
         self._create_schema()
+
+    def set_jev_config(self, config: Any) -> None:
+        """Enable optional jev reranking of ``semantic_search`` for this graph.
+
+        A no-op at search time unless jev is configured and ``config.jev_rerank``
+        is on, so it is always safe to call.
+        """
+        self._jev_config = config
 
     def _create_schema(self):
         """Create database schema if it doesn't exist"""
@@ -1072,7 +1083,15 @@ class KnowledgeGraph:
             logging.debug("Embedding model unavailable for search: %s", e)
             return []
 
+        # When jev reranking is enabled we collect the whole over-fetch pool so
+        # jev has candidates to reorder; otherwise we stop at `limit` as before.
+        rerank_on = (
+            self._jev_config is not None
+            and jev_configured(self._jev_config)
+            and getattr(self._jev_config, "jev_rerank", False)
+        )
         over_fetch = limit * 3
+        collect_limit = over_fetch if rerank_on else limit
         sql = """
             SELECT v.entity_id, v.distance, e.entity_type, e.data, e.valid_from, e.tx_from
             FROM vec_embeddings v
@@ -1151,8 +1170,14 @@ class KnowledgeGraph:
                     "score": score,
                 }
             )
-            if len(results) >= limit:
+            if len(results) >= collect_limit:
                 break
+        if rerank_on and len(results) > 1:
+            try:
+                results = rerank_candidates_sync(self._jev_config, query_text, results)
+            except Exception:
+                logging.exception("semantic_search: jev rerank failed; using cosine order")
+            results = results[:limit]
         logging.debug(
             "semantic_search: query=%r candidates=%d matched=%d " "skipped(type=%d conf=%d score=%d)",
             query_text[:80],

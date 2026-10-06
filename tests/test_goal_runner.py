@@ -45,6 +45,8 @@ AWL_WITH_SET = """\
 
 def _make_mock_agent():
     agent = MagicMock()
+    agent.config.jev_enabled = False
+    agent.config.jev_api_key = None
     agent.query = AsyncMock(return_value='```json\n{"failure_rate": 5}\n```')
     return agent
 
@@ -87,6 +89,8 @@ class TestGoalRunner:
             return '```json\n{"success_met": false, "reason": "rate is 12%"}\n```'
 
         agent = MagicMock()
+        agent.config.jev_enabled = False
+        agent.config.jev_api_key = None
         agent.query = AsyncMock(side_effect=mock_query)
 
         state_mgr = GoalStateManager(tmp_path / "state")
@@ -117,6 +121,8 @@ class TestGoalRunner:
             return '```json\n{"success_met": true, "reason": "Rate is 3%, below 10%"}\n```'
 
         agent = MagicMock()
+        agent.config.jev_enabled = False
+        agent.config.jev_api_key = None
         agent.query = AsyncMock(side_effect=mock_query)
 
         state_mgr = GoalStateManager(tmp_path / "state")
@@ -172,6 +178,8 @@ class TestGoalRunner:
                 return '```json\n{"success_met": true, "reason": "below 10%"}\n```'
 
         agent = MagicMock()
+        agent.config.jev_enabled = False
+        agent.config.jev_api_key = None
         agent.query = AsyncMock(side_effect=mock_query)
 
         state_mgr = GoalStateManager(tmp_path / "state")

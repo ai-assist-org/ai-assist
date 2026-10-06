@@ -173,3 +173,37 @@ def test_env_var_loading():
         assert config.vertex_project_id == "my-gcp-project"
         assert config.vertex_region == "europe-west1"
         assert config.model == "claude-opus-4-5-20251101"
+
+
+def _build_agent_capturing_banner(env):
+    """Construct an agent with a stubbed client and capture its startup prints."""
+    with patch.dict(os.environ, env, clear=True):
+        config = AiAssistConfig.from_env()
+        lines: list[str] = []
+        with (
+            patch("ai_assist.agent.Anthropic", return_value=MagicMock()),
+            patch("ai_assist.agent.console_print", side_effect=lambda msg="", *a, **k: lines.append(str(msg))),
+        ):
+            AiAssistAgent(config)
+    return lines
+
+
+def test_startup_announces_jev_when_configured():
+    """With a jev key and jev enabled, the startup banner names jev and its model."""
+    lines = _build_agent_capturing_banner(
+        {
+            "ANTHROPIC_API_KEY": "sk-ant-test123",
+            "AI_ASSIST_JEV_API_KEY": "jev-key",
+            "AI_ASSIST_JEV_MODEL": "~typesafe/jev-latest",
+            "AI_ASSIST_JEV_ENABLED": "true",
+        }
+    )
+    jev_lines = [line for line in lines if "jev" in line]
+    assert jev_lines, f"expected a jev startup line, got: {lines}"
+    assert "~typesafe/jev-latest" in jev_lines[0]
+
+
+def test_startup_silent_about_jev_when_unconfigured():
+    """Without a jev key, the startup banner says nothing about jev."""
+    lines = _build_agent_capturing_banner({"ANTHROPIC_API_KEY": "sk-ant-test123"})
+    assert not [line for line in lines if "jev" in line], lines

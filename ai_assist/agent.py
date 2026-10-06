@@ -20,6 +20,8 @@ from .config import AiAssistConfig, MCPServerConfig
 from .filesystem_tools import FilesystemTools
 from .identity import get_identity
 from .introspection_tools import IntrospectionTools
+from .jev_client import jev_configured
+from .jev_tools import JevTools
 from .json_tools import JsonTools
 from .mcp_stdio_fix import stdio_client_fixed
 from .mlflow_tracing import end_span, record_query_trace, setup_mlflow, start_query_span, start_tool_span
@@ -281,6 +283,9 @@ class AiAssistAgent:
         # Initialize JSON query tool (requires jq)
         self.json_tools = JsonTools(filesystem_tools=self.filesystem_tools)
 
+        # Initialize jev decision tool (only offered when jev is configured)
+        self.jev_tools = JevTools(config)
+
         self.anthropic: Anthropic | AnthropicVertex
         if config.use_custom_endpoint:
             console_print(f"Using custom endpoint: {config.anthropic_base_url}")
@@ -312,6 +317,8 @@ class AiAssistAgent:
         # Display model configuration
         max_tokens = self.get_max_tokens()
         console_print(f"🤖 Model: {config.model} (max output tokens: {max_tokens:,})")
+        if jev_configured(config):
+            console_print(f"⚖️  jev: goal-success decisions via {config.jev_model}")
         self.sessions: dict[str, ClientSession] = {}
         self.tool_result_router = ToolResultRouter(
             agent=self,
@@ -364,6 +371,10 @@ class AiAssistAgent:
             from ai_assist.kg_query_tools import KGQueryTools
             from ai_assist.knowledge_tools import KnowledgeTools
 
+            # Enable optional jev reranking of semantic_search (no-op unless jev is
+            # configured and config.jev_rerank is on); covers every caller sharing
+            # this graph instance (knowledge tools, hybrid_search, synthesis).
+            self.knowledge_graph.set_jev_config(config)
             self.knowledge_tools = KnowledgeTools(self.knowledge_graph)
             self.knowledge_tools.agent = self
             self.kg_query_tools = KGQueryTools(self.knowledge_graph)
@@ -536,6 +547,12 @@ class AiAssistAgent:
             console_print(f"✓ Added {len(json_tool_defs)} JSON query tools (jq)")
         else:
             logger.warning("jq not found — install jq to enable JSON query tool")
+
+        # Add jev decision tools (only when jev is configured)
+        if jev_configured(self.config):
+            jev_tool_defs = self.jev_tools.get_tool_definitions()
+            self.available_tools.extend(jev_tool_defs)
+            console_print(f"✓ Added {len(jev_tool_defs)} jev decision tools (decide/choose/score)")
 
         # Load installed skills
         self.skills_manager.load_installed_skills()
@@ -2094,6 +2111,7 @@ class AiAssistAgent:
                 script_tools = ["execute_skill_script"]
                 think_tools = ["think"]
                 json_tool_names = ["json_query"]
+                jev_tool_names = ["jev_decide", "jev_choose", "jev_score"]
                 schedule_action_tools = ["schedule_action"]
                 action_tools = [
                     "create_action",
@@ -2137,6 +2155,8 @@ class AiAssistAgent:
                     result_text = await self.think_tool.execute_tool(original_tool_name, arguments)
                 elif original_tool_name in json_tool_names:
                     result_text = await self.json_tools.execute_tool(original_tool_name, arguments)
+                elif original_tool_name in jev_tool_names:
+                    result_text = await self.jev_tools.execute_tool(original_tool_name, arguments)
                 elif original_tool_name in schedule_action_tools:
                     result_text = await self.schedule_action_tools.execute_tool(
                         f"internal__{original_tool_name}", arguments
