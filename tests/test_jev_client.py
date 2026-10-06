@@ -144,3 +144,36 @@ async def test_jev_decide_invalid_json_raises_jeverror():
     with _patch_client(fake):
         with pytest.raises(JevError):
             await jev_decide(_config(), state="s", questions={"q": noul("?")})
+
+
+@pytest.mark.asyncio
+async def test_http_error_includes_provider_message_without_key(caplog):
+    req = httpx.Request("POST", "https://example.test/api/v1/systemone")
+    resp = httpx.Response(
+        400, json={"error": {"message": "Invalid request for test-key: too many tokens"}}, request=req
+    )
+    with _patch_client(_FakeClient(response=resp)), pytest.raises(JevError) as exc:
+        await jev_decide(_config(), state="private state", questions={"q": noul("?")})
+    assert "400" in str(exc.value)
+    assert "too many tokens" in str(exc.value)
+    assert "test-key" not in str(exc.value)
+    assert "private state" not in str(exc.value)
+    assert not caplog.records
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("body", [b"<html>private proxy error</html>", b'{"error": null}', b"[]"])
+async def test_http_error_ignores_unstructured_response(body):
+    req = httpx.Request("POST", "https://example.test/api/v1/systemone")
+    resp = httpx.Response(400, content=body, request=req)
+    with _patch_client(_FakeClient(response=resp)), pytest.raises(JevError, match="^jev HTTP error: 400$"):
+        await jev_decide(_config(), state="s", questions={"q": noul("?")})
+
+
+@pytest.mark.asyncio
+async def test_http_error_limits_provider_message():
+    req = httpx.Request("POST", "https://example.test/api/v1/systemone")
+    resp = httpx.Response(400, json={"error": {"message": "x" * 2000}}, request=req)
+    with _patch_client(_FakeClient(response=resp)), pytest.raises(JevError) as exc:
+        await jev_decide(_config(), state="s", questions={"q": noul("?")})
+    assert len(str(exc.value)) < 600
