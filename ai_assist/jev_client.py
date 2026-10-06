@@ -16,7 +16,9 @@ Request/response shape (verified against the live System One endpoint):
 knowledge is confined to this module.
 """
 
+import asyncio
 import logging
+import threading
 from typing import Any
 
 import httpx
@@ -25,6 +27,11 @@ logger = logging.getLogger(__name__)
 
 # jev responds in 70-500ms; allow generous slack for network round-trips.
 _TIMEOUT = httpx.Timeout(30.0)
+
+# Relevance rubric for reranking, ordered low -> high (what jev Score rates each
+# retrieved candidate on). Kept here so the production reranker and the eval that
+# measures it share one definition.
+_RELEVANCE_LEVELS = ["not relevant", "slightly relevant", "relevant", "highly relevant"]
 
 
 class JevError(Exception):
@@ -144,3 +151,60 @@ def _answer(response: dict[str, Any], name: str) -> dict[str, Any] | None:
         return None
     answer = answers.get(name)
     return answer if isinstance(answer, dict) else None
+
+
+async def rerank_candidates(
+    config: Any, query: str, candidates: list[dict[str, Any]], *, content_key: str = "content"
+) -> list[dict[str, Any]]:
+    """Reorder retrieval ``candidates`` by a jev Score relevance judgment.
+
+    Sends one jev request scoring every candidate's ``content_key`` text against
+    ``query`` on the relevance rubric, then returns a NEW list ordered by that
+    score (ties keep the incoming, e.g. cosine, order). On any jev error the input
+    order is returned unchanged, so reranking can never break or reorder-worse than
+    the baseline retrieval — it only ever refines it.
+    """
+    if len(candidates) < 2:
+        return list(candidates)
+    state = f"User search query: {query}"
+    questions = {
+        f"c{i}": score(
+            f"Knowledge-base entry:\n{c.get(content_key, '')}\n\n"
+            "How relevant is this entry to the user's search query?",
+            _RELEVANCE_LEVELS,
+        )
+        for i, c in enumerate(candidates)
+    }
+    try:
+        response = await jev_decide(config, state, questions)
+    except JevError:
+        logger.exception("jev rerank failed; keeping original order")
+        return list(candidates)
+    scores = [((score_result(response, f"c{i}") or {}).get("score", -1.0)) for i in range(len(candidates))]
+    order = sorted(range(len(candidates)), key=lambda i: (-scores[i], i))
+    return [candidates[i] for i in order]
+
+
+def rerank_candidates_sync(
+    config: Any, query: str, candidates: list[dict[str, Any]], *, content_key: str = "content"
+) -> list[dict[str, Any]]:
+    """Blocking wrapper around :func:`rerank_candidates`.
+
+    Runs the async rerank to completion in a dedicated thread, so it is safe to
+    call from ordinary sync code AND from code already running inside an event loop
+    (e.g. ``semantic_search`` invoked from an async tool handler).
+    """
+    box: dict[str, Any] = {}
+
+    def _runner() -> None:
+        try:
+            box["value"] = asyncio.run(rerank_candidates(config, query, candidates, content_key=content_key))
+        except BaseException as exc:  # noqa: BLE001 - re-raised on the calling thread
+            box["error"] = exc
+
+    thread = threading.Thread(target=_runner)
+    thread.start()
+    thread.join()
+    if "error" in box:
+        raise box["error"]
+    return box["value"]

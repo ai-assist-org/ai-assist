@@ -117,9 +117,55 @@ path called "don't ship". So nudging toward *more* jev adoption had no upside an
 small accuracy-downside risk. We dropped the nudge (and its `AI_ASSIST_JEV_TOOL_
 GUIDANCE` flag and the A/B harness) rather than keep unjustified complexity.
 
+## Should we rerank KG retrieval with jev Score? (measured, headroom-first)
+
+Phase 3 also proposed reranking knowledge-graph retrieval with jev Score. Before
+wiring jev into the retrieval path we measured whether a rerank *could* help.
+`measure_rerank.py` ingests a labeled corpus (`rerank_cases.yaml`) into a throwaway
+KG and, per query, compares two orderings of the **same** cosine-retrieved
+candidate pool against graded relevance labels (nDCG@k over the pool, so both arms
+share an identical IDCG and the number isolates rerank quality):
+
+* **baseline** — the order `semantic_search` returns today (vector cosine).
+* **jev** — that pool reordered by one jev Score relevance judgment per candidate.
+
+```bash
+export AI_ASSIST_JEV_API_KEY=...
+uv run --extra eval python eval/jev/measure_rerank.py              # both arms
+uv run --extra eval python eval/jev/measure_rerank.py --arm baseline   # headroom only
+```
+
+Measured (2026-10-06, embeddings all-MiniLM-L6-v2, jev-latest, 10 queries, pool=8,
+nDCG@5; stable across 3 runs):
+
+| metric                | baseline (cosine) | jev rerank |
+|-----------------------|-------------------|------------|
+| mean nDCG@5           | 0.912             | **0.976**  |
+| per-query win/loss/tie (jev vs baseline) | —    | **6 / 0 / 4** |
+
+**Interpretation — jev rerank helps and never hurt.** Cosine leaves 0.088 of
+headroom, concentrated in queries with lexical distractors (e.g. "release to
+production" vs "production *database* backups"). jev closed ~73% of it (+0.064),
+improving 6 queries, tying 4, and regressing **none**. This is the opposite of the
+goal-success / tool-adoption findings, and the reason is instructive: reranking is a
+*relative, in-context* relevance judgment over text handed to jev — its wheelhouse —
+not a world-knowledge judgment call where it trails the LLM. nDCG also bounds the
+downside: jev reorders the pool without dropping candidates.
+
+**Takeaway.** Unlike the nudge, the rerank is justified by measurement. The decided
+scope is to apply it at all `semantic_search` call sites (agent tool, `hybrid_search`,
+synthesis), opt-in behind a flag gated on `jev_configured`, with this harness as the
+regression guard before flipping any default.
+
+> Caveats: n=10, single corpus, single embedding model. The corpus was authored to
+> include realistic lexical distractors; a distractor-free corpus would show less
+> headroom. Re-run on representative queries before trusting exact numbers.
+
 ## Extending the dataset
 
-Add cases to `cases.yaml` or `cases_hard.yaml` (goal-success A/B). Each case is the
-variable state after a cycle, a goal with a success criterion, and the ground-truth
-`expected` yes/no. Keep cases generic (English, no personal data) so both arms see
-identical neutral inputs.
+Add cases to `cases.yaml` or `cases_hard.yaml` (goal-success A/B), or entities and
+labeled queries to `rerank_cases.yaml` (retrieval rerank). Each goal-success case is
+the variable state after a cycle, a goal with a success criterion, and the
+ground-truth `expected` yes/no. Each rerank query lists graded relevance labels
+(0–3) over the corpus entities. Keep cases generic (English, no personal data) so
+both arms see identical neutral inputs.

@@ -1,0 +1,187 @@
+# Labeled retrieval dataset for the KG rerank headroom measurement.
+#
+# `measure_rerank.py` ingests every entity below into a throwaway knowledge
+# graph, then for each query fetches a candidate pool by vector cosine
+# similarity (the current semantic_search ranking) and scores two rankings
+# against the graded relevance labels:
+#
+#   * baseline  — the cosine order semantic_search returns today.
+#   * jev       — the same candidate pool reordered by a jev Score relevance
+#                 judgment (the prototype rerank we are deciding whether to ship).
+#
+# The point is to see whether cosine already ranks well (little headroom, so a
+# jev rerank cannot help) or misranks against the labels (headroom jev might
+# close). Relevance grades: 3 highly relevant, 2 relevant, 1 marginally related,
+# anything unlisted = 0 (irrelevant). Keep everything generic (English, no
+# personal data) so both arms see identical neutral inputs.
+
+entities:
+  # deployment / release
+  - key: release_process
+    content: >
+      Merging to main triggers the CI/CD pipeline, which builds the image, runs
+      the test suite, and deploys to production automatically once a maintainer
+      approves the release.
+  - key: production_db_backups
+    content: >
+      Nightly backups of the production database run at 02:00 UTC and are kept
+      for 30 days in cold storage.
+  - key: rollback_command
+    content: >
+      To undo a bad release, run the rollback command; it redeploys the previous
+      known-good image tag and drains the faulty pods.
+
+  # testing
+  - key: unit_test_framework
+    content: >
+      The team standardized on pytest for unit and integration tests; run the
+      whole suite with make test.
+  - key: qa_manual_staging
+    content: >
+      The QA group manually verifies the staging environment and signs off
+      before each customer release.
+  - key: coverage_gate
+    content: >
+      Line coverage must stay at or above 71 percent; the pre-commit hook blocks
+      commits that drop below it.
+
+  # auth / security
+  - key: user_authentication
+    content: >
+      End users sign in with OAuth2; the service issues a short-lived access
+      token plus a refresh token to renew sessions.
+  - key: secret_management
+    content: >
+      Credentials and API keys live in the secrets vault and are injected as
+      environment variables at runtime; they are never committed to git.
+  - key: s3_incident
+    content: >
+      A security incident last quarter exposed a misconfigured object-storage
+      bucket to the public internet; it was locked down within hours.
+
+  # data stores
+  - key: primary_datastore
+    content: >
+      The primary datastore is PostgreSQL 16; schema migrations are managed with
+      Alembic and applied during deploy.
+  - key: redis_cache
+    content: >
+      Redis holds the response cache and the rate-limiting counters that protect
+      the public API.
+
+  # performance
+  - key: checkout_latency_regression
+    content: >
+      The checkout endpoint p95 latency jumped to 800ms after a release and was
+      traced to a database query missing an index.
+  - key: async_request_path
+    content: >
+      The request path is fully asynchronous so a single worker can serve many
+      concurrent requests without blocking.
+
+  # process
+  - key: review_policy
+    content: >
+      Every pull request needs at least two approving reviews from maintainers
+      before it can be merged.
+  - key: meeting_schedule
+    content: >
+      Standup happens daily at 10:00 and the retrospective runs every other
+      Friday afternoon.
+  - key: oncall_rotation
+    content: >
+      On-call rotates weekly; the on-call engineer owns any production incident
+      from alert to resolution.
+
+  # docs
+  - key: api_reference
+    content: >
+      The API reference is generated from source docstrings and published to the
+      internal documentation site on every merge.
+  - key: adr_location
+    content: >
+      Architecture decision records live under docs/adr and capture the major
+      design choices and their trade-offs.
+
+  # monitoring
+  - key: alerting_rules
+    content: >
+      Alerts page the on-call engineer through PagerDuty when the error rate
+      stays above 2 percent for five minutes.
+  - key: grafana_dashboards
+    content: >
+      Grafana dashboards track request latency, error rate, and resource
+      saturation for every service.
+
+  # irrelevant noise
+  - key: coffee_machine
+    content: The office coffee machine was replaced with a new model in spring.
+  - key: all_hands
+    content: The company all-hands meeting is held on the last Thursday of each month.
+
+queries:
+  - name: how-to-release
+    query: How do we release code changes to production?
+    relevant:
+      release_process: 3
+      rollback_command: 2
+      review_policy: 1
+      production_db_backups: 0
+
+  - name: which-database
+    query: What database does the project use to store data?
+    relevant:
+      primary_datastore: 3
+      redis_cache: 1
+      production_db_backups: 1
+
+  - name: how-users-login
+    query: How do end users authenticate and sign in?
+    relevant:
+      user_authentication: 3
+      secret_management: 1
+      s3_incident: 0
+
+  - name: test-framework
+    query: Which framework does the team use to write the test suite?
+    relevant:
+      unit_test_framework: 3
+      coverage_gate: 2
+      qa_manual_staging: 1
+
+  - name: incident-handling
+    query: How are production incidents handled and who responds?
+    relevant:
+      oncall_rotation: 3
+      alerting_rules: 2
+      checkout_latency_regression: 1
+      s3_incident: 1
+
+  - name: monitoring
+    query: How is the running system monitored and observed?
+    relevant:
+      grafana_dashboards: 3
+      alerting_rules: 3
+
+  - name: api-docs
+    query: Where can I find the API documentation?
+    relevant:
+      api_reference: 3
+      adr_location: 1
+
+  - name: secret-handling
+    query: How are secrets and credentials managed?
+    relevant:
+      secret_management: 3
+      user_authentication: 1
+
+  - name: review-policy
+    query: What is the code review and pull request policy?
+    relevant:
+      review_policy: 3
+
+  - name: perf-problems
+    query: Are there known performance problems or latency issues?
+    relevant:
+      checkout_latency_regression: 3
+      async_request_path: 1

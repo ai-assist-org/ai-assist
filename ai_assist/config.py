@@ -283,6 +283,12 @@ class AiAssistConfig(BaseModel):
     jev_verify_tasks: bool = Field(
         default_factory=lambda: os.getenv("AI_ASSIST_JEV_VERIFY_TASKS", "false").lower() == "true",
     )
+    # Opt-in: rerank knowledge-graph semantic_search results with a jev Score
+    # relevance judgment. Off by default; needs jev configured. Degrades to the
+    # cosine order on any jev error.
+    jev_rerank: bool = Field(
+        default_factory=lambda: os.getenv("AI_ASSIST_JEV_RERANK", "false").lower() == "true",
+    )
 
     @property
     def use_custom_endpoint(self) -> bool:
@@ -439,6 +445,7 @@ class AiAssistConfig(BaseModel):
             jev_model=os.getenv("AI_ASSIST_JEV_MODEL", "~typesafe/jev-latest"),
             jev_enabled=os.getenv("AI_ASSIST_JEV_ENABLED", "true").lower() == "true",
             jev_verify_tasks=os.getenv("AI_ASSIST_JEV_VERIFY_TASKS", "false").lower() == "true",
+            jev_rerank=os.getenv("AI_ASSIST_JEV_RERANK", "false").lower() == "true",
             mcp_servers=mcp_servers,
         )
 

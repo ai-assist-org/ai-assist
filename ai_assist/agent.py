@@ -370,6 +370,10 @@ class AiAssistAgent:
             from ai_assist.kg_query_tools import KGQueryTools
             from ai_assist.knowledge_tools import KnowledgeTools
 
+            # Enable optional jev reranking of semantic_search (no-op unless jev is
+            # configured and config.jev_rerank is on); covers every caller sharing
+            # this graph instance (knowledge tools, hybrid_search, synthesis).
+            self.knowledge_graph.set_jev_config(config)
             self.knowledge_tools = KnowledgeTools(self.knowledge_graph)
             self.knowledge_tools.agent = self
             self.kg_query_tools = KGQueryTools(self.knowledge_graph)
