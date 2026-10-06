@@ -57,6 +57,10 @@ User → CLI (main.py) → AiAssistAgent (agent.py) → Claude API
                         Tool Results → Response
 ```
 
+Both interactive and collected responses use the streaming agent loop in `agent.py`.
+`query()` collects the final answer from `query_streaming()`; keep execution logic in
+the shared streaming path. Both entry points default to a 600-second time budget.
+
 ### AWL (Agent Workflow Language)
 
 AWL scripts define intent-driven workflows where the agent autonomously selects tools to achieve goals. Key constructs:

@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import time
+from contextlib import aclosing
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -1235,367 +1236,59 @@ class AiAssistAgent:
         progress_callback=None,
         max_time_seconds: int | None = None,
     ) -> str:
-        """Query the agent with a prompt or message history
-
-        Args:
-            prompt: The user's question/prompt (if no messages provided)
-            messages: Full message history in Claude format (optional).
-                     If provided, this is used instead of prompt.
-                     Format: [{"role": "user", "content": "..."}, ...]
-            max_turns: Maximum number of agentic turns (safety limit, default: 100)
-            max_time_seconds: Maximum wall-clock time in seconds (default: 600)
-            progress_callback: Optional callback function for progress updates
-                              Called with (status: str, turn: int, max_turns: int, tool_name: str | None)
-
-        Returns:
-            The assistant's response text
-        """
-        # Build messages list
-        if messages is None:
-            if prompt is None:
-                raise ValueError("Either prompt or messages must be provided")
-            messages = [{"role": "user", "content": prompt}]
-        else:
-            # Use provided messages
-            messages = messages.copy()  # Don't modify caller's list
-
-        # Track nesting depth for _no_kg reset logic
-        self._query_depth += 1
-        is_outermost = self._query_depth == 1
-        if is_outermost and max_time_seconds:
-            self._query_deadline = time.time() + max_time_seconds
-        query_text = prompt or ""
-        start_time = time.time()
-        result = ""
-        # Save per-query state so nested calls don't clobber the outer query's tracking
-        saved_token_usage = self._turn_token_usage
-        saved_tool_calls = self.last_tool_calls
-        # Root MLflow span only for the outermost query so nested calls nest under a
-        # single trace. Context-free (see mlflow_tracing); tool spans parent to it
-        # via self._mlflow_root_span.
-        span = start_query_span(query_text, self.config.model) if is_outermost else None
-        if is_outermost:
-            self._mlflow_root_span = span
-        try:
-            if max_time_seconds:
-                result = await asyncio.wait_for(
-                    self._query_inner(prompt, messages, max_turns, progress_callback, max_time_seconds),
-                    timeout=max_time_seconds,
-                )
-            else:
-                result = await self._query_inner(prompt, messages, max_turns, progress_callback, max_time_seconds)
-            return result
-        except TimeoutError:
-            logger.warning("Task timed out after %d seconds (asyncio timeout)", max_time_seconds)
-            result = f"Task timeout after {max_time_seconds} seconds (max: {max_time_seconds}s)"
-            return result
-        finally:
-            trace = self._auto_capture_trace(query_text, result, start_time)
-            if is_outermost:
-                record_query_trace(span, trace)
-                end_span(span)
-                self._mlflow_root_span = None
-            self._query_depth -= 1
-            if is_outermost:
-                self._query_deadline = None
-            else:
-                self._turn_token_usage = saved_token_usage
-                self.last_tool_calls = saved_tool_calls
-
-    async def _query_inner(
-        self,
-        prompt: str | None,
-        messages: list[dict],
-        max_turns: int,
-        progress_callback,
-        max_time_seconds: int | None = None,
-    ) -> str:
-        # Capture current query text for KG context injection
-        if prompt:
-            self._current_query_text = prompt
-        elif messages:
-            for msg in reversed(messages):
-                if msg.get("role") == "user" and isinstance(msg.get("content"), str):
-                    self._current_query_text = msg["content"]
-                    break
-
-        # Detect @no-kg / @no-history prefixes and strip them from query/messages
-        if self._current_query_text:
-            clean = self._apply_no_kg_prefix(self._current_query_text)
-            if (self._no_kg or self._no_history) and prompt:
-                prompt = clean
-                messages = [{"role": "user", "content": prompt}]
-
-        # Auto-detect MCP prompt references and apply @no-history @no-kg automatically.
-        # When the user asks to run a known MCP prompt, conversation history can mislead
-        # the agent into pre-collecting data it doesn't need to collect.
-        if not self._no_history and self._current_query_text:
-            # Detect MCP prompt references (/server/prompt_name)
-            if self.available_prompts:
-                for server, prompts in self.available_prompts.items():
-                    for prompt_name in prompts:
-                        if f"/{server}/{prompt_name}" in self._current_query_text:
-                            self._no_history = True
-                            self._no_kg = True
-                            break
-                    if self._no_history:
-                        break
-            # Detect AWL script references (.awl file paths)
-            if not self._no_history and ".awl" in self._current_query_text:
-                self._no_history = True
-                self._no_kg = True
-
-        # Strip conversation history when @no-history is active
-        if self._no_history and len(messages) > 1:
-            messages = [messages[-1]]
-
-        # Build tools with progressive disclosure (truncated descriptions).
-        # When @no-history is active (MCP prompt execution), restrict the outer agent
-        # to introspection and think tools only — data collection tools are intentionally
-        # withheld so the agent cannot pre-collect data before calling execute_mcp_prompt.
-        api_tools = self._build_api_tools()
-
-        # Reset token tracking for this query
-        self._turn_token_usage = []
-
-        # Store messages for introspection tools to access
-        self._conversation_messages = messages
-
-        # Loop detection and dedup tracking
-        start_time = time.time()
-        effective_max_time = max_time_seconds if max_time_seconds else 600
-        self._recent_tool_calls_for_loop: list[str] = []
-        no_progress_count = 0  # Count turns with no text response
-        max_no_progress = 10  # Allow 10 turns without text before declaring stuck
-        self._wrapup_nudge_fired = False
-        self._tool_result_cache: dict[str, str] = {}  # Per-query dedup cache
-        self._duplicate_tool_call_count = 0
-        self._last_turn_count = 0
-
-        if progress_callback:
-            progress_callback("thinking", 0, max_turns, None)
-
-        for turn in range(max_turns):
-            # Check time-based timeout (soft check, fires between turns)
-            elapsed = time.time() - start_time
-            if elapsed > effective_max_time:
-                self._last_turn_count = turn + 1
-                logger.warning("Time budget exhausted after %d seconds (max: %ds)", int(elapsed), effective_max_time)
-                return f"Task timeout after {int(elapsed)} seconds (max: {effective_max_time}s)"
-            if progress_callback:
-                progress_callback("calling_claude", turn + 1, max_turns, None)
-
-            # Only mask old tool results when context is getting large
-            if self._should_mask_observations():
-                self._mask_old_observations(messages)
-
-            # Truncate individual large messages to prevent context overflow
-            # Tool results can be huge (e.g., read_file on 12MB log, search with 200 results)
-            # Get adaptive limits based on current context window
-            limits = self.get_truncation_limits()
-            MAX_MESSAGE_CHARS = limits["max_message_chars"]
-            MAX_TOTAL_MESSAGE_CHARS = limits["max_total_chars"]
-
-            total_chars = 0
-            for msg in messages:
-                content = msg.get("content")
-                if isinstance(content, str):
-                    if len(content) > MAX_MESSAGE_CHARS:
-                        msg["content"] = (
-                            content[:MAX_MESSAGE_CHARS]
-                            + f"\n\n[... truncated {len(content) - MAX_MESSAGE_CHARS:,} characters ...]"
-                        )
-                    total_chars += len(msg["content"])
-                elif isinstance(content, list):
-                    # Handle multi-part content (text + tool results)
-                    for block in content:
-                        if isinstance(block, dict) and block.get("type") == "text":
-                            text = block.get("text", "")
-                            if len(text) > MAX_MESSAGE_CHARS:
-                                block["text"] = (
-                                    text[:MAX_MESSAGE_CHARS]
-                                    + f"\n\n[... truncated {len(text) - MAX_MESSAGE_CHARS:,} characters ...]"
-                                )
-                            total_chars += len(block.get("text", ""))
-                        elif isinstance(block, dict) and block.get("type") == "tool_result":
-                            result_content = block.get("content", "")
-                            if isinstance(result_content, str) and len(result_content) > MAX_MESSAGE_CHARS:
-                                block["content"] = (
-                                    result_content[:MAX_MESSAGE_CHARS]
-                                    + f"\n\n[... truncated {len(result_content) - MAX_MESSAGE_CHARS:,} characters ...]"
-                                )
-                            total_chars += len(block.get("content", "")) if isinstance(block.get("content"), str) else 0
-
-            # If total messages exceed limit, drop oldest messages
-            while total_chars > MAX_TOTAL_MESSAGE_CHARS and len(messages) > 2:
-                messages.pop(0)
-                # Recalculate total
-                total_chars = sum(len(str(m.get("content", ""))) for m in messages)
-
-            max_tokens = self.get_max_tokens()
-
-            # Debug: estimate token counts for debugging context overflow
-            system_prompt = self._build_system_prompt()
-            system_chars = sum(len(block["text"]) for block in system_prompt)
-            messages_chars = sum(len(str(m.get("content", ""))) for m in messages)
-            tools_chars = sum(len(str(t)) for t in api_tools)
-
-            # Rough estimate: 1 token ≈ 4 characters
-            estimated_system_tokens = system_chars // 4
-            estimated_messages_tokens = messages_chars // 4
-            estimated_tools_tokens = tools_chars // 4
-            estimated_total = estimated_system_tokens + estimated_messages_tokens + estimated_tools_tokens
-
-            # Log context size for debugging
-            logger.debug(
-                "Context: system=%st, messages=%st (%d), tools=%st (%d), total≈%st",
-                f"{estimated_system_tokens:,}",
-                f"{estimated_messages_tokens:,}",
-                len(messages),
-                f"{estimated_tools_tokens:,}",
-                len(api_tools),
-                f"{estimated_total:,}",
-            )
-            if estimated_total > 1000000:
-                logger.warning(
-                    "Estimated context (%s tokens) exceeds 1M token limit!",
-                    f"{estimated_total:,}",
-                )
-
-            # Call Claude API with error handling
-            try:
-                # Always stream: avoids HTTP timeouts on large max_tokens and
-                # supports SSE-only endpoints (e.g. ChatGPT via LiteLLM).
-                with self.anthropic.messages.stream(
-                    model=self.config.model,
-                    max_tokens=max_tokens,
-                    system=system_prompt,
-                    tools=api_tools,  # type: ignore[arg-type]
-                    messages=messages,  # type: ignore[arg-type]
-                ) as stream:
-                    response = stream.get_final_message()
-            except BadRequestError as e:
-                # Context limit or invalid request - return error to agent
-                error_msg = str(e)
-                logger.warning("API BadRequestError: %s", error_msg)
-                if "too long" in error_msg.lower() or "prompt" in error_msg.lower() or "context" in error_msg.lower():
-                    return (
-                        f"API Error: {error_msg}\n\n"
-                        f"Context breakdown (estimated):\n"
-                        f"- System prompt: {estimated_system_tokens:,} tokens ({system_chars:,} chars)\n"
-                        f"- Messages: {estimated_messages_tokens:,} tokens ({len(messages)} messages, {messages_chars:,} chars)\n"
-                        f"- Tools: {estimated_tools_tokens:,} tokens ({len(api_tools)} tools, {tools_chars:,} chars)\n"
-                        f"- Total: ~{estimated_total:,} tokens\n\n"
-                        f"The context is too large. To fix this:\n"
-                        f"- Use /clear to reset conversation history\n"
-                        f"- Use __save_to_file parameter to save large tool results to files\n"
-                        f"- Reduce batch sizes when fetching data (use smaller limit/offset)\n"
-                        f"- Process data in smaller chunks"
-                    )
-                return f"API Error: {error_msg}"
-            except RateLimitError as e:
-                # Rate limit - agent should retry later
-                logger.exception("API rate limit exceeded")
-                return (
-                    f"API Rate Limit Error: {str(e)}\n\n"
-                    f"The API rate limit has been exceeded. Please:\n"
-                    f"- Wait a moment before retrying\n"
-                    f"- Reduce the number of concurrent API calls\n"
-                    f"- Consider batching requests more efficiently"
-                )
-            except APIConnectionError as e:
-                # Network/connection issues
-                logger.exception("API connection error")
-                return (
-                    f"API Connection Error: {str(e)}\n\n"
-                    f"Could not connect to the API. This could be due to:\n"
-                    f"- Network connectivity issues\n"
-                    f"- API service temporarily unavailable\n"
-                    f"- Request timeout\n"
-                    f"Please retry the request."
-                )
-            except APIError as e:
-                error_msg = str(e)
-                logger.warning("API error: %s", error_msg)
-                if "overloaded" in error_msg.lower():
-                    return (
-                        "The API is currently overloaded (all retry attempts failed). "
-                        "This is a temporary capacity issue on the server side. "
-                        f"Please wait a few minutes and try again.\n\n{error_msg}"
-                    )
-                return f"API Error: {error_msg}\n\nPlease check the error message and adjust your request accordingly."
-
-            # Track token usage
-            self._track_token_usage(response, turn)
-
-            if getattr(response, "stop_reason", None) == "refusal":
-                self._last_turn_count = turn + 1
-                logger.warning("Model declined request for safety reasons")
-                return "The model declined this request for safety reasons."
-
-            messages.append({"role": "assistant", "content": _serialize_content(response.content)})
-
-            tool_results, loop_detected = await self._execute_tools_concurrently(
-                response.content,
-                progress_callback=progress_callback,
-                turn=turn,
+        """Collect the final answer from the shared streaming execution path."""
+        chunks: list[str] = []
+        async with aclosing(
+            self.query_streaming(
+                prompt=prompt,
+                messages=messages,
                 max_turns=max_turns,
+                progress_callback=progress_callback,
+                max_time_seconds=max_time_seconds,
             )
-
-            if loop_detected:
-                self._last_turn_count = turn + 1
-                # Find the looping tool name for the error message
-                tool_blocks = [b for b in response.content if b.type == "tool_use"]
-                loop_name = tool_blocks[-1].name if tool_blocks else "unknown"
-                logger.warning("Tool loop detected: %s called repeatedly with same arguments", loop_name)
-                return f"Loop detected: {loop_name} called repeatedly with same arguments"
-
-            if not tool_results:
-                final_text = ""
-                for block in response.content:
-                    if hasattr(block, "text"):
-                        final_text += block.text
-
-                # Check if we got actual content
-                if final_text.strip():
-                    if progress_callback:
-                        progress_callback("complete", turn + 1, max_turns, None)
-                    self._last_turn_count = turn + 1
-                    return final_text
-                else:
-                    # No text and no tool calls - agent gave up
-                    no_progress_count += 1
-                    if no_progress_count >= max_no_progress:
-                        self._last_turn_count = turn + 1
-                        return "Agent stopped responding (no progress detected)"
-                    # Continue to next turn
-                    continue
-
-            # We have tool results - reset no-progress counter (agent is actively working)
-            no_progress_count = 0
-
-            messages.append({"role": "user", "content": tool_results})
-
-            # Wrap-up nudge: when approaching the turn limit, ask the agent to synthesize
-            if not self._wrapup_nudge_fired and turn >= int(max_turns * 0.8):
-                self._wrapup_nudge_fired = True
-                messages.append(
-                    {
-                        "role": "user",
-                        "content": (
-                            "You are approaching the maximum number of tool calls allowed. "
-                            "Please synthesize the information you have gathered so far into "
-                            "a final answer. Do not make additional tool calls unless absolutely "
-                            "necessary to complete the answer."
-                        ),
-                    }
-                )
-
-        self._last_turn_count = max_turns
-        logger.warning("Tool budget exhausted: reached maximum %d turns without final answer", max_turns)
-        return "Maximum turns reached without final answer"
+        ) as stream:
+            async for event in stream:
+                if isinstance(event, str):
+                    chunks.append(event)
+                elif event["type"] == "done":
+                    return event["text"]
+                elif event["type"] == "error":
+                    return event["message"]
+                elif event["type"] == "tool_use":
+                    chunks.clear()
+                elif event["type"] == "cancelled":
+                    return "Task cancelled"
+        return "".join(chunks)
 
     async def query_streaming(
+        self,
+        prompt: str | None = None,
+        messages: list[dict] | None = None,
+        max_turns: int = 100,
+        progress_callback=None,
+        cancel_event=None,
+        max_time_seconds: int | None = None,
+    ):
+        """Yield text, tool_use, done (with final text), error, or cancelled events.
+
+        Queries have a 600-second limit unless max_time_seconds is provided.
+        """
+        timeout = max_time_seconds if max_time_seconds is not None else 600
+        deadline = time.monotonic() + timeout
+        async with aclosing(
+            self._query_streaming_inner(prompt, messages, max_turns, progress_callback, cancel_event, timeout)
+        ) as stream:
+            while True:
+                try:
+                    event = await asyncio.wait_for(anext(stream), max(0, deadline - time.monotonic()))
+                except StopAsyncIteration:
+                    return
+                except TimeoutError:
+                    yield {"type": "error", "message": f"Task timeout after {timeout} seconds (max: {timeout}s)"}
+                    return
+                yield event
+
+    async def _query_streaming_inner(
         self,
         prompt: str | None = None,
         messages: list[dict] | None = None,
@@ -1634,6 +1327,8 @@ class AiAssistAgent:
         # Track nesting depth for _no_kg reset logic
         self._query_depth += 1
         is_outermost = self._query_depth == 1
+        if is_outermost and max_time_seconds:
+            self._query_deadline = time.time() + max_time_seconds
         query_text = prompt or ""
         start_time = time.time()
         accumulated_text = []
@@ -1656,22 +1351,46 @@ class AiAssistAgent:
                         self._current_query_text = msg["content"]
                         break
 
-            # Detect @no-kg prefix and strip it from query/messages
+            # Detect @no-kg / @no-history prefixes and strip them from query/messages
             if self._current_query_text:
                 clean = self._apply_no_kg_prefix(self._current_query_text)
-                if self._no_kg and prompt:
+                if (self._no_kg or self._no_history) and prompt:
                     prompt = clean
                     messages = [{"role": "user", "content": prompt}]
+
+            # Auto-detect MCP prompt references and apply @no-history @no-kg automatically.
+            # When the user asks to run a known MCP prompt, conversation history can mislead
+            # the agent into pre-collecting data it doesn't need to collect.
+            if not self._no_history and self._current_query_text:
+                # Detect MCP prompt references (/server/prompt_name)
+                if self.available_prompts:
+                    for server, prompts in self.available_prompts.items():
+                        for prompt_name in prompts:
+                            if f"/{server}/{prompt_name}" in self._current_query_text:
+                                self._no_history = True
+                                self._no_kg = True
+                                break
+                        if self._no_history:
+                            break
+                # Detect AWL script references (.awl file paths)
+                if not self._no_history and ".awl" in self._current_query_text:
+                    self._no_history = True
+                    self._no_kg = True
+
+            # Strip conversation history when @no-history is active
+            if self._no_history and len(messages) > 1:
+                messages = [messages[-1]]
 
             # Store cancel_event on instance so execute_mcp_prompt can forward it
             if cancel_event is not None:
                 self._cancel_event = cancel_event
 
-            # Loop detection and dedup tracking (same as query())
-            self._recent_tool_calls_for_loop = []
-            self._tool_result_cache = {}
+            # Loop detection and dedup tracking
+            self._recent_tool_calls_for_loop: list[str] = []
+            self._tool_result_cache: dict[str, str] = {}
             self._duplicate_tool_call_count = 0
             self._last_turn_count = 0
+            no_progress_count = 0
 
             # Build tools with progressive disclosure (truncated descriptions)
             api_tools = self._build_api_tools()
@@ -1717,7 +1436,7 @@ class AiAssistAgent:
                 if self._should_mask_observations():
                     self._mask_old_observations(messages)
 
-                # Truncate messages (same as in query())
+                # Truncate messages
                 # Get adaptive limits based on current context window
                 limits = self.get_truncation_limits()
                 MAX_MESSAGE_CHARS = limits["max_message_chars"]
@@ -1767,9 +1486,6 @@ class AiAssistAgent:
                         tools=api_tools,  # type: ignore[arg-type]
                         messages=messages,  # type: ignore[arg-type]
                     ) as stream:
-                        # Track content blocks
-                        current_text = ""
-
                         for event in stream:
                             # Check cancellation during streaming
                             if cancel_event and cancel_event.is_set():
@@ -1781,22 +1497,8 @@ class AiAssistAgent:
                             if event.type == "content_block_delta":
                                 if hasattr(event.delta, "text"):
                                     chunk = event.delta.text
-                                    current_text += chunk
                                     accumulated_text.append(chunk)
                                     yield chunk  # Stream text to user
-
-                            # Content block start - tool use
-                            elif event.type == "content_block_start":
-                                if hasattr(event.content_block, "type") and event.content_block.type == "tool_use":
-                                    # Just track that we're starting a tool use
-                                    # We'll yield the notification with full input later
-                                    pass
-
-                            # Input JSON delta for tool
-                            elif event.type == "content_block_delta":
-                                if hasattr(event.delta, "partial_json"):
-                                    # Tool input is being streamed
-                                    pass  # We'll get the full input later
 
                         # Get final message from stream
                         final_message = stream.get_final_message()
@@ -1843,15 +1545,25 @@ class AiAssistAgent:
                             }
                             return
 
-                        # If no tool calls, we're done
                         if not tool_results:
+                            final_text = "".join(block.text for block in final_message.content if block.type == "text")
+                            if not final_text.strip():
+                                no_progress_count += 1
+                                if no_progress_count >= 10:
+                                    self._last_turn_count = turn + 1
+                                    yield {
+                                        "type": "error",
+                                        "message": "Agent stopped responding (no progress detected)",
+                                    }
+                                    return
+                                continue
                             if progress_callback:
                                 progress_callback("complete", turn + 1, max_turns, None)
-
                             self._last_turn_count = turn + 1
-                            yield {"type": "done", "turns": turn + 1}
+                            yield {"type": "done", "turns": turn + 1, "text": final_text}
                             return
 
+                        no_progress_count = 0
                         # Continue with tool results
                         messages.append({"role": "user", "content": tool_results})
 
@@ -1871,8 +1583,7 @@ class AiAssistAgent:
                             )
 
                 except Exception as e:
-                    from anthropic import BadRequestError
-
+                    logger.exception("Query execution failed")
                     # Handle API errors
                     error_msg = str(e)
 
@@ -1889,7 +1600,9 @@ class AiAssistAgent:
                         }
                         return
                     if isinstance(e, BadRequestError) and (
-                        "too long" in error_msg.lower() or "prompt" in error_msg.lower()
+                        "too long" in error_msg.lower()
+                        or "prompt" in error_msg.lower()
+                        or "context" in error_msg.lower()
                     ):
                         logger.warning("API BadRequestError (context too large): %s", error_msg)
                         # Calculate message stats for helpful error message
@@ -1914,6 +1627,21 @@ class AiAssistAgent:
                                 f"{error_msg}"
                             ),
                         }
+                    elif isinstance(e, RateLimitError):
+                        yield {
+                            "type": "error",
+                            "message": f"API Rate Limit Error: {error_msg}\n\nPlease wait before retrying.",
+                        }
+                    elif isinstance(e, APIConnectionError):
+                        yield {
+                            "type": "error",
+                            "message": f"API Connection Error: {error_msg}\n\nCheck network connectivity and retry.",
+                        }
+                    elif isinstance(e, APIError):
+                        yield {
+                            "type": "error",
+                            "message": f"API Error: {error_msg}\n\nPlease check the error message and adjust your request accordingly.",
+                        }
                     else:
                         logger.warning("API error: %s", error_msg)
                         yield {"type": "error", "message": error_msg}
@@ -1931,7 +1659,9 @@ class AiAssistAgent:
                 end_span(span)
                 self._mlflow_root_span = None
             self._query_depth -= 1
-            if not is_outermost:
+            if is_outermost:
+                self._query_deadline = None
+            else:
                 self._turn_token_usage = saved_token_usage
                 self.last_tool_calls = saved_tool_calls
 

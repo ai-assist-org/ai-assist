@@ -27,6 +27,7 @@ Works with skills like:
 - 📊 **Monitoring**: Automated scheduled checks with smart notifications
 - ⏰ **Scheduled Actions**: One-shot future actions with notifications
 - 💬 **Interactive Mode**: Rich TUI with streaming responses and history
+- **Consistent execution**: Interactive queries, background tasks, and workflows share one streaming engine
 - 🧠 **Knowledge Graph**: Temporal database tracking entities and changes
 - 📝 **Report Generation**: Create and manage markdown reports
 - ⚡ **Hot Reload**: Schedule changes take effect immediately

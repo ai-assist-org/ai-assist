@@ -32,7 +32,7 @@ class TestExecuteToolsConcurrently:
             config_dir=str(tmp_path),
         )
         agent = AiAssistAgent(config)
-        # Initialize per-query state normally set in _query_inner
+        # Initialize per-query state normally set in the streaming loop
         agent._tool_result_cache = {}
         agent._duplicate_tool_call_count = 0
         agent._recent_tool_calls_for_loop = []
