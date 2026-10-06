@@ -41,7 +41,7 @@ dev = [
     "ruff>=0.16.7",
     "mypy>=2.4.0",
     "types-PyYAML>=6.0.12.20260724",
-    "pylint>=4.0.8",
+    "pylint>=4.1.2",
     "bandit[toml]>=1.9.4",
 ]
 
@@ -201,6 +201,6 @@ dev = [
     "ruff>=0.16.7",
     "mypy>=2.4.0",
     "types-PyYAML>=6.0.12.20260724",
-    "pylint>=4.0.8",
+    "pylint>=4.1.2",
     "bandit[toml]>=1.9.4",
 ]
