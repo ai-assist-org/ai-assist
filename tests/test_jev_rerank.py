@@ -59,6 +59,33 @@ class TestRerankCandidates:
         assert [c["key"] for c in out] == ["a"]
         decide.assert_not_awaited()
 
+    async def test_batches_candidates_and_combines_scores(self):
+        candidates = [{"key": str(i), "content": str(i)} for i in range(10)]
+
+        async def decide(_config, _state, questions):
+            return {"answers": {name: {"type": "score", "score": int(name[1:]), "legend": {}} for name in questions}}
+
+        with patch("ai_assist.jev_client.jev_decide", side_effect=decide) as mocked:
+            out = await rerank_candidates(_jev_config(), "q", candidates)
+
+        assert mocked.await_count == 2
+        assert [c["key"] for c in out] == ["9", "8", "7", "6", "5", "4", "3", "2", "1", "0"]
+
+    async def test_limits_candidate_content_before_reranking(self):
+        candidates = [{"key": "a", "content": "a" * 3_000}, {"key": "b", "content": "b"}]
+        captured = {}
+
+        async def decide(_config, _state, questions):
+            captured.update(questions)
+            return _score_response([1.0, 2.0])
+
+        with patch("ai_assist.jev_client.jev_decide", side_effect=decide):
+            await rerank_candidates(_jev_config(), "q", candidates)
+
+        instructions = captured["c0"]["instructions"]
+        assert "[entry truncated for reranking]" in instructions
+        assert len(instructions) < 2_200
+
 
 class TestRerankSync:
     def test_sync_bridge_reorders(self):

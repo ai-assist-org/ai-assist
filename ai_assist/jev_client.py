@@ -33,6 +33,11 @@ _TIMEOUT = httpx.Timeout(30.0)
 # measures it share one definition.
 _RELEVANCE_LEVELS = ["not relevant", "slightly relevant", "relevant", "highly relevant"]
 
+# System One returns a structured answer for every question.  Keeping batches
+# small prevents the answer itself from exhausting the endpoint's token budget.
+_RERANK_BATCH_SIZE = 8
+_RERANK_CONTENT_CHARS = 2_000
+
 
 class JevError(Exception):
     """A jev request failed (network, HTTP status, or malformed response)."""
@@ -80,14 +85,31 @@ async def jev_decide(config: Any, state: str, questions: dict[str, dict[str, Any
             resp.raise_for_status()
             return resp.json()
     except httpx.HTTPStatusError as e:
-        logger.exception("jev request failed with HTTP status")
-        raise JevError(f"jev HTTP error: {e.response.status_code}") from e
+        detail = _http_error_detail(e.response, config.jev_api_key)
+        message = f"jev HTTP error: {e.response.status_code}"
+        if detail:
+            message += f": {detail}"
+        raise JevError(message) from e
     except (httpx.ConnectError, httpx.TimeoutException) as e:
         logger.exception("jev request failed to connect")
         raise JevError(f"jev connection error: {e}") from e
     except ValueError as e:  # includes JSONDecodeError
         logger.exception("jev returned invalid JSON")
         raise JevError("jev returned invalid JSON") from e
+
+
+def _http_error_detail(response: httpx.Response, api_key: str) -> str:
+    try:
+        body = response.json()
+    except ValueError:
+        return ""
+    error = body.get("error") if isinstance(body, dict) else None
+    message = error.get("message") if isinstance(error, dict) else error
+    if not isinstance(message, str):
+        return ""
+    if api_key:
+        message = message.replace(api_key, "[REDACTED]")
+    return " ".join(message.split())[:500]
 
 
 def noul_probability(response: dict[str, Any], name: str) -> float | None:
@@ -158,31 +180,40 @@ async def rerank_candidates(
 ) -> list[dict[str, Any]]:
     """Reorder retrieval ``candidates`` by a jev Score relevance judgment.
 
-    Sends one jev request scoring every candidate's ``content_key`` text against
-    ``query`` on the relevance rubric, then returns a NEW list ordered by that
-    score (ties keep the incoming, e.g. cosine, order). On any jev error the input
-    order is returned unchanged, so reranking can never break or reorder-worse than
-    the baseline retrieval — it only ever refines it.
+    Sends bounded batches of candidates to jev, then returns a NEW list ordered
+    by score (ties keep the incoming, e.g. cosine, order). On any jev error the
+    input order is returned unchanged, so reranking can never break retrieval.
     """
     if len(candidates) < 2:
         return list(candidates)
     state = f"User search query: {query}"
-    questions = {
-        f"c{i}": score(
-            f"Knowledge-base entry:\n{c.get(content_key, '')}\n\n"
-            "How relevant is this entry to the user's search query?",
-            _RELEVANCE_LEVELS,
-        )
-        for i, c in enumerate(candidates)
-    }
-    try:
-        response = await jev_decide(config, state, questions)
-    except JevError:
-        logger.exception("jev rerank failed; keeping original order")
-        return list(candidates)
-    scores = [((score_result(response, f"c{i}") or {}).get("score", -1.0)) for i in range(len(candidates))]
+    scores = [-1.0] * len(candidates)
+    for start in range(0, len(candidates), _RERANK_BATCH_SIZE):
+        batch = candidates[start : start + _RERANK_BATCH_SIZE]
+        questions = {
+            f"c{i}": score(
+                f"Knowledge-base entry:\n{_rerank_content(candidate.get(content_key, ''))}\n\n"
+                "How relevant is this entry to the user's search query?",
+                _RELEVANCE_LEVELS,
+            )
+            for i, candidate in enumerate(batch, start=start)
+        }
+        try:
+            response = await jev_decide(config, state, questions)
+        except JevError:
+            logger.exception("jev rerank failed; keeping original order")
+            return list(candidates)
+        for i in range(start, start + len(batch)):
+            scores[i] = (score_result(response, f"c{i}") or {}).get("score", -1.0)
     order = sorted(range(len(candidates)), key=lambda i: (-scores[i], i))
     return [candidates[i] for i in order]
+
+
+def _rerank_content(content: Any) -> str:
+    text = str(content)
+    if len(text) <= _RERANK_CONTENT_CHARS:
+        return text
+    return text[:_RERANK_CONTENT_CHARS] + "\n[entry truncated for reranking]"
 
 
 def rerank_candidates_sync(
