@@ -268,6 +268,7 @@
   \item Variable propagation
   \item Intent-driven tasks
   \item Map-reduce patterns
+  \item Per-task model tiers: low / medium / high
 \end{itemize}
 \smallskip
 \texttt{\scriptsize ai-assist /run x.awl}
@@ -1055,6 +1056,50 @@ KG sections are capped at 1500 chars}
 \end{frame}
 
 % ══════════════════════════════════════════════════════════════════
+\section{Decision Support}
+% ══════════════════════════════════════════════════════════════════
+
+% ── Slide: Jev Decision Layer ────────────────────────────────────
+\begin{frame}[fragile]{Optional Jev Decision Layer}
+\begin{columns}[T]
+\begin{column}{0.48\textwidth}
+\textbf{\color{rhpurple}Fast, Calibrated Judgments}
+\begin{itemize}\scriptsize
+  \item Optional non-generative System One decision model
+  \item Receives only supplied facts --- no tools or outside knowledge
+  \item Returns a decision plus calibrated confidence/distribution
+  \item Available for yes/no, finite-choice, and rubric-score questions
+\end{itemize}
+
+\medskip
+\textbf{\color{rhgreen}Two Opt-In Integrations}
+\begin{itemize}\scriptsize
+  \item Verify AWL task success criteria after task completion
+  \item Rerank Knowledge Graph retrieval candidates by relevance
+  \item Errors preserve normal execution and the original vector ordering
+\end{itemize}
+\end{column}
+\begin{column}{0.48\textwidth}
+\begin{lstlisting}[style=code,basicstyle=\ttfamily\scriptsize]
+# Optional configuration
+AI_ASSIST_JEV_API_KEY=...
+AI_ASSIST_JEV_VERIFY_TASKS=true
+AI_ASSIST_JEV_RERANK=true
+
+# Agent-facing decision primitives
+internal__jev_decide
+internal__jev_choose
+internal__jev_score
+
+# Example: task success check
+Success: all CI checks pass
+# -> verdict + confidence
+\end{lstlisting}
+\end{column}
+\end{columns}
+\end{frame}
+
+% ══════════════════════════════════════════════════════════════════
 \section{Monitoring \& Automation}
 % ══════════════════════════════════════════════════════════════════
 
@@ -1319,6 +1364,48 @@ def filter_env(env):
 \end{columns}
 \end{frame}
 
+% ── Slide: Permission Modes ─────────────────────────────────────
+\begin{frame}[fragile]{Permission Modes: Less Friction, Clear Boundaries}
+\begin{columns}[T]
+\begin{column}{0.48\textwidth}
+\textbf{\color{rhblue}Three Explicit Policies}
+\begin{itemize}\scriptsize
+  \item \texttt{manual}: existing command/path allowlists and approvals
+  \item \texttt{auto}: local classifier approves routine workspace development work
+  \item \texttt{autonomous}: no ai-assist command/path prompts in an isolated sandbox
+\end{itemize}
+
+\medskip
+\textbf{\color{rhgreen}Auto Mode is Conservative}
+\begin{itemize}\scriptsize
+  \item Read-only Git and GitHub inspection commands proceed uninterrupted
+  \item Workspace-local edits, tests, and lint checks can run automatically
+  \item Unknown syntax, redirects, network access, privilege escalation, and mutations still prompt
+\end{itemize}
+\end{column}
+\begin{column}{0.48\textwidth}
+\begin{lstlisting}[style=code,basicstyle=\ttfamily\scriptsize]
+# Default for any session
+AI_ASSIST_PERMISSION_MODE=auto
+
+# Inspect or change interactively
+ai-assist
+/mode
+/mode manual
+
+# Full autonomy only in a sandbox
+AI_ASSIST_PERMISSION_MODE=autonomous
+ai-assist /sandbox run agent /run flow.awl
+\end{lstlisting}
+
+\smallskip
+\scriptsize\color{rhred}\textbf{Trust boundary:} autonomous agents inherit only
+the mounts, credentials, MCP servers, and network access explicitly enabled
+for their sandbox.
+\end{column}
+\end{columns}
+\end{frame}
+
 % ── Slide: Sandbox Instances ─────────────────────────────────────
 \begin{frame}[fragile]{Sandbox Instances: Container Isolation}
 \begin{columns}[T]
@@ -1337,6 +1424,7 @@ def filter_env(env):
   \item \texttt{--features=ssh,gpg,git,gh,dci}
   \item Only mount what you need
   \item Allowed commands auto-generated per feature
+  \item Autonomous mode is container-only and explicit
   \item Vertex AI (gcloud) always included
 \end{itemize}
 \end{column}
@@ -1666,7 +1754,7 @@ Task blocks show brief description; hover reveals full goal, context, constraint
   \item \textcolor{green!60!black}{\checkmark} \alert{Sandbox instances} (podman-compose, per-service credential isolation)
   \item \textcolor{green!60!black}{\checkmark} Hybrid search (FTS5 + vector + RRF fusion)
   \item \textcolor{green!60!black}{\checkmark} \alert{MLflow tracing} (optional GenAI observability)
-  \item \textcolor{green!60!black}{\checkmark} LoCoMo memory benchmark: 56.3\%
+  \item \textcolor{green!60!black}{\checkmark} LoCoMo memory benchmark: 86.2\%
 \end{itemize}
 \end{column}
 \begin{column}{0.48\textwidth}

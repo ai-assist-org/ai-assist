@@ -1,6 +1,7 @@
 """Filesystem tools for ai-assist agent"""
 
 import json
+import os
 import re
 import shlex
 import subprocess
@@ -93,6 +94,11 @@ SHELL_BUILTINS = frozenset(
     }
 )
 
+# The general command parser recognizes all shell builtins.  Auto mode is more
+# restrictive: wrappers such as eval, source, command, and exec can bypass
+# command classification, so only inert builtins are safe to auto-approve.
+AUTO_SAFE_SHELL_BUILTINS = frozenset({"cd", "echo", "false", "pwd", "printf", "test", "true", "["})
+
 PYTHON_COMMANDS = frozenset({"python", "python3"})
 
 # find primaries that run arbitrary commands or write/delete files. These
@@ -117,6 +123,15 @@ PROTECTED_CONFIG_FILES = frozenset(
 ENV_VAR_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 
 _SHELL_REDIRECT = re.compile(r"^(\d*[<>]|&>|>>|>&|<&|\d+>&)")
+AUTO_TEMP_ROOT = Path("/tmp/ai-assist")  # nosec B108 - configured ai-assist workspace
+
+
+def _is_relative_to(path: Path, parent: Path) -> bool:
+    try:
+        path.relative_to(parent)
+        return True
+    except ValueError:
+        return False
 
 
 def _resolve_command_token(token: str) -> str:
@@ -510,9 +525,26 @@ class FilesystemTools:
         if load_user_config:
             self._load_user_allowed_paths()
         self.confirm_tools = config.confirm_tools
+        self.permission_mode = getattr(config, "permission_mode", "manual")
+        self.default_permission_mode = self.permission_mode
+        self.workspace_root = Path.cwd().resolve()
         self.confirmation_callback: Callable[[str], Awaitable[bool]] | None = None
         self.path_confirmation_callback: Callable[[str], Awaitable[bool]] | None = None
         self.awl_authorized_commands: set[str] = set()
+
+    def set_permission_mode(self, mode: str) -> str | None:
+        """Set a session-only permission mode, returning an error if invalid."""
+        if mode not in {"manual", "auto", "autonomous"}:
+            return "Permission mode must be manual, auto, or autonomous."
+        if mode == "autonomous" and os.getenv("AI_ASSIST_SANDBOX", "").lower() != "true":
+            return "Autonomous mode is available only inside an ai-assist sandbox."
+        self.permission_mode = mode
+        return None
+
+    def _is_workspace_path(self, path_str: str) -> bool:
+        resolved = Path(path_str).expanduser().resolve()
+        roots = (self.workspace_root, AUTO_TEMP_ROOT.resolve())
+        return any(_is_relative_to(resolved, root) for root in roots)
 
     def _load_user_allowed_commands(self):
         """Load user-added allowed commands from persistent file.
@@ -613,7 +645,10 @@ class FilesystemTools:
         Returns:
             Error message if path is not allowed, None if validation passes
         """
-        if not self._path_restrictions_enabled:
+        if self.permission_mode == "autonomous" or not self._path_restrictions_enabled:
+            return None
+
+        if self.permission_mode == "auto" and self._is_workspace_path(path_str):
             return None
 
         resolved = Path(path_str).expanduser().resolve()
@@ -856,7 +891,7 @@ class FilesystemTools:
         Returns:
             Error message if rejected/blocked, None if approved
         """
-        if tool_full_name not in self.confirm_tools:
+        if self.permission_mode != "manual" or tool_full_name not in self.confirm_tools:
             return None
 
         if self.confirmation_callback is None:
@@ -1217,6 +1252,91 @@ class FilesystemTools:
 
         return None
 
+    def _is_auto_command_safe(self, command: str) -> bool:
+        """Return whether a command belongs to the conservative auto policy.
+
+        This intentionally accepts only command families whose effects can be
+        understood locally.  Anything unfamiliar is sent through the normal
+        confirmation path.
+        """
+        if any(marker in command for marker in ("$(`", "$(", "`", "<<")):
+            return False
+        if re.search(r"(^|[\s;|&])(sudo|su|doas)(?:\s|$)", command):
+            return False
+        if re.search(r"(?:^|\s)(?:curl|wget|ssh|scp|rsync)(?:\s|$)", command):
+            return False
+
+        segments = _split_shell_commands(_strip_shell_comments(command))
+        if not segments:
+            return False
+        return all(self._is_auto_segment_safe(segment) for segment in segments)
+
+    def _is_auto_segment_safe(self, segment: str) -> bool:
+        """Classify one shell segment after compound commands are split."""
+        if re.search(r"(?:^|\s)(?:\d*>>?|&>|\d*>&)(?:\s|$)", segment):
+            return False
+        try:
+            tokens = shlex.split(segment)
+        except ValueError:
+            return False
+        idx = 0
+        while idx < len(tokens) and _is_safe_env_assignment(tokens[idx]):
+            idx += 1
+        while idx < len(tokens) and _resolve_command_token(tokens[idx]) in TRANSPARENT_WRAPPERS:
+            idx = _skip_wrapper_args(tokens, idx + 1)
+        if idx >= len(tokens):
+            return False
+        name = _resolve_command_token(tokens[idx])
+        args = tokens[idx + 1 :]
+        if name in AUTO_SAFE_SHELL_BUILTINS or name in self.allowed_commands:
+            return True
+        return self._is_auto_known_command_safe(name, args)
+
+    def _is_auto_known_command_safe(self, name: str, args: list[str]) -> bool:
+        """Classify non-allowlisted command families supported by auto mode."""
+        if name == "git":
+            return self._is_auto_git_safe(args)
+        if name == "gh":
+            return self._is_auto_gh_safe(args)
+        if name in {"pytest", "ruff", "mypy"}:
+            return not self._has_outside_workspace_path(args)
+        if name == "black":
+            return "--check" in args and not self._has_outside_workspace_path(args)
+        return (
+            name in {"python", "python3"}
+            and args[:2] == ["-m", "pytest"]
+            and not self._has_outside_workspace_path(args[2:])
+        )
+
+    def _is_auto_git_safe(self, args: list[str]) -> bool:
+        args = list(args)
+        while args and args[0].startswith("-"):
+            flag = args.pop(0)
+            if flag == "-C" and args and self._is_workspace_path(args.pop(0)):
+                continue
+            if flag != "--no-pager":
+                return False
+        return bool(args) and args[0] in {"status", "diff", "log", "show", "branch", "rev-parse", "ls-files"}
+
+    @staticmethod
+    def _is_auto_gh_safe(args: list[str]) -> bool:
+        if not args:
+            return False
+        if args[0] == "api":
+            if "--method" not in args:
+                return True
+            index = args.index("--method")
+            return index + 1 < len(args) and args[index + 1].upper() == "GET"
+        return args[:2] in (["pr", "view"], ["pr", "list"], ["pr", "status"], ["run", "view"], ["run", "list"])
+
+    def _has_outside_workspace_path(self, args: list[str]) -> bool:
+        """Detect explicit filesystem paths in an auto-approved command."""
+        for arg in args:
+            candidate = arg.split("=", 1)[-1]
+            if candidate.startswith(("/", "~", "./", "../")) and not self._is_workspace_path(candidate):
+                return True
+        return False
+
     async def _validate_command_arguments(self, command: str, was_auto_allowed: bool) -> str | None:
         """Validate path arguments and parameters for specific commands.
 
@@ -1366,6 +1486,17 @@ class FilesystemTools:
 
         cmd_names = extract_command_names(command)
 
+        if working_dir and self.permission_mode == "auto" and not self._is_workspace_path(working_dir):
+            return f"Error: Working directory is outside the auto-mode workspace: {working_dir}"
+
+        if self.permission_mode == "auto":
+            unsafe_builtins = set(cmd_names).intersection(SHELL_BUILTINS - AUTO_SAFE_SHELL_BUILTINS)
+            if unsafe_builtins:
+                names = ", ".join(sorted(unsafe_builtins))
+                return (
+                    f"Error: Shell builtin(s) {names} are not allowed in auto mode. Switch to manual mode to use them."
+                )
+
         # Determine if all commands are auto-allowed (builtins or prefix-matched allowlist)
         was_auto_allowed = not self._is_command_prefix_allowed(command)
 
@@ -1373,13 +1504,19 @@ class FilesystemTools:
         # (skip extra confirmation for python -c, etc.)
         awl_confirmed = any(name in self.awl_authorized_commands for name in cmd_names)
 
-        error = await self._check_command_allowed(cmd_names, command)
+        auto_safe = self.permission_mode == "auto" and self._is_auto_command_safe(command)
+        if self.permission_mode == "autonomous" or auto_safe:
+            error = None
+        else:
+            error = await self._check_command_allowed(cmd_names, command)
         if error:
             return error
 
         # Validate command arguments (paths for cd/find, parameters for python)
         # AWL-authorized commands skip the extra inline-code confirmation
-        arg_error = await self._validate_command_arguments(command, was_auto_allowed and not awl_confirmed)
+        arg_error = None
+        if self.permission_mode != "autonomous":
+            arg_error = await self._validate_command_arguments(command, was_auto_allowed and not awl_confirmed)
         if arg_error:
             return arg_error
 

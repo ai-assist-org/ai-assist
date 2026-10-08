@@ -50,6 +50,9 @@ register_command(CommandDef("/bg", "List background tasks", mode="interactive", 
 register_command(CommandDef("/bg cancel", "Cancel background task(s)", mode="interactive", hidden=True))
 register_command(CommandDef("/plan", "Plan a task before executing", mode="interactive", args="<task>"))
 register_command(CommandDef("/search", "Search conversation history", mode="interactive"))
+register_command(
+    CommandDef("/mode", "Show or set permission mode", mode="interactive", args="[manual|auto|autonomous]")
+)
 
 # --- Skill management (interactive-only) ---
 

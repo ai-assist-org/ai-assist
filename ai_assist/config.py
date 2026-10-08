@@ -329,6 +329,13 @@ class AiAssistConfig(BaseModel):
         description="Enable script execution from Agent Skills (security risk if enabled)",
     )
 
+    # Permission policy for filesystem and shell tools.  Autonomous execution is
+    # accepted only in compose-generated sandboxes (AI_ASSIST_SANDBOX=true).
+    permission_mode: str = Field(
+        default_factory=lambda: os.getenv("AI_ASSIST_PERMISSION_MODE", "manual").lower(),
+        description="manual, auto, or autonomous",
+    )
+
     # Command execution allowlist (Phase 1 security)
     allowed_commands: list[str] = Field(
         default_factory=lambda: [
@@ -376,6 +383,13 @@ class AiAssistConfig(BaseModel):
     @model_validator(mode="after")
     def validate_percentages(self) -> AiAssistConfig:
         """Validate that percentage allocations are within acceptable ranges"""
+        self.permission_mode = self.permission_mode.lower()
+        if self.permission_mode not in {"manual", "auto", "autonomous"}:
+            logger.warning("Unknown AI_ASSIST_PERMISSION_MODE %r; using manual", self.permission_mode)
+            self.permission_mode = "manual"
+        if self.permission_mode == "autonomous" and os.getenv("AI_ASSIST_SANDBOX", "").lower() != "true":
+            logger.warning("Autonomous permission mode requires an ai-assist sandbox; using manual")
+            self.permission_mode = "manual"
         # Validate individual ranges
         if not 1.0 <= self.message_limit_pct <= 20.0:
             raise ValueError(f"message_limit_pct must be between 1 and 20, got {self.message_limit_pct}")
