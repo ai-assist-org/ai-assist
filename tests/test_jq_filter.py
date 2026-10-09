@@ -136,3 +136,59 @@ async def test_without_jq_filter_unchanged():
     result = await agent._execute_tool("test__some_tool", {"query": "test"})
 
     assert result == data
+
+
+class TestLastToolCallsReflectsFilteredResult:
+    """last_tool_calls (used for audit logging, KG storage, and the narration
+    consistency check) must record the result actually returned to the model —
+    not the pre-filter raw result, which previously lingered there because the
+    append happened before __jq_filter was applied.
+    """
+
+    @requires_jq
+    @pytest.mark.asyncio
+    async def test_mcp_tool_records_filtered_result(self):
+        data = json.dumps({"items": [1, 2, 3], "total": 3})
+        agent = _make_agent_with_mcp(data)
+
+        await agent._execute_tool("test__some_tool", {"__jq_filter": ".items"})
+
+        recorded = agent.last_tool_calls[-1]["result"]
+        assert "total" not in recorded
+        assert json.loads(recorded.strip()) == [1, 2, 3]
+
+    @requires_jq
+    @pytest.mark.asyncio
+    async def test_execute_command_records_filtered_result(self):
+        config = AiAssistConfig(anthropic_api_key="test-key", working_dirs=["/tmp"])
+        agent = AiAssistAgent(config=config)
+        await agent.connect_to_servers()
+
+        await agent._execute_tool(
+            "internal__execute_command",
+            {
+                "command": 'echo \'[{"name":"alpha","score":10},{"name":"beta","score":20}]\'',
+                "__jq_filter": "[.[].name]",
+            },
+        )
+
+        recorded = agent.last_tool_calls[-1]["result"]
+        assert "STDOUT" not in recorded
+        assert json.loads(recorded.strip()) == ["alpha", "beta"]
+
+    @requires_jq
+    @pytest.mark.asyncio
+    async def test_introspection_tool_records_filtered_result(self):
+        config = AiAssistConfig(anthropic_api_key="test-key", working_dirs=["/tmp"])
+        agent = AiAssistAgent(config=config)
+        await agent.connect_to_servers()
+
+        from unittest.mock import AsyncMock
+
+        agent.introspection_tools.execute_tool = AsyncMock(return_value=json.dumps({"items": [1, 2], "total": 2}))
+
+        await agent._execute_tool("introspection__list_skills", {"__jq_filter": ".items"})
+
+        recorded = agent.last_tool_calls[-1]["result"]
+        assert "total" not in recorded
+        assert json.loads(recorded.strip()) == [1, 2]

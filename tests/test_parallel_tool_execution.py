@@ -211,3 +211,43 @@ class TestExecuteToolsConcurrently:
 
         assert len(results) == 1
         assert results[0]["tool_use_id"] == "1"
+
+
+class TestLoopDetectionRecovery:
+    """A detected loop should nudge the agent to wrap up once, not immediately
+    discard the query with a top-level error — only a *second* loop within the
+    same query (i.e. the nudge didn't help) falls back to the hard error."""
+
+    @staticmethod
+    def _repeat_think_turn():
+        return {
+            "content": [{"type": "tool_use", "id": "t1", "name": "internal__think", "input": {"thought": "x"}}],
+            "stop_reason": "tool_use",
+        }
+
+    @pytest.mark.asyncio
+    async def test_first_loop_nudges_and_recovers(self, make_replay_agent):
+        agent = await make_replay_agent(
+            [
+                self._repeat_think_turn(),
+                self._repeat_think_turn(),
+                self._repeat_think_turn(),  # 3rd identical call trips the detector
+                {"content": [{"type": "text", "text": "done"}], "stop_reason": "end_turn"},
+            ]
+        )
+        result = await agent.query("test")
+        assert result == "done"
+        assert agent._loop_nudge_fired is True
+
+    @pytest.mark.asyncio
+    async def test_second_loop_after_nudge_aborts(self, make_replay_agent):
+        agent = await make_replay_agent(
+            [
+                self._repeat_think_turn(),
+                self._repeat_think_turn(),
+                self._repeat_think_turn(),  # trips + nudges
+                self._repeat_think_turn(),  # still repeating after the nudge
+            ]
+        )
+        result = await agent.query("test")
+        assert "loop detected" in result.lower()

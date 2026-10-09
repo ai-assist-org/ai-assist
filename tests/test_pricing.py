@@ -37,8 +37,13 @@ class TestGetPricing:
             assert abs(cw - inp * 1.25) < 0.001
 
     def test_cache_read_is_0_1x_input(self):
-        for _model, (inp, _out, _cw, cr) in MODEL_PRICING.items():
-            assert abs(cr - inp * 0.1) < 0.001
+        # Opus 5.5 and Sonnet 5.5 use a special 5% cache-read rate instead of the usual 10%.
+        special_rate_models = {"claude-opus-5-5", "claude-sonnet-5-5"}
+        for model, (inp, _out, _cw, cr) in MODEL_PRICING.items():
+            if model in special_rate_models:
+                assert abs(cr - inp * 0.05) < 0.001
+            else:
+                assert abs(cr - inp * 0.1) < 0.001
 
 
 class TestComputeTurnCost:

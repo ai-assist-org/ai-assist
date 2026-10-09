@@ -6,16 +6,18 @@ import re
 logger = logging.getLogger(__name__)
 
 # Per-million-token pricing: (input, output, cache_write, cache_read)
-# Cache write = 1.25× input, cache read = 0.1× input
-# Source: https://docs.anthropic.com/en/docs/about-claude/models (2026-06-24)
+# Cache write = 1.25× input, cache read = 0.1× input (0.05× on Opus 5.5 / Sonnet 5.5)
+# Source: https://platform.claude.com/docs/en/about-claude/pricing (2026-10-09)
 MODEL_PRICING: dict[str, tuple[float, float, float, float]] = {
     "claude-fable-5": (10.00, 50.00, 12.50, 1.00),
     "claude-mythos-5": (10.00, 50.00, 12.50, 1.00),
+    "claude-opus-5-5": (4.00, 20.00, 5.00, 0.20),  # 5% cache read (not the usual 10%)
+    "claude-sonnet-5-5": (2.00, 10.00, 2.50, 0.10),  # 5% cache read (not the usual 10%)
     "claude-opus-4-8": (5.00, 25.00, 6.25, 0.50),
     "claude-opus-4-7": (5.00, 25.00, 6.25, 0.50),
     "claude-opus-4-6": (5.00, 25.00, 6.25, 0.50),
     "claude-opus-4-5": (5.00, 25.00, 6.25, 0.50),
-    "claude-sonnet-5": (3.00, 15.00, 3.75, 0.30),
+    "claude-sonnet-5": (2.00, 10.00, 2.50, 0.20),  # introductory $2/$10 made permanent, Sep 2026
     "claude-sonnet-4-6": (3.00, 15.00, 3.75, 0.30),
     "claude-sonnet-4-5": (3.00, 15.00, 3.75, 0.30),
     "claude-haiku-4-5": (1.00, 5.00, 1.25, 0.10),
@@ -23,6 +25,8 @@ MODEL_PRICING: dict[str, tuple[float, float, float, float]] = {
     "claude-3-5-sonnet": (3.00, 15.00, 3.75, 0.30),
     "claude-3-opus": (15.00, 75.00, 18.75, 1.50),
     "claude-3-haiku": (0.25, 1.25, 0.3125, 0.025),
+    # GLM 5.3, hosted via the EnMaaS gateway — approved open-weight model, no usage cost
+    "rits/zai-org/glm-5-3": (0.0, 0.0, 0.0, 0.0),
 }
 
 _SUFFIX_RE = re.compile(r"[-@](20\d{6}|default|latest)$")

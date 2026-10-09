@@ -984,8 +984,9 @@ async def tui_interactive_mode(agent: AiAssistAgent, state_manager: StateManager
 
         Supports Escape and Ctrl-C to cancel the query.
         Uses a lock to serialize concurrent prompts (e.g. parallel tool calls).
+        Time spent waiting here is excluded from the query's timeout budget.
         """
-        async with _approval_lock:
+        async with _approval_lock, agent.pause_timeout():
             return await _prompt_user_approval_inner(message, detail)
 
     async def _prompt_user_approval_inner(message: str, detail: str) -> str:

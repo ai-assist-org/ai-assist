@@ -311,6 +311,159 @@ class TestObservationMasking:
         assert messages == []
 
 
+class TestThinkingBlockPrefixStability:
+    """Tests for _has_thinking_block and the prefix-mutation guards it gates.
+
+    Models with mandatory extended thinking (Opus 5.5, Sonnet 5.5) bind a thinking
+    block's signature to the exact conversation prefix it was produced with and
+    reject the next turn with a 400 if that prefix (system prompt or earlier
+    messages) changes. Once a thinking block is present, masking/eviction must not
+    mutate earlier messages.
+    """
+
+    def test_no_thinking_block(self):
+        messages = [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": [{"type": "text", "text": "hello"}]},
+        ]
+        assert AiAssistAgent._has_thinking_block(messages) is False
+
+    def test_thinking_block_detected(self):
+        messages = [
+            {"role": "user", "content": "hi"},
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "...", "signature": "sig"},
+                    {"type": "text", "text": "hello"},
+                ],
+            },
+        ]
+        assert AiAssistAgent._has_thinking_block(messages) is True
+
+    def test_redacted_thinking_block_detected(self):
+        messages = [
+            {"role": "assistant", "content": [{"type": "redacted_thinking", "data": "..."}]},
+        ]
+        assert AiAssistAgent._has_thinking_block(messages) is True
+
+    def test_empty_messages(self):
+        assert AiAssistAgent._has_thinking_block([]) is False
+
+    def test_mask_old_observations_skipped_when_thinking_block_present(self):
+        """Masking must not rewrite tool results once a thinking block exists."""
+        messages = [
+            {"role": "user", "content": "question"},
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "...", "signature": "sig"},
+                    {"type": "tool_use", "id": "1", "name": "t1", "input": {}},
+                ],
+            },
+            {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "1", "content": "old result"}]},
+            {"role": "assistant", "content": [{"type": "tool_use", "id": "2", "name": "t2", "input": {}}]},
+            {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "2", "content": "newer result"}]},
+        ]
+        assert AiAssistAgent._has_thinking_block(messages) is True
+        # Simulates the turn-loop guard: masking is only invoked when this is False.
+        thinking_block_present = AiAssistAgent._has_thinking_block(messages)
+        if not thinking_block_present:
+            AiAssistAgent._mask_old_observations(messages, keep_recent=0)
+        assert messages[2]["content"][0]["content"] == "old result"
+
+    @pytest.mark.asyncio
+    async def test_system_prompt_built_once_per_query(self, make_replay_agent):
+        """The system prompt must stay identical across every turn of a query.
+
+        Rebuilding it per turn (the original bug) can change its text mid-query
+        (e.g. the recent-notifications section drifts with wall-clock time),
+        which models with mandatory extended thinking reject outright once a
+        thinking block is bound to the prior prompt.
+        """
+        agent = await make_replay_agent(
+            [
+                {
+                    "content": [{"type": "tool_use", "id": "t1", "name": "internal__think", "input": {"thought": "x"}}],
+                    "stop_reason": "tool_use",
+                },
+                {"content": [{"type": "text", "text": "done"}], "stop_reason": "end_turn"},
+            ]
+        )
+        call_count = 0
+        original = agent._build_system_prompt
+
+        def counting_build():
+            nonlocal call_count
+            call_count += 1
+            return original()
+
+        with patch.object(agent, "_build_system_prompt", side_effect=counting_build):
+            result = await agent.query("test")
+        assert result == "done"
+        assert call_count == 1
+
+    def test_strip_stale_thinking_blocks_removes_thinking_only(self):
+        messages = [
+            {"role": "user", "content": "hi"},
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "...", "signature": "sig"},
+                    {"type": "text", "text": "hello"},
+                ],
+            },
+        ]
+        cleaned = AiAssistAgent._strip_stale_thinking_blocks(messages)
+        assert cleaned[1]["content"] == [{"type": "text", "text": "hello"}]
+        # Original list must not be mutated.
+        assert messages[1]["content"][0]["type"] == "thinking"
+
+    def test_strip_stale_thinking_blocks_drops_thinking_only_message(self):
+        messages = [
+            {"role": "assistant", "content": [{"type": "redacted_thinking", "data": "..."}]},
+            {"role": "user", "content": "next"},
+        ]
+        cleaned = AiAssistAgent._strip_stale_thinking_blocks(messages)
+        assert cleaned == [{"role": "user", "content": "next"}]
+
+    def test_strip_stale_thinking_blocks_leaves_clean_messages_untouched(self):
+        messages = [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "plain text reply"},
+        ]
+        assert AiAssistAgent._strip_stale_thinking_blocks(messages) == messages
+
+    @pytest.mark.asyncio
+    async def test_new_query_strips_thinking_blocks_from_carried_history(self, make_replay_agent):
+        """A new top-level query must not resurrect a thinking block bound to a
+        previous (now stale) system prompt — this is the cross-query sibling of
+        test_system_prompt_built_once_per_query (which only covers turns *within*
+        one query). Reproduces the real failure: history carried over from an
+        earlier completed query (e.g. via conversation compaction) still had a
+        thinking block, and the next query's fresh system prompt invalidated it.
+        """
+        agent = await make_replay_agent(
+            [
+                {"content": [{"type": "text", "text": "done"}], "stop_reason": "end_turn"},
+            ]
+        )
+        carried_history = [
+            {"role": "user", "content": "earlier question"},
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "...", "signature": "stale-sig"},
+                    {"type": "text", "text": "earlier answer"},
+                ],
+            },
+            {"role": "user", "content": "follow-up question"},
+        ]
+        result = await agent.query(messages=carried_history)
+        assert result == "done"
+        assert not AiAssistAgent._has_thinking_block(agent._conversation_messages)
+
+
 class TestConversationCompaction:
     """Tests for ConversationMemory.compact()"""
 
