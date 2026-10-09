@@ -74,6 +74,7 @@ nav:
       - Scheduled Actions: SCHEDULED_ACTIONS.md
       - Personal Skills: PERSONAL_SKILLS.md
       - Plugins: PLUGINS.md
+      - Permission Modes: PERMISSION_MODES.md
       - Multi-Instance: MULTI_INSTANCE.md
       - Identity: IDENTITY.md
       - Logging: LOGGING.md

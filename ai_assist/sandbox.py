@@ -76,6 +76,8 @@ def _build_compose(features: set[str], image: str = DEFAULT_IMAGE) -> dict:
         "AI_ASSIST_REPORTS_DIR": "/workspace/reports",
         "CLOUDSDK_CONFIG": "/host-config/gcloud",
         "FASTEMBED_CACHE_PATH": "/workspace/.ai-assist/fastembed-cache",
+        "AI_ASSIST_SANDBOX": "true",
+        "AI_ASSIST_PERMISSION_MODE": "${AI_ASSIST_PERMISSION_MODE:-manual}",
         "ANTHROPIC_API_KEY": "${ANTHROPIC_API_KEY:-}",
         "ANTHROPIC_VERTEX_PROJECT_ID": "${ANTHROPIC_VERTEX_PROJECT_ID:-}",
         "ANTHROPIC_VERTEX_REGION": "${ANTHROPIC_VERTEX_REGION:-}",

@@ -40,6 +40,11 @@ class TestGetInstancesDir:
 
 
 class TestBuildCompose:
+    def test_marks_ai_assist_container_as_sandboxed(self):
+        env = _build_compose(set())["services"]["ai-assist"]["environment"]
+        assert env["AI_ASSIST_SANDBOX"] == "true"
+        assert env["AI_ASSIST_PERMISSION_MODE"] == "${AI_ASSIST_PERMISSION_MODE:-manual}"
+
     def test_always_has_gcloud(self):
         compose = _build_compose(set())
         volumes = compose["services"]["ai-assist"]["volumes"]

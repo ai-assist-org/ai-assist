@@ -21,6 +21,72 @@ from ai_assist.filesystem_tools import (
     extract_command_names,
 )
 
+
+def test_permission_mode_defaults_to_manual(monkeypatch):
+    monkeypatch.delenv("AI_ASSIST_PERMISSION_MODE", raising=False)
+    assert AiAssistConfig(anthropic_api_key="test").permission_mode == "manual"
+
+
+def test_permission_mode_reads_environment(monkeypatch):
+    monkeypatch.setenv("AI_ASSIST_PERMISSION_MODE", "auto")
+    assert AiAssistConfig(anthropic_api_key="test").permission_mode == "auto"
+
+
+def test_autonomous_mode_requires_sandbox(monkeypatch):
+    monkeypatch.delenv("AI_ASSIST_SANDBOX", raising=False)
+    assert AiAssistConfig(anthropic_api_key="test", permission_mode="autonomous").permission_mode == "manual"
+
+
+def test_autonomous_mode_is_available_in_sandbox(monkeypatch):
+    monkeypatch.setenv("AI_ASSIST_SANDBOX", "true")
+    assert AiAssistConfig(anthropic_api_key="test", permission_mode="autonomous").permission_mode == "autonomous"
+
+
+@pytest.mark.asyncio
+async def test_auto_mode_allows_git_status_without_callback(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    config = AiAssistConfig(anthropic_api_key="test", permission_mode="auto", allowed_paths=[str(tmp_path)])
+    tools = FilesystemTools(config, load_user_config=False)
+    result = await tools.execute_tool("execute_command", {"command": "git status --short"})
+    assert "not allowed" not in result.lower()
+
+
+@pytest.mark.asyncio
+async def test_auto_mode_still_prompts_for_git_push(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    config = AiAssistConfig(anthropic_api_key="test", permission_mode="auto", allowed_paths=[str(tmp_path)])
+    tools = FilesystemTools(config, load_user_config=False)
+    called = False
+
+    async def reject(_command: str) -> bool:
+        nonlocal called
+        called = True
+        return False
+
+    tools.confirmation_callback = reject
+    result = await tools.execute_tool("execute_command", {"command": "git push"})
+    assert called
+    assert "rejected" in result.lower()
+
+
+@pytest.mark.asyncio
+async def test_auto_mode_rejects_git_configuration_flags(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    config = AiAssistConfig(anthropic_api_key="test", permission_mode="auto", allowed_paths=[str(tmp_path)])
+    tools = FilesystemTools(config, load_user_config=False)
+    result = await tools.execute_tool("execute_command", {"command": "git -c core.fsmonitor=helper status"})
+    assert "not allowed" in result.lower()
+
+
+@pytest.mark.asyncio
+async def test_auto_mode_rejects_eval_wrapper(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    config = AiAssistConfig(anthropic_api_key="test", permission_mode="auto", allowed_paths=[str(tmp_path)])
+    tools = FilesystemTools(config, load_user_config=False)
+    result = await tools.execute_tool("execute_command", {"command": "eval 'echo unsafe'"})
+    assert "not allowed" in result.lower()
+
+
 # --- Phase 1: Command allowlist + user confirmation ---
 
 

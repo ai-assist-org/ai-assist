@@ -608,6 +608,13 @@ ai-assist /sandbox service my-agent remove
 ```
 
 Available features: `ssh` (agent forwarding), `gpg` (commit signing), `git` (gitconfig), `gh` (GitHub CLI), `dci` (DCI MCP server), `dbus` (session bus).
+
+Set `AI_ASSIST_PERMISSION_MODE` to `manual` (default), `auto`, or `autonomous`.
+Auto mode skips approval for conservative local development operations and asks
+for unknown or external side effects. In interactive mode, `/mode` displays or
+temporarily changes the mode. `autonomous` is accepted only in an ai-assist
+sandbox and removes ai-assist command/path approval checks; it can use every
+credential, mount, MCP server, and network capability enabled for that sandbox.
 Vertex AI (gcloud) is always included. Default: all features enabled.
 
 Image profiles allow different toolchains per workload. The base image (`ai-assist-sandbox`) has only runtime essentials.
@@ -895,6 +902,7 @@ ai-assist/
 - **[docs/AWL_SPECIFICATIONS.md](docs/AWL_SPECIFICATIONS.md)** - AWL (Agent Workflow Language) specification
 - **[docs/PERSONAL_SKILLS.md](docs/PERSONAL_SKILLS.md)** - Creating and managing personal Agent Skills
 - **[docs/PLUGINS.md](docs/PLUGINS.md)** - Installing Claude Code plugins (skills + MCP + marketplace)
+- **[docs/PERMISSION_MODES.md](docs/PERMISSION_MODES.md)** - Command approval and autonomous sandbox modes
 - **[docs/IDENTITY.md](docs/IDENTITY.md)** - Complete guide to identity.yaml configuration
 - **[docs/LOGGING.md](docs/LOGGING.md)** - Logging configuration and troubleshooting
 - **[docs/MULTI_INSTANCE.md](docs/MULTI_INSTANCE.md)** - Running multiple ai-assist instances

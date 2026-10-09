@@ -17,6 +17,7 @@ def isolate_config_dir(tmp_path, monkeypatch):
     test_config_dir = tmp_path / ".ai-assist"
     test_config_dir.mkdir(exist_ok=True)
     monkeypatch.setenv("AI_ASSIST_CONFIG_DIR", str(test_config_dir))
+    monkeypatch.delenv("AI_ASSIST_PERMISSION_MODE", raising=False)
     with patch("ai_assist.config.get_config_dir", return_value=test_config_dir):
         yield test_config_dir
 

@@ -1307,6 +1307,28 @@ async def tui_interactive_mode(agent: AiAssistAgent, state_manager: StateManager
                         continue
 
                 # Handle commands
+                if user_input.lower() == "/mode" or user_input.lower().startswith("/mode "):
+                    parts = user_input.split()
+                    fs_tools = agent.filesystem_tools
+                    if len(parts) == 1:
+                        source = (
+                            "environment default"
+                            if fs_tools.permission_mode == fs_tools.default_permission_mode
+                            else "session override"
+                        )
+                        console.print(f"\n[cyan]Permission mode: {fs_tools.permission_mode} ({source})[/cyan]\n")
+                    elif len(parts) == 2:
+                        mode_error = fs_tools.set_permission_mode(parts[1].lower())
+                        if mode_error:
+                            console.print(f"\n[red]{mode_error}[/red]\n")
+                        else:
+                            console.print(
+                                f"\n[green]Permission mode set to {fs_tools.permission_mode} for this session[/green]\n"
+                            )
+                    else:
+                        console.print("\n[red]Usage: /mode [manual|auto|autonomous][/red]\n")
+                    continue
+
                 if user_input.lower() == "/prompts":
                     await handle_prompts_command(agent, console)
                     continue
