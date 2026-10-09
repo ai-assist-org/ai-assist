@@ -575,6 +575,7 @@ Skills are \alert{untrusted code} --- defense in depth:
   \item Multi-line input (Esc-Enter)
   \item Escape to cancel any running query
   \item Live feedback: tool name, turn count, spinner
+  \item Stream idle timeout prevents indefinite waits
   \item Conversation memory with auto-compaction
 \end{itemize}
 \end{column}
@@ -582,6 +583,7 @@ Skills are \alert{untrusted code} --- defense in depth:
 \textbf{Slash Commands}
 \begin{itemize}\scriptsize
   \item \texttt{/status} --- system and schedule status
+  \item \texttt{/debug} --- current query diagnostic state
   \item \texttt{/history} --- recent monitoring history
   \item \texttt{/prompts} --- list MCP prompts
   \item \texttt{/skill/install}, \texttt{/skill/list}
@@ -1754,6 +1756,7 @@ Task blocks show brief description; hover reveals full goal, context, constraint
   \item \textcolor{green!60!black}{\checkmark} \alert{Sandbox instances} (podman-compose, per-service credential isolation)
   \item \textcolor{green!60!black}{\checkmark} Hybrid search (FTS5 + vector + RRF fusion)
   \item \textcolor{green!60!black}{\checkmark} \alert{MLflow tracing} (optional GenAI observability)
+  \item \textcolor{green!60!black}{\checkmark} Query event timelines + model-stream idle timeouts
   \item \textcolor{green!60!black}{\checkmark} LoCoMo memory benchmark: 86.2\%
 \end{itemize}
 \end{column}

@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import time
+import uuid
 from contextlib import aclosing
 from datetime import datetime
 from pathlib import Path
@@ -51,6 +52,14 @@ if TYPE_CHECKING:
 logging.getLogger("google.auth._default").setLevel(logging.ERROR)
 
 logger = logging.getLogger(__name__)
+
+
+_STREAM_EXHAUSTED = object()
+
+
+def _next_stream_event(iterator):
+    """Get one SDK stream event without leaking StopIteration through a Future."""
+    return next(iterator, _STREAM_EXHAUSTED)
 
 
 _CONTENT_BLOCK_KEYS = {
@@ -355,6 +364,7 @@ class AiAssistAgent:
         # Deadline for outermost query — nested queries inherit this to enforce
         # wall-clock limits even when execution is deep inside tool calls.
         self._query_deadline: float | None = None
+        self._active_query_diagnostics: dict[str, Any] | None = None
 
         # Update introspection tools with reference to available_prompts and agent
         # (will be populated during server connection)
@@ -1163,6 +1173,37 @@ class AiAssistAgent:
             logger.debug("Failed to auto-capture trace", exc_info=True)
             return None
 
+    def get_query_diagnostics(self) -> dict[str, Any] | None:
+        """Return safe live status for the interactive ``/debug`` command."""
+        if self._active_query_diagnostics is None:
+            return None
+        status = self._active_query_diagnostics.copy()
+        status["elapsed_seconds"] = round(time.monotonic() - status["started_at"], 1)
+        status.pop("started_at", None)
+        return status
+
+    def _record_query_event(
+        self, phase: str, *, turn: int | None = None, tool_name: str | None = None, detail: str | None = None
+    ) -> None:
+        """Persist a redacted progress marker for the active outer query."""
+        status = self._active_query_diagnostics
+        if status is None:
+            return
+        status.update({"phase": phase, "turn": turn, "tool_name": tool_name})
+        try:
+            from .eval import QueryEventStore
+
+            QueryEventStore().append(
+                status["query_id"],
+                phase,
+                elapsed_seconds=time.monotonic() - status["started_at"],
+                turn=turn,
+                tool_name=tool_name,
+                detail=detail,
+            )
+        except Exception:
+            logger.debug("Failed to write query diagnostic event", exc_info=True)
+
     @staticmethod
     def _mask_old_observations(messages: list, keep_recent: int = 10) -> None:
         """Replace old tool results with compact placeholders in-place.
@@ -1358,6 +1399,14 @@ class AiAssistAgent:
         span = start_query_span(query_text, self.config.model) if is_outermost else None
         if is_outermost:
             self._mlflow_root_span = span
+            self._active_query_diagnostics = {
+                "query_id": uuid.uuid4().hex[:12],
+                "started_at": time.monotonic(),
+                "phase": "query_started",
+                "turn": None,
+                "tool_name": None,
+            }
+            self._record_query_event("query_started")
         try:
             # Capture current query text for KG context injection
             if prompt:
@@ -1426,6 +1475,7 @@ class AiAssistAgent:
                 progress_callback("thinking", 0, max_turns, None)
 
             for turn in range(max_turns):
+                self._record_query_event("turn_started", turn=turn + 1)
                 # Check time-based timeout (only when max_time_seconds is explicitly set)
                 if max_time_seconds:
                     elapsed = time.time() - start_time
@@ -1443,6 +1493,7 @@ class AiAssistAgent:
                 # Check cancellation before each turn
                 if cancel_event and cancel_event.is_set():
                     self._last_turn_count = turn
+                    self._record_query_event("query_cancelled", turn=turn)
                     yield {"type": "cancelled"}
                     return
 
@@ -1494,19 +1545,50 @@ class AiAssistAgent:
 
                 system_prompt = self._build_system_prompt()
 
-                # Use streaming API with error handling
+                # The SDK stream is synchronous. Running each blocking operation
+                # in a worker keeps the event loop responsive to cancellation and
+                # makes first-byte and idle timeouts enforceable.
                 try:
-                    with self.anthropic.messages.stream(
-                        model=self.config.model,
-                        max_tokens=self.get_max_tokens(),
-                        system=system_prompt,
-                        tools=api_tools,  # type: ignore[arg-type]
-                        messages=messages,  # type: ignore[arg-type]
-                    ) as stream:
-                        for event in stream:
+                    first_event_timeout = getattr(self.config, "model_stream_first_event_timeout_seconds", 120)
+                    idle_timeout = getattr(self.config, "model_stream_idle_timeout_seconds", 120)
+
+                    def create_stream(
+                        system: Any = system_prompt, tools: Any = api_tools, request_messages: Any = messages
+                    ) -> Any:
+                        return self.anthropic.messages.stream(
+                            model=self.config.model,
+                            max_tokens=self.get_max_tokens(),
+                            system=system,
+                            tools=tools,
+                            messages=request_messages,
+                        )
+
+                    stream_context: Any = await asyncio.wait_for(
+                        asyncio.to_thread(create_stream),
+                        timeout=first_event_timeout,
+                    )
+                    self._record_query_event("model_stream_opened", turn=turn + 1)
+                    stream = await asyncio.wait_for(
+                        asyncio.to_thread(stream_context.__enter__),
+                        timeout=first_event_timeout,
+                    )
+                    try:
+                        iterator = iter(stream)
+                        first_event = True
+                        while True:
+                            stream_timeout = first_event_timeout if first_event else idle_timeout
+                            event = await asyncio.wait_for(
+                                asyncio.to_thread(_next_stream_event, iterator), timeout=stream_timeout
+                            )
+                            if event is _STREAM_EXHAUSTED:
+                                break
+                            if first_event:
+                                self._record_query_event("model_first_event", turn=turn + 1)
+                                first_event = False
                             # Check cancellation during streaming
                             if cancel_event and cancel_event.is_set():
                                 self._last_turn_count = turn + 1
+                                self._record_query_event("query_cancelled", turn=turn + 1)
                                 yield {"type": "cancelled"}
                                 return
 
@@ -1518,7 +1600,11 @@ class AiAssistAgent:
                                     yield chunk  # Stream text to user
 
                         # Get final message from stream
-                        final_message = stream.get_final_message()
+                        final_message = await asyncio.wait_for(
+                            asyncio.to_thread(stream.get_final_message),
+                            timeout=idle_timeout,
+                        )
+                        self._record_query_event("model_completed", turn=turn + 1)
 
                         # Track token usage
                         self._track_token_usage(final_message, turn)
@@ -1598,9 +1684,20 @@ class AiAssistAgent:
                                     ),
                                 }
                             )
+                    finally:
+                        await asyncio.shield(asyncio.to_thread(stream_context.__exit__, None, None, None))
 
+                except TimeoutError:
+                    self._last_turn_count = turn + 1
+                    self._record_query_event("model_stream_timeout", turn=turn + 1)
+                    yield {
+                        "type": "error",
+                        "message": "Model stream timed out waiting for progress. Please retry the query.",
+                    }
+                    return
                 except Exception as e:
                     logger.exception("Query execution failed")
+                    self._record_query_event("query_error", turn=turn + 1, detail=type(e).__name__)
                     # Handle API errors
                     error_msg = str(e)
 
@@ -1670,11 +1767,14 @@ class AiAssistAgent:
             logger.warning("Tool budget exhausted: reached maximum %d turns without final answer", max_turns)
             yield {"type": "error", "message": "Maximum turns reached without final answer"}
         finally:
+            if is_outermost:
+                self._record_query_event("query_finished", turn=self._last_turn_count)
             trace = self._auto_capture_trace(query_text, "".join(accumulated_text), start_time)
             if is_outermost:
                 record_query_trace(span, trace)
                 end_span(span)
                 self._mlflow_root_span = None
+                self._active_query_diagnostics = None
             self._query_depth -= 1
             if is_outermost:
                 self._query_deadline = None
@@ -1934,7 +2034,13 @@ class AiAssistAgent:
             if sig in self._tool_result_cache:
                 self._duplicate_tool_call_count += 1
                 return self._tool_result_cache[sig]
-            result = await self._execute_tool(block.name, block.input)
+            self._record_query_event("tool_started", turn=turn + 1, tool_name=block.name)
+            try:
+                result = await self._execute_tool(block.name, block.input)
+            except Exception as exc:
+                self._record_query_event("tool_failed", turn=turn + 1, tool_name=block.name, detail=type(exc).__name__)
+                raise
+            self._record_query_event("tool_completed", turn=turn + 1, tool_name=block.name)
             self._tool_result_cache[sig] = result
             return result
 

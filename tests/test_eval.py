@@ -4,7 +4,7 @@ import json
 import os
 from datetime import datetime, timedelta
 
-from ai_assist.eval import EvalMetrics, QueryEvaluator, QueryTrace, TraceStore
+from ai_assist.eval import EvalMetrics, QueryEvaluator, QueryEventStore, QueryTrace, TraceStore
 
 
 class TestQueryTrace:
@@ -143,6 +143,22 @@ class TestTraceStore:
         """Cleanup returns 0 if no trace file exists"""
         store = TraceStore(trace_dir=tmp_path)
         assert store.cleanup() == 0
+
+
+class TestQueryEventStore:
+    def test_append_writes_redacted_live_event(self, tmp_path):
+        store = QueryEventStore(trace_dir=tmp_path)
+
+        store.append("query-123", "tool_started", elapsed_seconds=1.25, turn=2, tool_name="internal__read_file")
+
+        event = json.loads(store.event_file.read_text().strip())
+        assert event["query_id"] == "query-123"
+        assert event["phase"] == "tool_started"
+        assert event["elapsed_seconds"] == 1.25
+        assert event["turn"] == 2
+        assert event["tool_name"] == "internal__read_file"
+        assert "arguments" not in event
+        assert "query_text" not in event
 
     def test_cleanup_keeps_unparseable(self, tmp_path):
         """Cleanup keeps lines it can't parse"""

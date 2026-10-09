@@ -1017,6 +1017,8 @@ async def tui_interactive_mode(agent: AiAssistAgent, state_manager: StateManager
         console.print()  # Blank line
         console.file.flush()  # Ensure Rich output is flushed before raw input
 
+        reader_cancelled = threading.Event()
+
         def _raw_input(prompt_text: str) -> str:
             """Read input with Escape/Ctrl-C support using cbreak mode."""
             try:
@@ -1036,11 +1038,19 @@ async def tui_interactive_mode(agent: AiAssistAgent, state_manager: StateManager
                 tty.setcbreak(stdin_fd)
                 buf: list[str] = []
                 while True:
+                    # Do not block indefinitely in os.read().  The surrounding
+                    # query can time out while this runs in a worker thread;
+                    # polling lets cancellation restore terminal settings.
+                    import select
+
+                    ready, _, _ = select.select([stdin_fd], [], [], 0.1)
+                    if reader_cancelled.is_set():
+                        raise KeyboardInterrupt
+                    if not ready:
+                        continue
                     ch = os.read(stdin_fd, 1)
                     if ch == b"\x1b":
                         # Check for escape sequence vs bare Escape
-                        import select
-
                         ready, _, _ = select.select([stdin_fd], [], [], 0.05)
                         if ready:
                             os.read(stdin_fd, 16)  # Consume escape sequence
@@ -1084,6 +1094,11 @@ async def tui_interactive_mode(agent: AiAssistAgent, state_manager: StateManager
         except KeyboardInterrupt:
             console.print("[yellow]Cancelled[/yellow]")
             choice = "c"
+        except asyncio.CancelledError:
+            reader_cancelled.set()
+            raise
+        finally:
+            reader_cancelled.set()
 
         if watcher_was_running:
             watcher.start()
@@ -1342,6 +1357,10 @@ async def tui_interactive_mode(agent: AiAssistAgent, state_manager: StateManager
                     await handle_status_command(state_manager, console)
                     continue
 
+                if user_input.lower() == "/debug":
+                    await handle_debug_command(agent, console)
+                    continue
+
                 if user_input.lower() == "/history":
                     await handle_history_command(state_manager, console)
                     continue
@@ -1574,6 +1593,20 @@ async def handle_status_command(state_manager: StateManager, console: Console):
     for key, value in stats.items():
         console.print(f"  [cyan]{key}:[/cyan] {value}")
     console.print()
+
+
+async def handle_debug_command(agent: AiAssistAgent, console: Console):
+    """Show safe progress metadata for an active query."""
+    status = agent.get_query_diagnostics()
+    if status is None:
+        console.print("\n[dim]No query is currently active.[/dim]\n")
+        return
+    tool = f", tool={status['tool_name']}" if status.get("tool_name") else ""
+    turn = f", turn={status['turn']}" if status.get("turn") is not None else ""
+    console.print(
+        f"\n[cyan]Query {status['query_id']}: {status['phase']} "
+        f"({status['elapsed_seconds']:.1f}s{turn}{tool})[/cyan]\n"
+    )
 
 
 async def handle_history_command(state_manager: StateManager, console: Console):

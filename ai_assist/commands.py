@@ -48,6 +48,7 @@ register_command(CommandDef("/prompts", "List available MCP prompts", mode="inte
 register_command(CommandDef("/prompt-info", "Show detailed prompt info", mode="interactive", args="<server/prompt>"))
 register_command(CommandDef("/bg", "List background tasks", mode="interactive", args="[id|cancel [id]]"))
 register_command(CommandDef("/bg cancel", "Cancel background task(s)", mode="interactive", hidden=True))
+register_command(CommandDef("/debug", "Show the active query's diagnostic status", mode="interactive"))
 register_command(CommandDef("/plan", "Plan a task before executing", mode="interactive", args="<task>"))
 register_command(CommandDef("/search", "Search conversation history", mode="interactive"))
 register_command(
