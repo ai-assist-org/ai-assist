@@ -65,6 +65,9 @@ temp/
 # Benchmarks - generated results and large datasets
 benchmarks/locomo/locomo10.json
 benchmarks/locomo/results*.md
+# RCA benchmark results contain real internal infra details (lab/hostnames,
+# PR/Jira links, log excerpts) from live DCI jobs - never commit these.
+benchmarks/rca/results/
 
 # Reports - generated output
 reports/
