@@ -254,6 +254,17 @@ class AiAssistConfig(BaseModel):
     mlflow_tracking_uri: str | None = Field(default_factory=lambda: os.getenv("MLFLOW_TRACKING_URI"))
     mlflow_experiment: str = Field(default_factory=lambda: os.getenv("AI_ASSIST_MLFLOW_EXPERIMENT", "ai-assist"))
 
+    # Bounds on an individual model stream.  They make cancellation and the
+    # outer query deadline effective when a provider stops yielding events.
+    model_stream_first_event_timeout_seconds: int = Field(
+        default_factory=lambda: int(os.getenv("AI_ASSIST_MODEL_FIRST_EVENT_TIMEOUT", "120")),
+        ge=1,
+    )
+    model_stream_idle_timeout_seconds: int = Field(
+        default_factory=lambda: int(os.getenv("AI_ASSIST_MODEL_IDLE_TIMEOUT", "120")),
+        ge=1,
+    )
+
     # Capability overrides for models not in the built-in tables (custom/self-hosted endpoints)
     model_max_output_tokens: int | None = Field(
         default_factory=lambda: (
@@ -446,6 +457,8 @@ class AiAssistConfig(BaseModel):
             enable_mlflow=os.getenv("AI_ASSIST_ENABLE_MLFLOW", "false").lower() == "true",
             mlflow_tracking_uri=os.getenv("MLFLOW_TRACKING_URI"),
             mlflow_experiment=os.getenv("AI_ASSIST_MLFLOW_EXPERIMENT", "ai-assist"),
+            model_stream_first_event_timeout_seconds=int(os.getenv("AI_ASSIST_MODEL_FIRST_EVENT_TIMEOUT", "120")),
+            model_stream_idle_timeout_seconds=int(os.getenv("AI_ASSIST_MODEL_IDLE_TIMEOUT", "120")),
             model_max_output_tokens=(
                 int(os.environ["AI_ASSIST_MODEL_MAX_TOKENS"]) if os.getenv("AI_ASSIST_MODEL_MAX_TOKENS") else None
             ),

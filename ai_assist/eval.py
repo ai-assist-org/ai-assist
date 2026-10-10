@@ -127,6 +127,42 @@ class TraceStore:
         return removed
 
 
+class QueryEventStore:
+    """Append-only, redacted timeline for queries that may not finish."""
+
+    def __init__(self, trace_dir: Path | None = None) -> None:
+        if trace_dir is None:
+            trace_dir = get_config_dir() / "traces"
+        trace_dir.mkdir(parents=True, exist_ok=True)
+        self.event_file = trace_dir / "query_events.jsonl"
+
+    def append(
+        self,
+        query_id: str,
+        phase: str,
+        *,
+        elapsed_seconds: float,
+        turn: int | None = None,
+        tool_name: str | None = None,
+        detail: str | None = None,
+    ) -> None:
+        """Record metadata only; prompts, tool arguments, and results stay out."""
+        event: dict[str, object] = {
+            "timestamp": datetime.now().isoformat(),
+            "query_id": query_id,
+            "phase": phase,
+            "elapsed_seconds": round(elapsed_seconds, 2),
+        }
+        if turn is not None:
+            event["turn"] = turn
+        if tool_name is not None:
+            event["tool_name"] = tool_name
+        if detail is not None:
+            event["detail"] = detail[:200]
+        with open(self.event_file, "a") as f:
+            f.write(json.dumps(event) + "\n")
+
+
 @dataclass
 class EvalMetrics:
     """Aggregate evaluation metrics computed from traces."""

@@ -1,7 +1,9 @@
 """Tests for agent query timeout enforcement."""
 
 import asyncio
+import threading
 import time
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -87,6 +89,58 @@ async def test_query_deadline_not_overwritten_by_nested_query(make_replay_agent)
     assert await agent.query("nested test", max_time_seconds=10) == "done"
     assert agent._query_deadline == outer_deadline
     assert agent._query_depth == 1
+
+
+async def test_query_records_live_diagnostic_events(make_replay_agent, tmp_path):
+    agent = await make_replay_agent([{"content": [{"type": "text", "text": "done"}], "stop_reason": "end_turn"}])
+    assert await agent.query("test") == "done"
+
+    events = [
+        __import__("json").loads(line)
+        for line in (tmp_path / ".ai-assist" / "traces" / "query_events.jsonl").read_text().splitlines()
+    ]
+    assert [event["phase"] for event in events] == [
+        "query_started",
+        "turn_started",
+        "model_stream_opened",
+        "model_first_event",
+        "model_completed",
+        "query_finished",
+    ]
+    assert all("query_text" not in event for event in events)
+
+
+async def test_model_stream_idle_timeout_is_enforced(make_replay_agent):
+    """A blocked synchronous SDK iterator must not block query cancellation forever."""
+    agent = await make_replay_agent([])
+    agent.config.model_stream_first_event_timeout_seconds = 1
+    agent.config.model_stream_idle_timeout_seconds = 1
+    release_stream = threading.Event()
+
+    class SlowStream:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def __iter__(self):
+            yield SimpleNamespace(type="message_start")
+            release_stream.wait()
+
+    client = MagicMock()
+    client.messages.stream.return_value = SlowStream()
+    agent.anthropic = client
+
+    started = time.monotonic()
+    try:
+        events = [event async for event in agent.query_streaming("test")]
+    finally:
+        release_stream.set()
+
+    assert time.monotonic() - started < 1.8
+    assert events[-1]["type"] == "error"
+    assert "timed out waiting for progress" in events[-1]["message"]
 
 
 @pytest.mark.asyncio

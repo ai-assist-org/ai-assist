@@ -903,6 +903,7 @@ ai-assist/
 - **[docs/PERSONAL_SKILLS.md](docs/PERSONAL_SKILLS.md)** - Creating and managing personal Agent Skills
 - **[docs/PLUGINS.md](docs/PLUGINS.md)** - Installing Claude Code plugins (skills + MCP + marketplace)
 - **[docs/PERMISSION_MODES.md](docs/PERMISSION_MODES.md)** - Command approval and autonomous sandbox modes
+- **[docs/QUERY_DIAGNOSTICS.md](docs/QUERY_DIAGNOSTICS.md)** - Debugging stalled model streams and tool calls
 - **[docs/IDENTITY.md](docs/IDENTITY.md)** - Complete guide to identity.yaml configuration
 - **[docs/LOGGING.md](docs/LOGGING.md)** - Logging configuration and troubleshooting
 - **[docs/MULTI_INSTANCE.md](docs/MULTI_INSTANCE.md)** - Running multiple ai-assist instances
