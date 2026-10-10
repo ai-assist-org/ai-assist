@@ -98,6 +98,15 @@ Optional per-role overrides (`AI_ASSIST_SYNTHESIS_MODEL`, `AI_ASSIST_COMPACTION_
 capability overrides for unknown models (`AI_ASSIST_MODEL_MAX_TOKENS`,
 `AI_ASSIST_MODEL_CONTEXT_WINDOW`) are documented in `.env.example`.
 
+**Non-Anthropic models** (Gemini, GPT-5, ...): ai-assist only speaks the Anthropic Messages
+dialect, so reaching OpenAI/Gemini-only backends needs a translating proxy in front of them.
+[litellm-proxy/](litellm-proxy/) is a ready-to-run, verified example (containerized LiteLLM):
+```bash
+cd litellm-proxy && cp .env.example .env   # fill in GEMINI_API_KEY and/or OPENAI_API_KEY
+podman-compose up -d                       # or: docker compose up -d
+```
+📖 **Full setup, verified gotchas (reasoning-model `max_tokens`, dialect mismatches):** See [litellm-proxy/README.md](litellm-proxy/README.md)
+
 📖 **Vertex AI setup:** See [VERTEX_AI_SETUP.md](VERTEX_AI_SETUP.md)
 
 **Personalization** (Optional):
@@ -585,6 +594,7 @@ make sandbox-build-dev                                     # dev profile (adds G
 # Create and configure an instance
 ai-assist /sandbox init my-agent                          # all features, base image
 ai-assist /sandbox init my-agent --features=ssh,git       # only ssh and git
+ai-assist /sandbox init my-agent --features=litellm       # + a litellm sidecar for Gemini/GPT-5
 ai-assist /sandbox init my-agent --image=ai-assist-dev    # use dev image with extra tools
 cp ~/.ai-assist-instances/my-agent/.env.example ~/.ai-assist-instances/my-agent/.env
 # Edit .env with credentials, edit sandbox/.ai-assist/identity.yaml
@@ -889,6 +899,7 @@ ai-assist/
 │   ├── awl_visualization.py # AWL workflow flowchart visualization
 │   └── filesystem_tools.py # Filesystem operations
 ├── emacs/                  # Emacs major mode for AWL files
+├── litellm-proxy/          # Containerized LiteLLM example (Gemini/GPT-5 access)
 ├── tests/                  # Test suite
 ├── .env.example           # Example environment variables
 ├── VERTEX_AI_SETUP.md     # Vertex AI troubleshooting
@@ -908,6 +919,7 @@ ai-assist/
 - **[docs/LOGGING.md](docs/LOGGING.md)** - Logging configuration and troubleshooting
 - **[docs/MULTI_INSTANCE.md](docs/MULTI_INSTANCE.md)** - Running multiple ai-assist instances
 - **[VERTEX_AI_SETUP.md](VERTEX_AI_SETUP.md)** - Vertex AI configuration and troubleshooting
+- **[litellm-proxy/README.md](litellm-proxy/README.md)** - Reach Gemini/GPT-5 via a containerized LiteLLM proxy
 - **[SECURITY.md](SECURITY.md)** - Security model for skill script execution
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** - Development setup with pre-commit hooks
 - **[AGENTS.md](AGENTS.md)** - Development philosophy (TDD/DRY/Tracer Bullet)

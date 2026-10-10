@@ -418,6 +418,7 @@ async def test_query_streaming_cancel_event():
     mock_config.enable_mlflow = False
     mock_config.model_max_output_tokens = None
     mock_config.model_context_window = None
+    mock_config.default_query_timeout = 600
     mock_config.mcp_servers = {}
     mock_config.allow_skill_script_execution = False
     mock_config.allowed_commands = ["grep", "find", "wc", "sort", "head", "tail", "ls", "cat", "diff", "file", "stat"]

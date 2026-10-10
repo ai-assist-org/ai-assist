@@ -277,6 +277,14 @@ class AiAssistConfig(BaseModel):
         ),
     )
 
+    # Wall-clock budget for an interactive query with no explicit max_time_seconds
+    # (e.g. AWL @task timeouts still override this per-task). 600s is enough for
+    # quick questions but not for deep multi-step investigations (RCA-style
+    # sessions with dozens of tool calls); raise this for that kind of workload.
+    default_query_timeout: int = Field(
+        default_factory=lambda: int(os.getenv("AI_ASSIST_QUERY_TIMEOUT", "600")),
+    )
+
     # jev (TypeSafe System One decision model) — optional, off unless a key is set.
     # Reachable via OpenRouter (default) or TypeSafe directly; both expose an
     # identical System One endpoint, so only URL / model / key differ.
@@ -299,6 +307,14 @@ class AiAssistConfig(BaseModel):
     # cosine order on any jev error.
     jev_rerank: bool = Field(
         default_factory=lambda: os.getenv("AI_ASSIST_JEV_RERANK", "false").lower() == "true",
+    )
+    # Opt-in: before finalizing a response with no further tool calls, check
+    # whether it describes tools/filters/commands that don't appear in this
+    # query's tool calls (e.g. claiming to have used a jq filter that was never
+    # invoked) and nudge the agent to correct it once. Off by default. Uses jev
+    # when configured; otherwise falls back to a narrower keyword-based check.
+    jev_verify_narration: bool = Field(
+        default_factory=lambda: os.getenv("AI_ASSIST_JEV_VERIFY_NARRATION", "false").lower() == "true",
     )
 
     @property
@@ -467,12 +483,14 @@ class AiAssistConfig(BaseModel):
                 if os.getenv("AI_ASSIST_MODEL_CONTEXT_WINDOW")
                 else None
             ),
+            default_query_timeout=int(os.getenv("AI_ASSIST_QUERY_TIMEOUT", "600")),
             jev_api_key=os.getenv("AI_ASSIST_JEV_API_KEY"),
             jev_api_url=os.getenv("AI_ASSIST_JEV_URL", "https://openrouter.ai/api/v1/systemone"),
             jev_model=os.getenv("AI_ASSIST_JEV_MODEL", "~typesafe/jev-latest"),
             jev_enabled=os.getenv("AI_ASSIST_JEV_ENABLED", "true").lower() == "true",
             jev_verify_tasks=os.getenv("AI_ASSIST_JEV_VERIFY_TASKS", "false").lower() == "true",
             jev_rerank=os.getenv("AI_ASSIST_JEV_RERANK", "false").lower() == "true",
+            jev_verify_narration=os.getenv("AI_ASSIST_JEV_VERIFY_NARRATION", "false").lower() == "true",
             mcp_servers=mcp_servers,
         )
 

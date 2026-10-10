@@ -1,1 +1,1 @@
-prompt: "Think step by step about how to organize a weekly team meeting agenda"
+prompt: "Before our planning meeting, pull together context from two different places: list any currently scheduled actions, and separately search the knowledge graph for notes related to 'testing practices'. Plan your approach, then report what you find from each source."

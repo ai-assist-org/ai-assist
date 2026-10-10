@@ -18,6 +18,38 @@ def agent():
     return AiAssistAgent(config=config)
 
 
+def test_default_query_timeout_from_env(monkeypatch):
+    monkeypatch.setenv("AI_ASSIST_QUERY_TIMEOUT", "1200")
+    assert AiAssistConfig.from_env().default_query_timeout == 1200
+
+
+def test_default_query_timeout_defaults_to_600():
+    assert AiAssistConfig(anthropic_api_key="test-key").default_query_timeout == 600
+
+
+@pytest.mark.asyncio
+async def test_query_streaming_honors_configured_default_timeout(make_replay_agent):
+    """With no explicit max_time_seconds, the deadline must use config.default_query_timeout,
+    not the hard-coded 600s — this is what lets long RCA-style sessions raise their budget."""
+    agent = await make_replay_agent(
+        [
+            {"content": [{"type": "text", "text": "done"}], "stop_reason": "end_turn"},
+        ]
+    )
+    agent.config.default_query_timeout = 1234
+    deadlines = []
+    with patch.object(agent, "_execute_tools_concurrently", new=AsyncMock(return_value=([], False))) as execute:
+
+        async def capture(*args, **kwargs):
+            deadlines.append(agent._query_deadline)
+            return [], False
+
+        execute.side_effect = capture
+        before = time.time()
+        assert await agent.query("test") == "done"
+    assert before + 1233 <= deadlines[0] <= time.time() + 1234
+
+
 @pytest.mark.parametrize("streaming", [False, True])
 async def test_timeout_interrupts_tool_and_cleans_query(make_replay_agent, streaming):
     agent = await make_replay_agent(

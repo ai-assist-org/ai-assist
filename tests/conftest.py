@@ -23,6 +23,38 @@ def isolate_config_dir(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def isolate_llm_env(monkeypatch):
+    """Prevent a real .env (e.g. a custom-gateway/model override for manual testing)
+    from changing which model/endpoint tests resolve to.
+    """
+    for var in (
+        "ANTHROPIC_BASE_URL",
+        "ANTHROPIC_VERTEX_PROJECT_ID",
+        "ANTHROPIC_VERTEX_REGION",
+        "AI_ASSIST_API_KEY",
+        "AI_ASSIST_MODEL",
+        "AI_ASSIST_MODEL_LOW",
+        "AI_ASSIST_MODEL_MEDIUM",
+        "AI_ASSIST_MODEL_HIGH",
+        "AI_ASSIST_SYNTHESIS_MODEL",
+        "AI_ASSIST_COMPACTION_MODEL",
+        "AI_ASSIST_MODEL_MAX_TOKENS",
+        "AI_ASSIST_MODEL_CONTEXT_WINDOW",
+        "AI_ASSIST_QUERY_TIMEOUT",
+        "AI_ASSIST_HTTP_REFERER",
+        "AI_ASSIST_X_TITLE",
+        "AI_ASSIST_JEV_API_KEY",
+        "AI_ASSIST_JEV_URL",
+        "AI_ASSIST_JEV_MODEL",
+        "AI_ASSIST_JEV_ENABLED",
+        "AI_ASSIST_JEV_VERIFY_TASKS",
+        "AI_ASSIST_JEV_RERANK",
+        "AI_ASSIST_JEV_VERIFY_NARRATION",
+    ):
+        monkeypatch.delenv(var, raising=False)
+
+
+@pytest.fixture(autouse=True)
 def isolate_reports_dir(tmp_path, monkeypatch):
     """Prevent tests from writing to ~/ai-assist/reports by redirecting via env var."""
     test_reports_dir = tmp_path / "reports"

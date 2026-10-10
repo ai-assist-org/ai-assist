@@ -1414,16 +1414,16 @@ for their sandbox.
 \begin{column}{0.48\textwidth}
 \textbf{\color{rhred}Per-Service Credential Isolation}
 \begin{itemize}\scriptsize
-  \item Each MCP server in its own container
+  \item Each sidecar (MCP server, litellm proxy) in its own container
   \item Credentials injected via compose, never on mounted filesystem
-  \item ai-assist never sees MCP server tokens
+  \item ai-assist never sees sidecar tokens -- e.g.\ real Gemini/OpenAI keys stay in litellm
   \item SSE transport between containers
 \end{itemize}
 
 \medskip
 \textbf{\color{rhred}Feature-Based Configuration}
 \begin{itemize}\scriptsize
-  \item \texttt{--features=ssh,gpg,git,gh,dci}
+  \item \texttt{--features=ssh,gpg,git,gh,dci,litellm}
   \item Only mount what you need
   \item Allowed commands auto-generated per feature
   \item Autonomous mode is container-only and explicit
@@ -1435,6 +1435,10 @@ for their sandbox.
 # Create isolated instance
 ai-assist /sandbox init pr-review \
   --features=ssh,git,gh,dci
+
+# Add Gemini/GPT-5 via a litellm sidecar
+ai-assist /sandbox init research \
+  --features=litellm
 
 # Run interactively or one-shot
 ai-assist /sandbox run pr-review /query \
@@ -1455,10 +1459,12 @@ ai-assist /sandbox service pr-review logs -f
   scale=0.9, transform shape
 ]
   \node[box=rhred] (agent) at (0,0) {ai-assist\\{\tiny ANTHROPIC\_KEY only}};
-  \node[box=rhblue] (dci) at (0,-1.1) {dci-mcp-server\\{\tiny DCI+Jira+GitHub}};
-  \draw[arr=rhteal] (agent) -- node[right,font=\fontsize{4}{5}\selectfont] {SSE} (dci);
+  \node[box=rhblue] (dci) at (-1.3,-1.1) {dci-mcp-server\\{\tiny DCI+Jira+GitHub}};
+  \node[box=rhteal] (litellm) at (1.3,-1.1) {litellm\\{\tiny Gemini+GPT-5, scoped keys}};
+  \draw[arr=rhteal] (agent) -- node[left,font=\fontsize{4}{5}\selectfont] {SSE} (dci);
+  \draw[arr=rhteal] (agent) -- node[right,font=\fontsize{4}{5}\selectfont] {HTTP} (litellm);
   \node[draw=rhdarkgray, dashed, thick, rounded corners=3pt,
-    fit=(agent)(dci), inner sep=4pt, label={[font=\fontsize{5}{6}\selectfont\sffamily]above:podman-compose stack}] {};
+    fit=(agent)(dci)(litellm), inner sep=4pt, label={[font=\fontsize{5}{6}\selectfont\sffamily]above:podman-compose stack}] {};
 \end{tikzpicture}
 \end{column}
 \end{columns}

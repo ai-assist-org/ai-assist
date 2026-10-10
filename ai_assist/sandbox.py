@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 TEMPLATES_DIR = Path(__file__).parent / "sandbox_templates"
 
-ALL_FEATURES = {"ssh", "gpg", "git", "gh", "dci", "dbus"}
+ALL_FEATURES = {"ssh", "gpg", "git", "gh", "dci", "dbus", "litellm"}
 
 SANDBOX_SUBDIRS = [
     ".ai-assist/state",
@@ -81,6 +81,14 @@ def _build_compose(features: set[str], image: str = DEFAULT_IMAGE) -> dict:
         "ANTHROPIC_API_KEY": "${ANTHROPIC_API_KEY:-}",
         "ANTHROPIC_VERTEX_PROJECT_ID": "${ANTHROPIC_VERTEX_PROJECT_ID:-}",
         "ANTHROPIC_VERTEX_REGION": "${ANTHROPIC_VERTEX_REGION:-}",
+        # Custom Anthropic-Messages-compatible endpoint (EnMaaS, OpenRouter, a
+        # local litellm proxy — see the "litellm" feature below, which wires
+        # these two automatically instead of reading them from .env).
+        "ANTHROPIC_BASE_URL": "${ANTHROPIC_BASE_URL:-}",
+        "AI_ASSIST_API_KEY": "${AI_ASSIST_API_KEY:-}",
+        "AI_ASSIST_MODEL": "${AI_ASSIST_MODEL:-}",
+        "AI_ASSIST_MODEL_MAX_TOKENS": "${AI_ASSIST_MODEL_MAX_TOKENS:-}",
+        "AI_ASSIST_MODEL_CONTEXT_WINDOW": "${AI_ASSIST_MODEL_CONTEXT_WINDOW:-}",
     }
     security_opt = []
 
@@ -128,7 +136,7 @@ def _build_compose(features: set[str], image: str = DEFAULT_IMAGE) -> dict:
     services: dict = {"ai-assist": ai_assist_service}
 
     if "dci" in features:
-        ai_assist_service["depends_on"] = {"dci-mcp-server": {"condition": "service_healthy"}}
+        ai_assist_service.setdefault("depends_on", {})["dci-mcp-server"] = {"condition": "service_healthy"}
         services["dci-mcp-server"] = {
             "image": "dci-mcp-server:latest",
             "restart": "unless-stopped",
@@ -157,6 +165,39 @@ def _build_compose(features: set[str], image: str = DEFAULT_IMAGE) -> dict:
                 "GITLAB_TOKEN": "${GITLAB_TOKEN:-}",
                 "GITLAB_URL": "${GITLAB_URL:-https://gitlab.cee.redhat.com}",
                 "OFFLINE_TOKEN": "${OFFLINE_TOKEN:-}",
+            },
+            "networks": ["mcp-net"],
+        }
+
+    if "litellm" in features:
+        # Fronts non-Anthropic models (Gemini, OpenAI, ...) behind the same
+        # Anthropic-Messages dialect ai-assist already speaks, so the
+        # ai-assist container never sees real provider credentials — only
+        # this proxy's own key. See litellm-proxy/ at the repo root for the
+        # standalone (non-sandboxed) version of this same setup.
+        ai_assist_service.setdefault("depends_on", {})["litellm"] = {"condition": "service_healthy"}
+        ai_assist_service["environment"]["ANTHROPIC_BASE_URL"] = "http://litellm:4000"
+        ai_assist_service["environment"]["AI_ASSIST_API_KEY"] = "${LITELLM_MASTER_KEY:-}"
+        services["litellm"] = {
+            "image": "ghcr.io/berriai/litellm:main-latest",
+            "command": ["--config", "/app/config.yaml", "--port", "4000"],
+            "restart": "unless-stopped",
+            "volumes": ["./sandbox/.ai-assist/litellm_config.yaml:/app/config.yaml:ro,z"],
+            "environment": {
+                "GEMINI_API_KEY": "${GEMINI_API_KEY:-}",
+                "OPENAI_API_KEY": "${OPENAI_API_KEY:-}",
+                "LITELLM_MASTER_KEY": "${LITELLM_MASTER_KEY:-}",
+            },
+            "healthcheck": {
+                "test": [
+                    "CMD",
+                    "python3",
+                    "-c",
+                    "import socket; s=socket.socket(); s.settimeout(1); s.connect(('localhost',4000)); s.close()",
+                ],
+                "interval": "5s",
+                "timeout": "3s",
+                "retries": 10,
             },
             "networks": ["mcp-net"],
         }
@@ -194,6 +235,12 @@ def _write_mcp_servers(path: Path, features: set[str]) -> None:
     else:
         with open(path, "w") as f:
             yaml.dump({"servers": {}}, f, default_flow_style=False)
+
+
+def _write_litellm_config(path: Path, features: set[str]) -> None:
+    """Copy the litellm proxy config into the instance when the feature is enabled."""
+    if "litellm" in features:
+        shutil.copy2(TEMPLATES_DIR / "litellm_config.yaml", path)
 
 
 def _parse_features(feature_str: str | None) -> set[str]:
@@ -234,6 +281,7 @@ def sandbox_init(name: str, features: set[str] | None = None, image: str = DEFAU
 
     _write_allowed_commands(sandbox / ".ai-assist" / "allowed_commands.json", features)
     _write_mcp_servers(sandbox / ".ai-assist" / "mcp_servers.yaml", features)
+    _write_litellm_config(sandbox / ".ai-assist" / "litellm_config.yaml", features)
 
     shutil.copy2(TEMPLATES_DIR / ".env.example", instance / ".env.example")
 

@@ -1,0 +1,27 @@
+# LiteLLM proxy config — maps model aliases ai-assist will use to the real
+# backend model + credentials. Add one entry per model you want to reach.
+#
+# Verified against a live container: the proxy's Anthropic-compatible
+# /v1/messages endpoint correctly translates requests to Gemini's native API
+# (and any other provider LiteLLM supports) — ai-assist only ever speaks the
+# Anthropic Messages dialect, so this translation step is what makes
+# non-Anthropic models reachable at all.
+model_list:
+  - model_name: gemini-flash
+    litellm_params:
+      model: gemini/gemini-2.5-flash
+      api_key: os.environ/GEMINI_API_KEY
+
+  - model_name: gemini-pro
+    litellm_params:
+      model: gemini/gemini-2.5-pro
+      api_key: os.environ/GEMINI_API_KEY
+
+  # Your own ChatGPT/OpenAI subscription, routed the same way.
+  - model_name: gpt-5
+    litellm_params:
+      model: openai/gpt-5
+      api_key: os.environ/OPENAI_API_KEY
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY

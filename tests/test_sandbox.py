@@ -140,6 +140,52 @@ class TestBuildCompose:
         assert "ANTHROPIC_API_KEY" not in env
         assert "SSH_AUTH_SOCK" not in env
 
+    def test_litellm_adds_sidecar_service(self):
+        compose = _build_compose({"litellm"})
+        assert "litellm" in compose["services"]
+        assert "depends_on" in compose["services"]["ai-assist"]
+        assert compose["services"]["ai-assist"]["depends_on"]["litellm"] == {"condition": "service_healthy"}
+
+    def test_no_litellm_no_sidecar(self):
+        compose = _build_compose(set())
+        assert "litellm" not in compose["services"]
+        assert "depends_on" not in compose["services"]["ai-assist"]
+
+    def test_litellm_wires_anthropic_base_url(self):
+        compose = _build_compose({"litellm"})
+        env = compose["services"]["ai-assist"]["environment"]
+        assert env["ANTHROPIC_BASE_URL"] == "http://litellm:4000"
+        assert env["AI_ASSIST_API_KEY"] == "${LITELLM_MASTER_KEY:-}"
+
+    def test_no_litellm_anthropic_base_url_from_env(self):
+        """Without the feature, ANTHROPIC_BASE_URL/AI_ASSIST_API_KEY pass through
+        from the host .env instead (e.g. for EnMaaS/OpenRouter directly)."""
+        compose = _build_compose(set())
+        env = compose["services"]["ai-assist"]["environment"]
+        assert env["ANTHROPIC_BASE_URL"] == "${ANTHROPIC_BASE_URL:-}"
+        assert env["AI_ASSIST_API_KEY"] == "${AI_ASSIST_API_KEY:-}"
+
+    def test_litellm_sidecar_has_no_ai_credentials(self):
+        compose = _build_compose(ALL_FEATURES)
+        env = compose["services"]["litellm"]["environment"]
+        assert "ANTHROPIC_API_KEY" not in env
+        assert "SSH_AUTH_SOCK" not in env
+
+    def test_litellm_sidecar_has_own_credentials(self):
+        compose = _build_compose({"litellm"})
+        env = compose["services"]["litellm"]["environment"]
+        assert env["GEMINI_API_KEY"] == "${GEMINI_API_KEY:-}"
+        assert env["OPENAI_API_KEY"] == "${OPENAI_API_KEY:-}"
+        assert env["LITELLM_MASTER_KEY"] == "${LITELLM_MASTER_KEY:-}"
+
+    def test_dci_and_litellm_combine_depends_on(self):
+        """Regression test: dci's depends_on assignment must not clobber
+        litellm's (or vice versa) when both sidecar features are enabled."""
+        compose = _build_compose({"dci", "litellm"})
+        depends_on = compose["services"]["ai-assist"]["depends_on"]
+        assert depends_on["dci-mcp-server"] == {"condition": "service_healthy"}
+        assert depends_on["litellm"] == {"condition": "service_healthy"}
+
 
 class TestParseFeatures:
     def test_none_returns_all(self):
@@ -204,6 +250,22 @@ class TestSandboxInit:
         for _server_name, server_config in data["servers"].items():
             assert "env" not in server_config or not server_config["env"]
             assert "url" in server_config
+
+    def test_litellm_config_copied_when_feature_enabled(self, tmp_path):
+        with patch.dict("os.environ", {"AI_ASSIST_INSTANCES_DIR": str(tmp_path)}):
+            sandbox_init("with-litellm", features={"litellm"})
+
+        config = tmp_path / "with-litellm" / "sandbox" / ".ai-assist" / "litellm_config.yaml"
+        assert config.exists()
+        data = yaml.safe_load(config.read_text())
+        assert "model_list" in data
+
+    def test_litellm_config_not_copied_without_feature(self, tmp_path):
+        with patch.dict("os.environ", {"AI_ASSIST_INSTANCES_DIR": str(tmp_path)}):
+            sandbox_init("no-litellm", features=set())
+
+        config = tmp_path / "no-litellm" / "sandbox" / ".ai-assist" / "litellm_config.yaml"
+        assert not config.exists()
 
     def test_refuses_existing(self, tmp_path):
         with patch.dict("os.environ", {"AI_ASSIST_INSTANCES_DIR": str(tmp_path)}):

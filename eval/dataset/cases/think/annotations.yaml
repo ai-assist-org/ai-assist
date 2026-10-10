@@ -4,3 +4,12 @@ forbidden_tools:
   - "write_report"
   - "schedule"
   - "read_file"
+notes: >
+  Deliberately a two-source task (list_actions + search_knowledge) so using
+  internal__think to plan is the objectively correct behavior per this
+  project's own system-prompt policy ("for complex tasks requiring multiple
+  tool calls, use internal__think to plan your approach"), not a stylistic
+  choice. The original single-shot "think step by step about X" prompt let
+  adaptive-thinking models (Claude Opus 5.5 / Sonnet 5.5, where extended
+  thinking is always on) correctly skip the explicit tool and answer directly,
+  producing a false failure that had nothing to do with tool-use competence.

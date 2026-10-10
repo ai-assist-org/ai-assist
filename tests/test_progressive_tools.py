@@ -130,6 +130,74 @@ class TestApiToolsUseShortDescriptions:
         assert api_tools[0]["description"] == desc
 
 
+class TestMetaParameterSchemas:
+    """Special redirection/filtering params (__jq_filter, __save_to_file, etc.) must be
+    declared in the schema sent to the model, not left to prose alone — a model has no
+    reliable way to discover or use an undeclared extra key on a tool call.
+    """
+
+    @staticmethod
+    def _agent_with_tool(name: str, jq_available: bool = True):
+        config = AiAssistConfig(anthropic_api_key="test-key", mcp_servers={})
+        agent = AiAssistAgent(config)
+        agent.json_tools.jq_path = "/usr/bin/jq" if jq_available else None
+        agent.available_tools.append(
+            {
+                "name": name,
+                "description": "A tool.",
+                "input_schema": {"type": "object", "properties": {"x": {"type": "string"}}},
+                "_server": name.split("__", 1)[0],
+            }
+        )
+        return agent
+
+    def test_mcp_tool_gets_all_redirection_params(self):
+        agent = self._agent_with_tool("dci__search_dci_jobs")
+        props = agent._build_api_tools()[0]["input_schema"]["properties"]
+        for param in (
+            "__jq_filter",
+            "__save_to_file",
+            "__write_to_report",
+            "__append_to_report",
+            "__collect_to_report",
+        ):
+            assert param in props
+        assert "x" in props  # original property preserved
+
+    def test_execute_command_gets_jq_and_save_to_file_only(self):
+        agent = self._agent_with_tool("internal__execute_command")
+        props = agent._build_api_tools()[0]["input_schema"]["properties"]
+        assert "__jq_filter" in props
+        assert "__save_to_file" in props
+        assert "__write_to_report" not in props
+        assert "__collect_to_report" not in props
+
+    def test_other_internal_tool_gets_jq_only(self):
+        agent = self._agent_with_tool("internal__read_file")
+        props = agent._build_api_tools()[0]["input_schema"]["properties"]
+        assert "__jq_filter" in props
+        assert "__save_to_file" not in props
+
+    def test_introspection_tool_gets_jq_only(self):
+        agent = self._agent_with_tool("introspection__get_tool_help")
+        props = agent._build_api_tools()[0]["input_schema"]["properties"]
+        assert "__jq_filter" in props
+        assert "__save_to_file" not in props
+        assert "__collect_to_report" not in props
+
+    def test_jq_filter_omitted_when_jq_not_installed(self):
+        agent = self._agent_with_tool("dci__search_dci_jobs", jq_available=False)
+        props = agent._build_api_tools()[0]["input_schema"]["properties"]
+        assert "__jq_filter" not in props
+        assert "__save_to_file" in props  # unaffected by jq availability
+
+    def test_original_schema_not_mutated(self):
+        """_build_api_tools must not mutate the shared tool definitions in place."""
+        agent = self._agent_with_tool("dci__search_dci_jobs")
+        agent._build_api_tools()
+        assert "__jq_filter" not in agent.available_tools[0]["input_schema"]["properties"]
+
+
 class TestGetToolHelp:
     """Tests for introspection__get_tool_help tool"""
 

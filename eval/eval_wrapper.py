@@ -137,7 +137,12 @@ async def run(workspace: Path, output_dir: Path, model: str, timeout: int):
         return text if len(text) <= limit else text[:limit] + "… [truncated]"
 
     tool_calls = [
-        {"name": tc["tool_name"], "input": tc["arguments"], "result": _truncate(tc.get("result", ""))}
+        {
+            "name": tc["tool_name"],
+            "input": tc["arguments"],
+            "meta_params": tc.get("meta_params") or {},
+            "result": _truncate(tc.get("result", "")),
+        }
         for tc in agent.last_tool_calls
     ]
 

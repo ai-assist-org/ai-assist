@@ -4,9 +4,10 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 import uuid
-from contextlib import aclosing
+from contextlib import aclosing, asynccontextmanager, suppress
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -21,7 +22,7 @@ from .config import AiAssistConfig, MCPServerConfig
 from .filesystem_tools import FilesystemTools
 from .identity import get_identity
 from .introspection_tools import IntrospectionTools
-from .jev_client import jev_configured
+from .jev_client import JevError, jev_configured, jev_decide, noul, noul_probability
 from .jev_tools import JevTools
 from .json_tools import JsonTools
 from .mcp_stdio_fix import stdio_client_fixed
@@ -67,6 +68,81 @@ _CONTENT_BLOCK_KEYS = {
     "tool_use": {"type", "id", "name", "input"},
     "tool_result": {"type", "tool_use_id", "content", "is_error"},
 }
+
+# Internal tools (besides MCP tools) allowed to use __save_to_file. Mirrors the
+# "selected internal tools" wording in system_prompt_builder.py.
+_SAVE_TO_FILE_ALLOWED_INTERNAL = {"internal__execute_command", "internal__json_query"}
+
+# JSON schema fragments for the special redirection/filtering parameters
+# documented in system_prompt_builder.py. These are popped from `arguments` in
+# _execute_tool_impl before validation/execution, so declaring them here is
+# purely to make the model aware they exist via the tool schema itself, rather
+# than relying solely on prose it can forget or never see (e.g. the MCP-only
+# guidance block). See _meta_params_for_tool for which tools get which.
+_META_PARAM_SCHEMAS = {
+    "__jq_filter": {
+        "type": "string",
+        "description": (
+            "Apply a jq filter to the tool result inline, returning only the filtered data "
+            "instead of the full result. Not supported together with __collect_to_report."
+        ),
+    },
+    "__save_to_file": {
+        "type": "string",
+        "description": "Save the raw tool result to this file path instead of returning it inline.",
+    },
+    "__write_to_report": {
+        "type": "string",
+        "description": (
+            "Save the raw tool result as a new/replaced report. Format: 'name' or "
+            "'name:format' (md/jsonl/csv/tsv, default md)."
+        ),
+    },
+    "__append_to_report": {
+        "type": "string",
+        "description": "Append the raw tool result to a report (creates it if needed). Format: 'name' or 'name:format'.",
+    },
+    "__collect_to_report": {
+        "type": "string",
+        "description": (
+            "Auto-paginate and collect ALL results into a report in a single call. Format: "
+            "'name:format' or 'name:format:N' (N = max items, omit for all)."
+        ),
+    },
+}
+
+
+def _meta_params_for_tool(tool_name: str, jq_available: bool) -> list[str]:
+    """Which special redirection/filtering parameters a tool's schema should advertise.
+
+    __jq_filter applies to any tool's result (internal, introspection, or MCP) per
+    system_prompt_builder.py's "use __jq_filter on any tool call" guidance. The
+    file/report redirection parameters are scoped to MCP tools plus the two
+    internal tools the prompt calls out by name — introspection tools technically
+    pass __save_to_file through too, but that's not a documented, intended use.
+    """
+    if tool_name.startswith("introspection__"):
+        params = []
+    elif tool_name.startswith("internal__"):
+        params = ["__save_to_file"] if tool_name in _SAVE_TO_FILE_ALLOWED_INTERNAL else []
+    else:
+        # MCP tool
+        params = ["__save_to_file", "__write_to_report", "__append_to_report", "__collect_to_report"]
+    if jq_available:
+        params.append("__jq_filter")
+    return params
+
+
+# Deterministic fallback for the narration-consistency check (see
+# AiAssistAgent._check_narration_consistency) when jev isn't configured or
+# available. Covers the one confirmed pattern: claiming jq/__jq_filter usage
+# that never actually happened.
+_JQ_CLAIM_RE = re.compile(r"jq[\s_-]*filter|__jq_filter|\bjq\s+-|\|\s*jq\b", re.IGNORECASE)
+
+_NARRATION_NUDGE_MESSAGE = (
+    "Your last answer describes using a command, filter, or tool that doesn't match your "
+    "actual tool calls above. Revise your answer to accurately describe only what you actually did."
+)
 
 
 def _serialize_content(content: list[Any]) -> list[dict[str, Any]]:
@@ -167,6 +243,9 @@ class AiAssistAgent:
     # Model-specific max output tokens
     # Source: https://docs.anthropic.com/en/docs/about-claude/models
     MODEL_MAX_TOKENS = {
+        # Claude Opus 5.5 / Sonnet 5.5 (no dated variants — alias only)
+        "claude-opus-5-5": 128000,
+        "claude-sonnet-5-5": 128000,
         # Claude Sonnet 5 (no dated variants — alias only)
         "claude-sonnet-5": 128000,
         # Claude Fable 5 (no dated variants — alias only)
@@ -203,11 +282,15 @@ class AiAssistAgent:
         "claude-3-opus-20240229": 4096,
         "claude-3-sonnet-20240229": 4096,
         "claude-3-haiku-20240307": 4096,
+        # GLM 5.3, hosted via the EnMaaS gateway
+        "rits/zai-org/glm-5-3": 65536,
     }
 
     # Model-specific context window sizes (input tokens)
     # Claude 4.6+ models have native 1M context windows
     MODEL_CONTEXT_WINDOWS = {
+        "claude-opus-5-5": 1000000,
+        "claude-sonnet-5-5": 1000000,
         "claude-sonnet-5": 1000000,
         "claude-fable-5": 1000000,
         "claude-opus-4-8": 1000000,
@@ -222,6 +305,8 @@ class AiAssistAgent:
         "claude-3-opus": 200000,
         "claude-3-sonnet": 200000,
         "claude-3-haiku": 200000,
+        # GLM 5.3, hosted via the EnMaaS gateway
+        "rits/zai-org/glm-5-3": 262144,
     }
 
     CONTEXT_BUDGET_WARNING_THRESHOLD = 0.8
@@ -365,6 +450,14 @@ class AiAssistAgent:
         # wall-clock limits even when execution is deep inside tool calls.
         self._query_deadline: float | None = None
         self._active_query_diagnostics: dict[str, Any] | None = None
+
+        # Cumulative time excluded from the current query's timeout budget via
+        # pause_timeout() (e.g. time spent waiting on a user approval prompt).
+        # Reset when a new outermost query starts.
+        self._timeout_pause_seconds: float = 0.0
+        # True while inside pause_timeout(), so query_streaming's deadline poll
+        # doesn't fire mid-pause (the pause credit only lands when it ends).
+        self._timeout_paused: bool = False
 
         # Update introspection tools with reference to available_prompts and agent
         # (will be populated during server connection)
@@ -959,6 +1052,7 @@ class AiAssistAgent:
 
             source_tools = get_planning_tools(self.available_tools)
 
+        jq_available = bool(self.json_tools.jq_path)
         api_tools = []
         for tool in source_tools:
             desc = tool["description"]
@@ -970,11 +1064,24 @@ class AiAssistAgent:
                     self._truncate_description(full_desc) + " Use introspection__get_tool_help for full documentation."
                 )
 
+            input_schema = tool["input_schema"]
+            meta_params = _meta_params_for_tool(tool["name"], jq_available)
+            if meta_params:
+                # Advertise these in the schema (instead of prose alone) so the model
+                # can reliably discover and use them — see _meta_params_for_tool.
+                input_schema = {
+                    **input_schema,
+                    "properties": {
+                        **input_schema.get("properties", {}),
+                        **{p: _META_PARAM_SCHEMAS[p] for p in meta_params},
+                    },
+                }
+
             api_tools.append(
                 {
                     "name": tool["name"],
                     "description": desc,
-                    "input_schema": tool["input_schema"],
+                    "input_schema": input_schema,
                 }
             )
         return api_tools
@@ -1234,6 +1341,96 @@ class AiAssistAgent:
                     if isinstance(item, dict) and item.get("type") == "tool_result":
                         item["content"] = "[Result already retrieved]"
 
+    @staticmethod
+    def _has_thinking_block(messages: list) -> bool:
+        """Check whether any assistant message already contains a thinking block.
+
+        Models with mandatory extended thinking (e.g. Opus 5.5, Sonnet 5.5) bind a
+        thinking block's signature to the exact conversation prefix it was produced
+        with and reject the next turn if that prefix changes. Once one is present,
+        skip mutations (masking, eviction) that rewrite earlier message content.
+        """
+        return any(
+            isinstance(block, dict) and block.get("type") in ("thinking", "redacted_thinking")
+            for msg in messages
+            if msg.get("role") == "assistant" and isinstance(msg.get("content"), list)
+            for block in msg["content"]
+        )
+
+    @staticmethod
+    def _strip_stale_thinking_blocks(messages: list) -> list:
+        """Drop thinking/redacted_thinking blocks from message history.
+
+        Used on the history a new top-level query is seeded with (see caller):
+        those blocks were bound to a previous query's system prompt, which this
+        query doesn't reproduce, so keeping them only risks a 400 on the next
+        turn. Messages left with no content after stripping are dropped entirely.
+        """
+        cleaned = []
+        for msg in messages:
+            content = msg.get("content")
+            cleaned_msg = msg
+            if isinstance(content, list):
+                filtered = [
+                    block
+                    for block in content
+                    if not (isinstance(block, dict) and block.get("type") in ("thinking", "redacted_thinking"))
+                ]
+                if not filtered:
+                    continue
+                if len(filtered) != len(content):
+                    cleaned_msg = {**msg, "content": filtered}
+            cleaned.append(cleaned_msg)
+        return cleaned
+
+    async def _check_narration_consistency(self, final_text: str) -> str | None:
+        """Check whether the final response claims tool/filter usage that never
+        happened this query, per self.last_tool_calls.
+
+        Uses jev (fast, cheap, general — catches any tool/claim mismatch) when
+        configured; otherwise falls back to a narrower keyword check covering the
+        one confirmed pattern (claiming jq/__jq_filter usage that was never
+        applied). Returns a corrective nudge message, or None if the response
+        looks consistent (or the check itself was inconclusive/unavailable).
+        """
+        if jev_configured(self.config):
+            calls_summary = (
+                "\n".join(
+                    f"- {tc['tool_name']}({tc.get('arguments', {})}) meta={tc.get('meta_params') or '(none)'}"
+                    for tc in self.last_tool_calls
+                )
+                or "(no tool calls made)"
+            )
+            state = f"Tool calls made this query:\n{calls_summary}\n\nAgent's response:\n{final_text}"
+            question = (
+                "The response may claim it used a specific command, tool, or filter (e.g. jq, "
+                "__jq_filter, grep) to process data. Judge ONLY by literal presence: does that exact "
+                "command or parameter appear verbatim in the tool calls above? Ignore whether the final "
+                "answer/data is correct — a response that says it read or computed something manually, "
+                "with no tool claimed, is honest regardless of correctness. Answer no (inconsistent) if "
+                "the response implies a tool/filter was used — including hedged phrasing like 'the filter "
+                "didn't apply cleanly' or 'I used the inline filter instead' — but no matching call appears "
+                "above. Is the response's described method literally backed by the tool calls?"
+            )
+            try:
+                response = await jev_decide(self.config, state=state, questions={"narration_honest": noul(question)})
+                probability = noul_probability(response, "narration_honest")
+                if probability is not None:
+                    return _NARRATION_NUDGE_MESSAGE if probability < 0.5 else None
+                logger.warning("jev narration check returned no probability; falling back to keyword check")
+            except JevError:
+                logger.exception("jev narration-consistency check failed; falling back to keyword check")
+
+        # Deterministic fallback: jev not configured, unavailable, or inconclusive.
+        if _JQ_CLAIM_RE.search(final_text):
+            used_jq = any(
+                "__jq_filter" in (tc.get("meta_params") or {}) or "jq" in str(tc.get("arguments", {})).lower()
+                for tc in self.last_tool_calls
+            )
+            if not used_jq:
+                return _NARRATION_NUDGE_MESSAGE
+        return None
+
     # Threshold: only start masking when input tokens exceed 50% of context window
     OBSERVATION_MASKING_THRESHOLD = 0.5
 
@@ -1329,22 +1526,60 @@ class AiAssistAgent:
     ):
         """Yield text, tool_use, done (with final text), error, or cancelled events.
 
-        Queries have a 600-second limit unless max_time_seconds is provided.
+        Queries have a config.default_query_timeout-second limit (default 600s)
+        unless max_time_seconds is provided. Time spent blocked on a user
+        approval prompt (see pause_timeout()) doesn't count against that limit.
         """
-        timeout = max_time_seconds if max_time_seconds is not None else 600
-        deadline = time.monotonic() + timeout
+        timeout = max_time_seconds if max_time_seconds is not None else self.config.default_query_timeout
+        if self._query_depth == 0:
+            self._timeout_pause_seconds = 0.0
+        start_monotonic = time.monotonic()
+        poll_interval = 1.0
         async with aclosing(
             self._query_streaming_inner(prompt, messages, max_turns, progress_callback, cancel_event, timeout)
         ) as stream:
             while True:
+                next_event = asyncio.ensure_future(anext(stream))
                 try:
-                    event = await asyncio.wait_for(anext(stream), max(0, deadline - time.monotonic()))
+                    while not next_event.done():
+                        remaining = timeout + self._timeout_pause_seconds - (time.monotonic() - start_monotonic)
+                        if remaining <= 0 and not self._timeout_paused:
+                            next_event.cancel()
+                            with suppress(asyncio.CancelledError):
+                                await next_event
+                            yield {
+                                "type": "error",
+                                "message": f"Task timeout after {timeout} seconds (max: {timeout}s)",
+                            }
+                            return
+                        # While paused (e.g. waiting on a user approval prompt), poll
+                        # without racing the deadline — remaining may be <= 0 but the
+                        # pause credit hasn't landed yet since it's applied when the
+                        # pause ends, not while it's in progress.
+                        wait_for_secs = (
+                            poll_interval if self._timeout_paused else max(0.01, min(remaining, poll_interval))
+                        )
+                        await asyncio.wait({next_event}, timeout=wait_for_secs)
+                    event = next_event.result()
                 except StopAsyncIteration:
                     return
-                except TimeoutError:
-                    yield {"type": "error", "message": f"Task timeout after {timeout} seconds (max: {timeout}s)"}
-                    return
                 yield event
+
+    @asynccontextmanager
+    async def pause_timeout(self):
+        """Exclude blocking time (e.g. a user approval prompt) from query timeouts.
+
+        Wrap any await that blocks on something other than agent work — most
+        notably interactive approval prompts — so a slow human response doesn't
+        eat into the query's time budget.
+        """
+        self._timeout_paused = True
+        paused_start = time.monotonic()
+        try:
+            yield
+        finally:
+            self._timeout_pause_seconds += time.monotonic() - paused_start
+            self._timeout_paused = False
 
     async def _query_streaming_inner(
         self,
@@ -1364,7 +1599,7 @@ class AiAssistAgent:
             max_turns: Maximum number of agentic turns (safety limit, default: 100)
             progress_callback: Optional callback for progress updates
             cancel_event: Optional threading.Event; when set, streaming is cancelled
-            max_time_seconds: Maximum wall-clock time in seconds (default: 600)
+            max_time_seconds: Maximum wall-clock time in seconds (default: config.default_query_timeout)
 
         Yields:
             str: Text chunks as they arrive
@@ -1385,6 +1620,14 @@ class AiAssistAgent:
         # Track nesting depth for _no_kg reset logic
         self._query_depth += 1
         is_outermost = self._query_depth == 1
+        if is_outermost:
+            # Carried-over history (e.g. from a previous completed query, possibly
+            # compacted) may contain thinking blocks bound to a system prompt that
+            # no longer matches this query's freshly-built one. Unlike within this
+            # query's own turn loop (see pause_timeout/_has_thinking_block), there's
+            # no way to keep an old query's exact prefix stable, so strip them —
+            # one of Anthropic's own documented mitigations for a stale binding.
+            messages = self._strip_stale_thinking_blocks(messages)
         if is_outermost and max_time_seconds:
             self._query_deadline = time.time() + max_time_seconds
         query_text = prompt or ""
@@ -1461,9 +1704,18 @@ class AiAssistAgent:
             # Build tools with progressive disclosure (truncated descriptions)
             api_tools = self._build_api_tools()
 
+            # Build once per query, not per turn: models with mandatory extended
+            # thinking (e.g. Opus 5.5, Sonnet 5.5) bind a thinking block's signature
+            # to the exact system prompt it was produced with, and reject the next
+            # turn outright if the system prompt changed (it's rebuilt with live
+            # state like recent-notifications context, which drifts over time).
+            system_prompt = self._build_system_prompt()
+
             # Reset token tracking for this query
             self._turn_token_usage = []
             self._wrapup_nudge_fired = False
+            self._loop_nudge_fired = False
+            self._narration_nudge_fired = False
 
             # Store messages for introspection tools to access
             self._conversation_messages = messages
@@ -1478,7 +1730,7 @@ class AiAssistAgent:
                 self._record_query_event("turn_started", turn=turn + 1)
                 # Check time-based timeout (only when max_time_seconds is explicitly set)
                 if max_time_seconds:
-                    elapsed = time.time() - start_time
+                    elapsed = time.time() - start_time - self._timeout_pause_seconds
                     if elapsed > max_time_seconds:
                         self._last_turn_count = turn + 1
                         logger.warning(
@@ -1500,8 +1752,12 @@ class AiAssistAgent:
                 if progress_callback:
                     progress_callback("calling_claude", turn + 1, max_turns, None)
 
+                # Skip prefix-rewriting mutations once a thinking block is present —
+                # see _has_thinking_block.
+                thinking_block_present = self._has_thinking_block(messages)
+
                 # Only mask old tool results when context is getting large
-                if self._should_mask_observations():
+                if self._should_mask_observations() and not thinking_block_present:
                     self._mask_old_observations(messages)
 
                 # Truncate messages
@@ -1539,11 +1795,9 @@ class AiAssistAgent:
                                 total_chars += (
                                     len(block.get("content", "")) if isinstance(block.get("content"), str) else 0
                                 )
-                while total_chars > MAX_TOTAL_MESSAGE_CHARS and len(messages) > 2:
+                while total_chars > MAX_TOTAL_MESSAGE_CHARS and len(messages) > 2 and not thinking_block_present:
                     messages.pop(0)
                     total_chars = sum(len(str(m.get("content", ""))) for m in messages)
-
-                system_prompt = self._build_system_prompt()
 
                 # The SDK stream is synchronous. Running each blocking operation
                 # in a worker keeps the event loop responsive to cancellation and
@@ -1638,10 +1892,36 @@ class AiAssistAgent:
                             return
 
                         if loop_detected:
-                            self._last_turn_count = turn + 1
                             tool_blocks = [b for b in final_message.content if b.type == "tool_use"]
                             loop_name = tool_blocks[-1].name if tool_blocks else "unknown"
-                            logger.warning("Tool loop detected: %s called repeatedly with same arguments", loop_name)
+                            if not self._loop_nudge_fired:
+                                # First offense: nudge instead of discarding whatever the agent
+                                # already accomplished this query (e.g. a prior successful edit)
+                                # behind a confusing top-level error.
+                                self._loop_nudge_fired = True
+                                logger.warning(
+                                    "Tool loop detected: %s called repeatedly with same arguments; nudging to wrap up",
+                                    loop_name,
+                                )
+                                messages.append({"role": "user", "content": tool_results})
+                                messages.append(
+                                    {
+                                        "role": "user",
+                                        "content": (
+                                            f"You've called {loop_name} repeatedly with the same arguments — "
+                                            "the result hasn't changed. Stop retrying it and use the "
+                                            "information you already have to finish answering, or try a "
+                                            "different approach."
+                                        ),
+                                    }
+                                )
+                                no_progress_count = 0
+                                continue
+                            self._last_turn_count = turn + 1
+                            logger.warning(
+                                "Tool loop detected again after nudge: %s called repeatedly with same arguments",
+                                loop_name,
+                            )
                             yield {
                                 "type": "error",
                                 "message": f"Loop detected: {loop_name} called repeatedly with same arguments",
@@ -1660,6 +1940,16 @@ class AiAssistAgent:
                                     }
                                     return
                                 continue
+
+                            if self.config.jev_verify_narration and not self._narration_nudge_fired:
+                                nudge = await self._check_narration_consistency(final_text)
+                                if nudge:
+                                    self._narration_nudge_fired = True
+                                    logger.warning("Narration inconsistency detected; nudging to revise")
+                                    messages.append({"role": "user", "content": nudge})
+                                    no_progress_count = 0
+                                    continue
+
                             if progress_callback:
                                 progress_callback("complete", turn + 1, max_turns, None)
                             self._last_turn_count = turn + 1
@@ -1863,7 +2153,7 @@ class AiAssistAgent:
             # Inherit remaining time from outer query deadline if no explicit timeout
             effective_timeout = max_time_seconds
             if effective_timeout is None and self._query_deadline is not None:
-                effective_timeout = max(1, int(self._query_deadline - time.time()))
+                effective_timeout = max(1, int(self._query_deadline - time.time() + self._timeout_pause_seconds))
             full_response = ""
             async for chunk in self.query_streaming(
                 messages=messages,
@@ -2116,8 +2406,7 @@ class AiAssistAgent:
         append_to_report = arguments.pop("__append_to_report", None)
         collect_to_report = arguments.pop("__collect_to_report", None)
         jq_filter = arguments.pop("__jq_filter", None)
-        _SAVE_TO_FILE_ALLOWED = {"internal__execute_command", "internal__json_query"}
-        if save_to_file and tool_name.startswith("internal__") and tool_name not in _SAVE_TO_FILE_ALLOWED:
+        if save_to_file and tool_name.startswith("internal__") and tool_name not in _SAVE_TO_FILE_ALLOWED_INTERNAL:
             logger.warning("Ignoring __save_to_file on %s", tool_name)
             save_to_file = None
         if save_to_file:
@@ -2130,6 +2419,22 @@ class AiAssistAgent:
             logger.info("Tool %s called with __collect_to_report=%s", tool_name, collect_to_report)
         if jq_filter:
             logger.info("Tool %s called with __jq_filter=%s", tool_name, jq_filter)
+
+        # Record which redirection/filter params actually applied, so the tool-call
+        # log reflects ground truth (these keys are stripped from `arguments` above
+        # and would otherwise be invisible to anything inspecting last_tool_calls,
+        # e.g. a narration-consistency check).
+        meta_params_used = {
+            k: v
+            for k, v in {
+                "__save_to_file": save_to_file,
+                "__write_to_report": write_to_report,
+                "__append_to_report": append_to_report,
+                "__collect_to_report": collect_to_report,
+                "__jq_filter": jq_filter,
+            }.items()
+            if v
+        }
 
         # Validate arguments against tool schema before execution
         validation_error = self._validate_tool_arguments(tool_name, arguments)
@@ -2148,6 +2453,12 @@ class AiAssistAgent:
             try:
                 result_text = await self.introspection_tools.execute_tool(original_tool_name, arguments)
 
+                # Apply __jq_filter before recording/logging so the audit trail (and
+                # anything inspecting last_tool_calls) reflects what was actually
+                # returned to the model, not the pre-filter raw result.
+                if jq_filter:
+                    result_text = self.tool_result_router.apply_jq_filter(result_text, jq_filter)
+
                 # Track introspection tool call
                 self.last_tool_calls.append(
                     {
@@ -2155,15 +2466,13 @@ class AiAssistAgent:
                         "server_name": server_name,
                         "original_tool_name": original_tool_name,
                         "arguments": arguments,
+                        "meta_params": meta_params_used,
                         "result": result_text,
                         "timestamp": datetime.now(),
                     }
                 )
 
                 self.audit_logger.log_tool_call(tool_name, arguments, result_text, success=True)
-
-                if jq_filter:
-                    result_text = self.tool_result_router.apply_jq_filter(result_text, jq_filter)
 
                 redirect = self.tool_result_router.handle_result_redirection(
                     result_text, save_to_file, write_to_report, append_to_report
@@ -2188,6 +2497,7 @@ class AiAssistAgent:
                         "server_name": server_name,
                         "original_tool_name": original_tool_name,
                         "arguments": arguments,
+                        "meta_params": meta_params_used,
                         "result": result_text,
                         "timestamp": datetime.now(),
                     }
@@ -2293,6 +2603,16 @@ class AiAssistAgent:
                     # Default to report tools
                     result_text = await self.report_tools.execute_tool(original_tool_name, arguments)
 
+                # Apply __jq_filter before recording/logging so the audit trail (and
+                # anything inspecting last_tool_calls) reflects what was actually
+                # returned to the model, not the pre-filter raw result.
+                if jq_filter:
+                    if original_tool_name == "execute_command" and "\nSTDOUT:\n" in result_text:
+                        stdout = result_text.split("\nSTDOUT:\n", 1)[1].split("\nSTDERR:\n", 1)[0].strip()
+                        result_text = self.tool_result_router.apply_jq_filter(stdout, jq_filter)
+                    else:
+                        result_text = self.tool_result_router.apply_jq_filter(result_text, jq_filter)
+
                 # Track internal tool call
                 self.last_tool_calls.append(
                     {
@@ -2300,6 +2620,7 @@ class AiAssistAgent:
                         "server_name": server_name,
                         "original_tool_name": original_tool_name,
                         "arguments": arguments,
+                        "meta_params": meta_params_used,
                         "result": result_text,
                         "timestamp": datetime.now(),
                     }
@@ -2307,13 +2628,6 @@ class AiAssistAgent:
 
                 is_success = not (isinstance(result_text, str) and result_text.startswith("Error:"))
                 self.audit_logger.log_tool_call(tool_name, arguments, result_text, success=is_success)
-
-                if jq_filter:
-                    if original_tool_name == "execute_command" and "\nSTDOUT:\n" in result_text:
-                        stdout = result_text.split("\nSTDOUT:\n", 1)[1].split("\nSTDERR:\n", 1)[0].strip()
-                        result_text = self.tool_result_router.apply_jq_filter(stdout, jq_filter)
-                    else:
-                        result_text = self.tool_result_router.apply_jq_filter(result_text, jq_filter)
 
                 redirect = self.tool_result_router.handle_result_redirection(
                     result_text, save_to_file, write_to_report, append_to_report
@@ -2363,6 +2677,11 @@ class AiAssistAgent:
             if injection_warnings:
                 logger.warning("Suspicious content in %s result: %s", tool_name, ", ".join(injection_warnings))
 
+            # Apply __jq_filter before recording/logging/KG storage so they reflect
+            # what was actually returned to the model, not the pre-filter raw result.
+            if jq_filter:
+                result_text = self.tool_result_router.apply_jq_filter(result_text, jq_filter)
+
             # Store tool call for potential KG storage
             self.last_tool_calls.append(
                 {
@@ -2370,6 +2689,7 @@ class AiAssistAgent:
                     "server_name": server_name,
                     "original_tool_name": original_tool_name,
                     "arguments": arguments,
+                    "meta_params": meta_params_used,
                     "result": result_text,
                     "timestamp": datetime.now(),
                 }
@@ -2380,9 +2700,6 @@ class AiAssistAgent:
                 await self._save_tool_result_to_kg(tool_name, original_tool_name, arguments, result_text)
 
             self.audit_logger.log_tool_call(tool_name, arguments, result_text, success=True)
-
-            if jq_filter:
-                result_text = self.tool_result_router.apply_jq_filter(result_text, jq_filter)
 
             redirect = self.tool_result_router.handle_result_redirection(
                 result_text, save_to_file, write_to_report, append_to_report

@@ -1,0 +1,43 @@
+# Candidate models for the RCA comparison benchmark.
+#
+# Each entry's `env` dict is applied on top of a clean environment (see
+# run_comparison.py:_apply_model_env) and then AiAssistConfig.from_env() reads
+# it, exactly like running `ai-assist` with a given `.env.*` file. Secrets are
+# referenced as ${VAR} and resolved from the script's own shell environment —
+# never commit real keys here.
+models:
+  - name: enmaas-opus-5-5
+    env:
+      ANTHROPIC_BASE_URL: https://api.enmaas.devshift.net
+      AI_ASSIST_API_KEY: ${ENMAAS_API_KEY}
+      AI_ASSIST_MODEL: claude-opus-5-5
+
+  - name: enmaas-sonnet-5-5
+    env:
+      ANTHROPIC_BASE_URL: https://api.enmaas.devshift.net
+      AI_ASSIST_API_KEY: ${ENMAAS_API_KEY}
+      AI_ASSIST_MODEL: claude-sonnet-5-5
+
+  - name: enmaas-glm-5-3
+    env:
+      ANTHROPIC_BASE_URL: https://api.enmaas.devshift.net
+      AI_ASSIST_API_KEY: ${ENMAAS_API_KEY}
+      AI_ASSIST_MODEL: rits/zai-org/glm-5-3
+      AI_ASSIST_MODEL_MAX_TOKENS: "65536"
+      AI_ASSIST_MODEL_CONTEXT_WINDOW: "262144"
+
+  - name: openai-gpt-5
+    env:
+      ANTHROPIC_BASE_URL: http://127.0.0.1:4010
+      AI_ASSIST_API_KEY: ${LITELLM_MASTER_KEY}
+      AI_ASSIST_MODEL: gpt-5
+      AI_ASSIST_MODEL_MAX_TOKENS: "128000"
+      AI_ASSIST_MODEL_CONTEXT_WINDOW: "400000"
+
+  # Vertex AI, not a custom endpoint: ANTHROPIC_VERTEX_PROJECT_ID must already be
+  # set in the ambient shell env (gcloud auth application-default login done).
+  # ANTHROPIC_BASE_URL/AI_ASSIST_API_KEY are cleared by run_comparison.py before
+  # every run, so AiAssistConfig.use_vertex naturally takes over here.
+  - name: vertex-opus-4-8
+    env:
+      AI_ASSIST_MODEL: claude-opus-4-8
