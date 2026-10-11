@@ -866,6 +866,29 @@ servers:
 
 See `.ai-assist/mcp_servers.yaml.example` for templates.
 
+#### Remote HTTP MCP servers with OAuth
+
+For a Streamable HTTP server that requires OAuth, set both `transport` and
+`oauth`. On first connection ai-assist opens a browser for authorization and
+stores the resulting tokens privately in the active configuration directory.
+
+```yaml
+servers:
+  tradingview:
+    url: "https://mcp.tradingview.com/mcp"
+    transport: streamablehttp
+    oauth: true
+    # TradingView's OAuth metadata can intermittently omit this endpoint.
+    oauth_registration_endpoint: "https://www.tradingview.com/mcp/oauth/register"
+    oauth_callback_port: 8765
+```
+
+For a separate instance configuration, for example `~/.iris`, launch with:
+
+```bash
+AI_ASSIST_CONFIG_DIR="$HOME/.iris" ai-assist /interactive
+```
+
 ## State Management
 
 Persistent state stored in `~/.ai-assist/`:

@@ -2,7 +2,7 @@
 
 from unittest.mock import MagicMock, patch
 
-from ai_assist.config import MCPServerConfig
+from ai_assist.config import MCPServerConfig, load_mcp_servers_from_yaml
 
 
 class TestMCPServerConfigUrl:
@@ -52,6 +52,17 @@ class TestTransportSelection:
             assert call_args.command == "/path/to/server"
             assert call_args.args == ["--flag"]
 
+    def test_transport_returns_streamable_http_when_requested(self):
+        from ai_assist.agent import AiAssistAgent
+
+        config = MCPServerConfig(url="https://example.test/mcp", transport="streamablehttp")
+        agent = MagicMock(spec=AiAssistAgent)
+        agent._transport = AiAssistAgent._transport.__get__(agent)
+
+        with patch("mcp.client.streamable_http.streamable_http_client") as mock_streamable_http:
+            agent._transport(config)
+            mock_streamable_http.assert_called_once_with("https://example.test/mcp")
+
 
 class TestMCPServerConfigYaml:
     def test_parse_sse_config_from_dict(self):
@@ -82,3 +93,20 @@ class TestMCPServerConfigYaml:
         assert config.url is None
         assert config.command == "/path/to/server.sh"
         assert config.env == {"API_KEY": "secret"}
+
+    def test_loads_streamable_http_and_oauth(self, tmp_path):
+        path = tmp_path / "mcp_servers.yaml"
+        path.write_text("""servers:
+  tradingview:
+    url: https://mcp.tradingview.com/mcp
+    transport: streamablehttp
+    oauth: true
+    oauth_registration_endpoint: https://www.tradingview.com/mcp/oauth/register
+    oauth_callback_port: 8765
+""")
+
+        config = load_mcp_servers_from_yaml(path)["tradingview"]
+        assert config.transport == "streamablehttp"
+        assert config.oauth is True
+        assert config.oauth_registration_endpoint == "https://www.tradingview.com/mcp/oauth/register"
+        assert config.oauth_callback_port == 8765

@@ -187,6 +187,9 @@ class MCPServerConfig(BaseModel):
     transport: str | None = Field(
         default=None, description="Transport: sse, streamablehttp, or stdio (auto-detected if None)"
     )
+    oauth: bool = False
+    oauth_registration_endpoint: str | None = None
+    oauth_callback_port: int = 8765
     enabled: bool = True
     pagination: PaginationConfig | None = None
     readonly_tools: list[str] = Field(default_factory=list)
@@ -532,6 +535,10 @@ def load_mcp_servers_from_yaml(path: Path) -> dict[str, MCPServerConfig]:
                 args=config.get("args", []),
                 env=env,
                 url=config.get("url"),
+                transport=config.get("transport"),
+                oauth=config.get("oauth", False),
+                oauth_registration_endpoint=config.get("oauth_registration_endpoint"),
+                oauth_callback_port=config.get("oauth_callback_port", 8765),
                 enabled=config.get("enabled", True),
                 pagination=pagination,
                 readonly_tools=config.get("readonly_tools", []),
