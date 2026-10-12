@@ -26,7 +26,7 @@ from .introspection_tools import IntrospectionTools
 from .jev_client import JevError, jev_configured, jev_decide, noul, noul_probability
 from .jev_tools import JevTools
 from .json_tools import JsonTools
-from .mcp_oauth import oauth_streamable_http_client
+from .mcp_oauth import OAuthConnectionConfig, oauth_streamable_http_client
 from .mcp_stdio_fix import stdio_client_fixed
 from .mlflow_tracing import end_span, record_query_trace, setup_mlflow, start_query_span, start_tool_span
 from .output import console_print
@@ -767,8 +767,18 @@ class AiAssistAgent:
             async with oauth_streamable_http_client(
                 config.url,
                 self._oauth_storage_path(config.url),
-                registration_endpoint=config.oauth_registration_endpoint,
-                callback_port=config.oauth_callback_port,
+                OAuthConnectionConfig(
+                    registration_endpoint=config.oauth_registration_endpoint,
+                    callback_port=config.oauth_callback_port,
+                    authorization_endpoint=config.oauth_authorization_endpoint,
+                    token_endpoint=config.oauth_token_endpoint,
+                    normalize_root_issuer=config.oauth_normalize_root_issuer,
+                    assume_authorization_response_issuer=config.oauth_assume_authorization_response_issuer,
+                    client_id=config.oauth_client_id,
+                    client_secret=config.oauth_client_secret,
+                    token_endpoint_auth_method=config.oauth_token_endpoint_auth_method,
+                    scopes=config.oauth_scopes,
+                ),
             ) as client:
                 async with streamable_http_client(config.url, http_client=cast(Any, client)) as transport:
                     yield transport

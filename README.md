@@ -881,6 +881,8 @@ servers:
     # TradingView's OAuth metadata can intermittently omit this endpoint.
     oauth_registration_endpoint: "https://www.tradingview.com/mcp/oauth/register"
     oauth_callback_port: 8765
+    oauth_authorization_endpoint: "https://www.tradingview.com/mcp/oauth/authorize"
+    oauth_token_endpoint: "https://www.tradingview.com/mcp/oauth/token"
 ```
 
 For a separate instance configuration, for example `~/.iris`, launch with:
@@ -888,6 +890,104 @@ For a separate instance configuration, for example `~/.iris`, launch with:
 ```bash
 AI_ASSIST_CONFIG_DIR="$HOME/.iris" ai-assist /interactive
 ```
+
+Some providers, including Google Workspace, require an OAuth client that you
+create yourself rather than dynamic client registration. Keep its credentials
+in the environment and reference them from the server configuration:
+
+```yaml
+servers:
+  google-drive:
+    url: "https://drivemcp.googleapis.com/mcp/v1"
+    transport: streamablehttp
+    oauth: true
+    oauth_callback_port: 8765
+    oauth_authorization_endpoint: "https://accounts.google.com/o/oauth2/v2/auth"
+    oauth_token_endpoint: "https://oauth2.googleapis.com/token"
+    oauth_normalize_root_issuer: true
+    oauth_assume_authorization_response_issuer: true
+    oauth_client_id: "${GOOGLE_MCP_CLIENT_ID}"
+    oauth_client_secret: "${GOOGLE_MCP_CLIENT_SECRET}"
+    oauth_scopes:
+      - "https://www.googleapis.com/auth/drive.readonly"
+      - "https://www.googleapis.com/auth/drive.file"
+```
+
+`oauth_client_secret` supports environment-variable expansion. When connecting
+several OAuth servers at once, give each a distinct `oauth_callback_port` and
+register every corresponding `http://127.0.0.1:PORT/callback` URI with the
+provider. `oauth_scopes` is optional but required by providers, such as Google,
+that do not advertise their requested scopes through MCP OAuth metadata.
+
+##### Pre-registered OAuth clients
+
+Use the following fields when a provider requires you to create an OAuth client
+yourself instead of supporting dynamic client registration:
+
+| Field | Purpose |
+| --- | --- |
+| `oauth_client_id` / `oauth_client_secret` | A matching client-credential pair. Put these in the instance `.env` file and reference them as `${VARIABLE}` rather than committing a secret to YAML. |
+| `oauth_callback_port` | The loopback port used by ai-assist. Register the exact `http://127.0.0.1:PORT/callback` address at the provider. |
+| `oauth_scopes` | Scopes to request when the MCP server does not supply them through OAuth metadata. |
+| `oauth_authorization_endpoint` / `oauth_token_endpoint` | Provider overrides for incomplete or non-standard discovery metadata. Normally omit them. |
+| `oauth_normalize_root_issuer` | Opt-in compatibility setting for a provider that inconsistently publishes its root issuer with and without a trailing slash. |
+| `oauth_assume_authorization_response_issuer` | Opt-in compatibility setting for a provider that advertises an issuer but omits the OAuth `iss` callback parameter. State and PKCE validation remain enabled. |
+
+Credentials and tokens are stored with private permissions under
+`<config-dir>/mcp-oauth/`. Restart ai-assist after changing an OAuth client ID
+or secret so it reconnects and starts the appropriate authorization flow.
+
+##### GitHub remote MCP
+
+GitHub's remote server does not support dynamic client registration, so create a
+personal GitHub OAuth App and store its matching credentials in the instance
+`.env` file:
+
+```dotenv
+GITHUB_MCP_CLIENT_ID="..."
+GITHUB_MCP_CLIENT_SECRET="..."
+```
+
+Register `http://127.0.0.1:8770/callback` as the OAuth App callback URL, then
+configure the server as follows:
+
+```yaml
+servers:
+  github:
+    url: "https://api.githubcopilot.com/mcp/"
+    transport: streamablehttp
+    oauth: true
+    oauth_callback_port: 8770
+    oauth_assume_authorization_response_issuer: true
+    oauth_client_id: "${GITHUB_MCP_CLIENT_ID}"
+    oauth_client_secret: "${GITHUB_MCP_CLIENT_SECRET}"
+```
+
+Do not set GitHub authorization or token endpoints: the server advertises them
+through OAuth metadata. See GitHub's [remote MCP host guide](https://github.com/github/github-mcp-server/blob/main/docs/host-integration.md)
+and [OAuth App callback documentation](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps).
+
+##### Google Workspace MCP
+
+Google Workspace MCP servers require a Google Workspace account and a Google
+Cloud project enrolled in the Google Workspace Developer Preview Program.
+Consumer `@gmail.com` accounts cannot use these MCP servers. The APIs, MCP
+services, OAuth client, and Developer Preview enrollment must all belong to the
+same Cloud project; an OAuth client name does not change its owning project.
+See the [Google Workspace MCP guide](https://developers.google.com/workspace/guides/configure-mcp-servers)
+and the [Developer Preview enrollment instructions](https://developers.google.com/workspace/preview).
+
+##### OAuth troubleshooting
+
+| Symptom | Resolution |
+| --- | --- |
+| `redirect_uri_mismatch` | Register the exact `127.0.0.1`, port, and `/callback` path used by `oauth_callback_port`. |
+| `invalid_client` during token exchange | Replace both client ID and secret from the same OAuth App registration; quote secrets in `.env`. |
+| `Invalid token response` containing `access_token=...` | Update ai-assist. GitHub can default to a form-encoded token response; ai-assist requests JSON for token exchange and refresh. |
+| `State parameter mismatch` | Close old authorization browser tabs, restart ai-assist, and complete only the newly printed authorization URL. Do not authorize the same server concurrently from multiple ai-assist instances. |
+| `Authorization response missing iss parameter` | For providers known to omit it, enable `oauth_assume_authorization_response_issuer: true`. |
+| Service says its MCP API is disabled | Enable the API in the project that owns the OAuth client, not merely the project selected in a `gcloud` configuration. |
+| Google reports that the project is not enrolled | Enroll that Cloud project in Google Workspace Developer Preview; this cannot be bypassed through ai-assist configuration. |
 
 ## State Management
 

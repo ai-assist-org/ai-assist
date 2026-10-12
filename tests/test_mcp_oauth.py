@@ -3,10 +3,18 @@
 import stat
 
 import pytest
-from mcp.shared.auth import OAuthClientInformationFull, OAuthClientMetadata, OAuthToken
+from mcp.shared.auth import AuthorizationCodeResult, OAuthClientInformationFull, OAuthClientMetadata, OAuthToken
 from pydantic import AnyUrl
 
-from ai_assist.mcp_oauth import MCPTokenStorage, register_oauth_client
+from ai_assist.mcp_oauth import (
+    ConfiguredOAuthClientProvider,
+    MCPTokenStorage,
+    normalize_root_issuer,
+    populate_missing_response_issuer,
+    register_oauth_client,
+    replace_authorization_endpoint,
+    store_pre_registered_client,
+)
 
 
 @pytest.mark.asyncio
@@ -63,3 +71,82 @@ async def test_registration_endpoint_persists_client_credentials(tmp_path, monke
     await register_oauth_client("https://auth.example.test/register", metadata, storage)
 
     assert (await storage.get_client_info()).client_secret == "client-secret"
+
+
+def test_explicit_authorization_endpoint_preserves_oauth_query_parameters():
+    result = replace_authorization_endpoint(
+        "https://wrong.example/authorize?client_id=client&state=state",
+        "https://www.tradingview.com/mcp/oauth/authorize",
+    )
+
+    assert result == "https://www.tradingview.com/mcp/oauth/authorize?client_id=client&state=state"
+
+
+def test_normalize_root_issuer_removes_only_a_trailing_root_slash():
+    assert normalize_root_issuer("https://accounts.google.com/") == "https://accounts.google.com"
+    assert normalize_root_issuer("https://example.test/oauth/") == "https://example.test/oauth/"
+
+
+def test_configured_provider_normalizes_opted_in_root_issuer(tmp_path):
+    provider = ConfiguredOAuthClientProvider(
+        "https://gmailmcp.googleapis.com/mcp/v1",
+        OAuthClientMetadata(redirect_uris=[AnyUrl("http://127.0.0.1:8765/callback")]),
+        MCPTokenStorage(tmp_path / "oauth.json"),
+        normalize_root_issuer=True,
+    )
+    provider.context.auth_server_url = "https://accounts.google.com/"
+
+    assert provider._expected_issuer() == "https://accounts.google.com"
+
+
+@pytest.mark.asyncio
+async def test_configured_provider_requests_json_token_response(tmp_path):
+    provider = ConfiguredOAuthClientProvider(
+        "https://mcp.example.test",
+        OAuthClientMetadata(redirect_uris=[AnyUrl("http://127.0.0.1:8765/callback")]),
+        MCPTokenStorage(tmp_path / "oauth.json"),
+    )
+    provider.context.client_info = OAuthClientInformationFull(
+        client_id="client-id",
+        client_secret="client-secret",
+        redirect_uris=["http://127.0.0.1:8765/callback"],
+        token_endpoint_auth_method="client_secret_post",
+    )
+
+    request = await provider._exchange_token_authorization_code("code", "verifier")
+
+    assert request.headers["Accept"] == "application/json"
+
+    provider.context.current_tokens = OAuthToken(access_token="access", refresh_token="refresh")
+    refresh_request = await provider._refresh_token()
+
+    assert refresh_request.headers["Accept"] == "application/json"
+
+
+def test_populate_missing_response_issuer_is_opt_in():
+    result = AuthorizationCodeResult(code="code", state="state")
+
+    assert populate_missing_response_issuer(result, "https://accounts.google.com", False).iss is None
+    assert (
+        populate_missing_response_issuer(result, "https://accounts.google.com", True).iss
+        == "https://accounts.google.com"
+    )
+
+
+@pytest.mark.asyncio
+async def test_pre_registered_client_is_saved_for_oauth_flow(tmp_path):
+    storage = MCPTokenStorage(tmp_path / "oauth.json")
+    metadata = OAuthClientMetadata(redirect_uris=[AnyUrl("http://127.0.0.1:8765/callback")])
+
+    await store_pre_registered_client(
+        storage,
+        metadata,
+        client_id="google-client-id",
+        client_secret="google-client-secret",
+        token_endpoint_auth_method="client_secret_post",
+    )
+
+    client = await storage.get_client_info()
+    assert client.client_id == "google-client-id"
+    assert client.client_secret == "google-client-secret"
+    assert client.token_endpoint_auth_method == "client_secret_post"

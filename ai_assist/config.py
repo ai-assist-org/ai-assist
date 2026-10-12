@@ -190,6 +190,14 @@ class MCPServerConfig(BaseModel):
     oauth: bool = False
     oauth_registration_endpoint: str | None = None
     oauth_callback_port: int = 8765
+    oauth_authorization_endpoint: str | None = None
+    oauth_token_endpoint: str | None = None
+    oauth_normalize_root_issuer: bool = False
+    oauth_assume_authorization_response_issuer: bool = False
+    oauth_client_id: str | None = None
+    oauth_client_secret: str | None = None
+    oauth_token_endpoint_auth_method: str = "client_secret_post"
+    oauth_scopes: list[str] = Field(default_factory=list)
     enabled: bool = True
     pagination: PaginationConfig | None = None
     readonly_tools: list[str] = Field(default_factory=list)
@@ -539,6 +547,20 @@ def load_mcp_servers_from_yaml(path: Path) -> dict[str, MCPServerConfig]:
                 oauth=config.get("oauth", False),
                 oauth_registration_endpoint=config.get("oauth_registration_endpoint"),
                 oauth_callback_port=config.get("oauth_callback_port", 8765),
+                oauth_authorization_endpoint=config.get("oauth_authorization_endpoint"),
+                oauth_token_endpoint=config.get("oauth_token_endpoint"),
+                oauth_normalize_root_issuer=config.get("oauth_normalize_root_issuer", False),
+                oauth_assume_authorization_response_issuer=config.get(
+                    "oauth_assume_authorization_response_issuer", False
+                ),
+                oauth_client_id=(
+                    os.path.expandvars(config["oauth_client_id"]) if config.get("oauth_client_id") else None
+                ),
+                oauth_client_secret=(
+                    os.path.expandvars(config["oauth_client_secret"]) if config.get("oauth_client_secret") else None
+                ),
+                oauth_token_endpoint_auth_method=config.get("oauth_token_endpoint_auth_method", "client_secret_post"),
+                oauth_scopes=config.get("oauth_scopes", []),
                 enabled=config.get("enabled", True),
                 pagination=pagination,
                 readonly_tools=config.get("readonly_tools", []),

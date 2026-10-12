@@ -103,6 +103,15 @@ class TestMCPServerConfigYaml:
     oauth: true
     oauth_registration_endpoint: https://www.tradingview.com/mcp/oauth/register
     oauth_callback_port: 8765
+    oauth_authorization_endpoint: https://www.tradingview.com/mcp/oauth/authorize
+    oauth_token_endpoint: https://www.tradingview.com/mcp/oauth/token
+    oauth_normalize_root_issuer: true
+    oauth_assume_authorization_response_issuer: true
+    oauth_client_id: ${TEST_CLIENT_ID}
+    oauth_client_secret: ${TEST_CLIENT_SECRET}
+    oauth_scopes:
+      - scope.read
+      - scope.write
 """)
 
         config = load_mcp_servers_from_yaml(path)["tradingview"]
@@ -110,3 +119,10 @@ class TestMCPServerConfigYaml:
         assert config.oauth is True
         assert config.oauth_registration_endpoint == "https://www.tradingview.com/mcp/oauth/register"
         assert config.oauth_callback_port == 8765
+        assert config.oauth_authorization_endpoint == "https://www.tradingview.com/mcp/oauth/authorize"
+        assert config.oauth_token_endpoint == "https://www.tradingview.com/mcp/oauth/token"
+        assert config.oauth_normalize_root_issuer is True
+        assert config.oauth_assume_authorization_response_issuer is True
+        assert config.oauth_client_id == "${TEST_CLIENT_ID}"
+        assert config.oauth_client_secret == "${TEST_CLIENT_SECRET}"
+        assert config.oauth_scopes == ["scope.read", "scope.write"]
