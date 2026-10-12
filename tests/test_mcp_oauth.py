@@ -2,6 +2,7 @@
 
 import stat
 
+import httpx2
 import pytest
 from mcp.shared.auth import AuthorizationCodeResult, OAuthClientInformationFull, OAuthClientMetadata, OAuthToken
 from pydantic import AnyUrl
@@ -9,6 +10,7 @@ from pydantic import AnyUrl
 from ai_assist.mcp_oauth import (
     ConfiguredOAuthClientProvider,
     MCPTokenStorage,
+    OAuthCallbackServer,
     normalize_root_issuer,
     populate_missing_response_issuer,
     register_oauth_client,
@@ -37,6 +39,33 @@ async def test_token_storage_returns_none_for_missing_values(tmp_path):
 
     assert await storage.get_tokens() is None
     assert await storage.get_client_info() is None
+
+
+@pytest.mark.asyncio
+async def test_oauth_callback_server_binds_only_when_authorization_starts(monkeypatch):
+    started: list[tuple[str, int]] = []
+
+    class Server:
+        def close(self):
+            pass
+
+        async def wait_closed(self):
+            pass
+
+    async def start_server(_handler, host, port):
+        started.append((host, port))
+        return Server()
+
+    monkeypatch.setattr("ai_assist.mcp_oauth.asyncio.start_server", start_server)
+    callback = OAuthCallbackServer(8765)
+
+    assert callback.redirect_uri == "http://127.0.0.1:8765/callback"
+    assert started == []
+
+    await callback.start()
+    assert started == [("127.0.0.1", 8765)]
+    assert callback._server is not None
+    await callback.close()
 
 
 @pytest.mark.asyncio
@@ -93,6 +122,7 @@ def test_configured_provider_normalizes_opted_in_root_issuer(tmp_path):
         OAuthClientMetadata(redirect_uris=[AnyUrl("http://127.0.0.1:8765/callback")]),
         MCPTokenStorage(tmp_path / "oauth.json"),
         normalize_root_issuer=True,
+        authorization_lock_path=tmp_path / "oauth.lock",
     )
     provider.context.auth_server_url = "https://accounts.google.com/"
 
@@ -105,6 +135,7 @@ async def test_configured_provider_requests_json_token_response(tmp_path):
         "https://mcp.example.test",
         OAuthClientMetadata(redirect_uris=[AnyUrl("http://127.0.0.1:8765/callback")]),
         MCPTokenStorage(tmp_path / "oauth.json"),
+        authorization_lock_path=tmp_path / "oauth.lock",
     )
     provider.context.client_info = OAuthClientInformationFull(
         client_id="client-id",
@@ -121,6 +152,33 @@ async def test_configured_provider_requests_json_token_response(tmp_path):
     refresh_request = await provider._refresh_token()
 
     assert refresh_request.headers["Accept"] == "application/json"
+
+
+@pytest.mark.asyncio
+async def test_configured_provider_forwards_responses_to_parent_auth_flow(tmp_path, monkeypatch):
+    received_responses = []
+
+    async def parent_auth_flow(_self, request):
+        response = yield request
+        received_responses.append(response)
+
+    monkeypatch.setattr("ai_assist.mcp_oauth.OAuthClientProvider._auth_flow", parent_auth_flow)
+    provider = ConfiguredOAuthClientProvider(
+        "https://mcp.example.test",
+        OAuthClientMetadata(redirect_uris=[AnyUrl("http://127.0.0.1:8765/callback")]),
+        MCPTokenStorage(tmp_path / "oauth.json"),
+        authorization_lock_path=tmp_path / "oauth.lock",
+    )
+    provider._initialized = True
+    provider.context.current_tokens = OAuthToken(access_token="access")
+    request = httpx2.Request("GET", "https://mcp.example.test")
+    response = httpx2.Response(200, request=request)
+    flow = provider._auth_flow(request)
+
+    assert await anext(flow) is request
+    with pytest.raises(StopAsyncIteration):
+        await flow.asend(response)
+    assert received_responses == [response]
 
 
 def test_populate_missing_response_issuer_is_opt_in():
