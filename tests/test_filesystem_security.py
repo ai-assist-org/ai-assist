@@ -32,6 +32,29 @@ def test_permission_mode_reads_environment(monkeypatch):
     assert AiAssistConfig(anthropic_api_key="test").permission_mode == "auto"
 
 
+def test_default_allowlist_includes_structured_data_and_text_tools():
+    allowed_commands = AiAssistConfig(anthropic_api_key="test").allowed_commands
+
+    assert {
+        "basename",
+        "column",
+        "cut",
+        "dirname",
+        "expand",
+        "fmt",
+        "fold",
+        "jq",
+        "nl",
+        "paste",
+        "rg",
+        "sha256sum",
+        "tr",
+        "unexpand",
+        "uniq",
+        "yq",
+    } <= set(allowed_commands)
+
+
 def test_autonomous_mode_requires_sandbox(monkeypatch):
     monkeypatch.delenv("AI_ASSIST_SANDBOX", raising=False)
     assert AiAssistConfig(anthropic_api_key="test", permission_mode="autonomous").permission_mode == "manual"
