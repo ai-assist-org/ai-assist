@@ -1,6 +1,7 @@
 """MCP Agent for ai-assist"""
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -10,7 +11,7 @@ import uuid
 from contextlib import aclosing, asynccontextmanager, suppress
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from anthropic import Anthropic, AnthropicVertex, APIConnectionError, APIError, BadRequestError, RateLimitError
 from anthropic.types import TextBlockParam
@@ -25,6 +26,7 @@ from .introspection_tools import IntrospectionTools
 from .jev_client import JevError, jev_configured, jev_decide, noul, noul_probability
 from .jev_tools import JevTools
 from .json_tools import JsonTools
+from .mcp_oauth import OAuthConnectionConfig, oauth_streamable_http_client
 from .mcp_stdio_fix import stdio_client_fixed
 from .mlflow_tracing import end_span, record_query_trace, setup_mlflow, start_query_span, start_tool_span
 from .output import console_print
@@ -748,12 +750,49 @@ class AiAssistAgent:
         )
         return stdio_client_fixed(server_params)
 
+    def _oauth_storage_path(self, server_url: str) -> Path:
+        """Return a stable private credential path without exposing a URL in its filename."""
+        from .config import get_config_dir
+
+        digest = hashlib.sha256(server_url.encode()).hexdigest()
+        return get_config_dir() / "mcp-oauth" / f"{digest}.json"
+
+    @asynccontextmanager
+    async def _connection_transport(self, config: MCPServerConfig):
+        """Open the selected transport, adding browser OAuth when configured."""
+        if config.transport == "streamablehttp" and config.oauth:
+            assert config.url is not None
+            from mcp.client.streamable_http import streamable_http_client
+
+            async with oauth_streamable_http_client(
+                config.url,
+                self._oauth_storage_path(config.url),
+                OAuthConnectionConfig(
+                    registration_endpoint=config.oauth_registration_endpoint,
+                    callback_port=config.oauth_callback_port,
+                    authorization_endpoint=config.oauth_authorization_endpoint,
+                    token_endpoint=config.oauth_token_endpoint,
+                    normalize_root_issuer=config.oauth_normalize_root_issuer,
+                    assume_authorization_response_issuer=config.oauth_assume_authorization_response_issuer,
+                    client_id=config.oauth_client_id,
+                    client_secret=config.oauth_client_secret,
+                    token_endpoint_auth_method=config.oauth_token_endpoint_auth_method,
+                    scopes=config.oauth_scopes,
+                ),
+            ) as client:
+                async with streamable_http_client(config.url, http_client=cast(Any, client)) as transport:
+                    yield transport
+        else:
+            async with self._transport(config) as transport:
+                yield transport
+
     async def _run_server(self, name: str, config: MCPServerConfig):
         """Run an MCP server connection with automatic retry on failure"""
         backoff = 5
         while True:
             try:
-                async with self._transport(config) as (read_stream, write_stream):
+                async with self._connection_transport(config) as transport:
+                    read_stream, write_stream = transport[:2]
                     async with ClientSession(read_stream, write_stream) as session:
                         try:
                             await asyncio.wait_for(session.initialize(), timeout=60.0)
