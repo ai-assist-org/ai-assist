@@ -50,7 +50,7 @@ async def stdio_client_fixed(server: StdioServerParameters, errlog: TextIO = sys
     write_stream, write_stream_reader = anyio.create_memory_object_stream(10)
 
     try:
-        command = _get_executable_command(server.command)
+        command = await _get_executable_command(server.command)
 
         process = await _create_platform_compatible_process(
             command=command,
