@@ -934,8 +934,11 @@ yourself instead of supporting dynamic client registration:
 | `oauth_assume_authorization_response_issuer` | Opt-in compatibility setting for a provider that advertises an issuer but omits the OAuth `iss` callback parameter. State and PKCE validation remain enabled. |
 
 Credentials and tokens are stored with private permissions under
-`<config-dir>/mcp-oauth/`. Restart ai-assist after changing an OAuth client ID
-or secret so it reconnects and starts the appropriate authorization flow.
+`<config-dir>/mcp-oauth/`. When interactive and monitor sessions share a
+configuration directory, their authorization flows for the same server are
+serialized: the first session opens the browser and the others reuse its saved
+token. Restart ai-assist after changing an OAuth client ID or secret so it
+reconnects and starts the appropriate authorization flow.
 
 ##### GitHub remote MCP
 
@@ -984,7 +987,7 @@ and the [Developer Preview enrollment instructions](https://developers.google.co
 | `redirect_uri_mismatch` | Register the exact `127.0.0.1`, port, and `/callback` path used by `oauth_callback_port`. |
 | `invalid_client` during token exchange | Replace both client ID and secret from the same OAuth App registration; quote secrets in `.env`. |
 | `Invalid token response` containing `access_token=...` | Update ai-assist. GitHub can default to a form-encoded token response; ai-assist requests JSON for token exchange and refresh. |
-| `State parameter mismatch` | Close old authorization browser tabs, restart ai-assist, and complete only the newly printed authorization URL. Do not authorize the same server concurrently from multiple ai-assist instances. |
+| `State parameter mismatch` | Close old authorization browser tabs, restart ai-assist, and complete only the newly printed authorization URL. |
 | `Authorization response missing iss parameter` | For providers known to omit it, enable `oauth_assume_authorization_response_issuer: true`. |
 | Service says its MCP API is disabled | Enable the API in the project that owns the OAuth client, not merely the project selected in a `gcloud` configuration. |
 | Google reports that the project is not enrolled | Enroll that Cloud project in Google Workspace Developer Preview; this cannot be bypassed through ai-assist configuration. |

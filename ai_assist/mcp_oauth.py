@@ -1,6 +1,7 @@
 """OAuth helpers for remote MCP servers."""
 
 import asyncio
+import fcntl
 import json
 import logging
 import os
@@ -10,7 +11,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
+from typing import IO, cast
 from urllib.parse import parse_qs, urlparse, urlunparse
 
 import httpx2
@@ -37,6 +38,36 @@ class OAuthConnectionConfig:
     scopes: list[str] | None = None
     normalize_root_issuer: bool = False
     assume_authorization_response_issuer: bool = False
+
+
+class OAuthFlowLock:
+    """Serialize one remote server's OAuth flow across local ai-assist processes."""
+
+    def __init__(self, path: Path):
+        self.path = path
+        self._file: IO[str] | None = None
+
+    async def __aenter__(self) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self._file = await asyncio.to_thread(open, self.path, "a+")
+        try:
+            while True:
+                try:
+                    await asyncio.to_thread(fcntl.flock, self._file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    return
+                except BlockingIOError:
+                    await asyncio.sleep(0.1)
+        except BaseException:
+            await asyncio.to_thread(self._file.close)
+            self._file = None
+            raise
+
+    async def __aexit__(self, *_exc_info) -> None:
+        file = self._file
+        assert file is not None
+        await asyncio.to_thread(fcntl.flock, file.fileno(), fcntl.LOCK_UN)
+        await asyncio.to_thread(file.close)
+        self._file = None
 
 
 class MCPTokenStorage:
@@ -91,18 +122,26 @@ class OAuthCallbackServer:
         self.port = port
         self._result: asyncio.Future[tuple[str, str | None]] | None = None
         self._server: asyncio.AbstractServer | None = None
-        self.redirect_uri = ""
+        self.redirect_uri = f"http://127.0.0.1:{self.port}/callback"
 
     async def __aenter__(self) -> OAuthCallbackServer:
-        self._result = asyncio.get_running_loop().create_future()
-        self._server = await asyncio.start_server(self._handle_request, "127.0.0.1", self.port)
-        self.redirect_uri = f"http://127.0.0.1:{self.port}/callback"
+        await self.start()
         return self
 
     async def __aexit__(self, *_exc_info) -> None:
+        await self.close()
+
+    async def start(self) -> None:
+        if self._server:
+            return
+        self._result = asyncio.get_running_loop().create_future()
+        self._server = await asyncio.start_server(self._handle_request, "127.0.0.1", self.port)
+
+    async def close(self) -> None:
         if self._server:
             self._server.close()
             await self._server.wait_closed()
+            self._server = None
 
     async def _handle_request(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         try:
@@ -171,10 +210,18 @@ def populate_missing_response_issuer(
 class ConfiguredOAuthClientProvider(OAuthClientProvider):
     """OAuth provider with compatibility for imperfect discovery and token metadata."""
 
-    def __init__(self, *args, token_endpoint: str | None = None, normalize_root_issuer: bool = False, **kwargs):
+    def __init__(
+        self,
+        *args,
+        token_endpoint: str | None = None,
+        normalize_root_issuer: bool = False,
+        authorization_lock_path: Path,
+        **kwargs,
+    ):
         super().__init__(*args, **kwargs)
         self._configured_token_endpoint = token_endpoint
         self._normalize_root_issuer = normalize_root_issuer
+        self._authorization_lock_path = authorization_lock_path
 
     def _get_token_endpoint(self) -> str:
         return self._configured_token_endpoint or super()._get_token_endpoint()
@@ -192,6 +239,32 @@ class ConfiguredOAuthClientProvider(OAuthClientProvider):
         request = await super()._refresh_token()
         request.headers["Accept"] = "application/json"
         return request
+
+    @asynccontextmanager
+    async def _authorization_lock_if_needed(self) -> AsyncIterator[None]:
+        if not self._initialized:
+            await self._initialize()
+        if self.context.is_token_valid():
+            yield
+        else:
+            async with OAuthFlowLock(self._authorization_lock_path):
+                self._initialized = False
+                await self._initialize()
+                yield
+
+    async def _auth_flow(self, request):
+        """Relay the parent auth generator while retaining its response values."""
+        async with self._authorization_lock_if_needed():
+            flow = super()._auth_flow(request)
+            try:
+                outgoing = await anext(flow)
+                while True:
+                    response = yield outgoing
+                    outgoing = await flow.asend(response)
+            except StopAsyncIteration:
+                return
+            finally:
+                await flow.aclose()
 
 
 async def register_oauth_client(endpoint: str, metadata: OAuthClientMetadata, storage: MCPTokenStorage) -> None:
@@ -250,32 +323,39 @@ async def oauth_streamable_http_client(
     config: OAuthConnectionConfig = OAuthConnectionConfig(),
 ) -> AsyncIterator[httpx2.AsyncClient]:
     """Build an OAuth-authenticated HTTP client for an MCP streamable HTTP connection."""
-    async with OAuthCallbackServer(config.callback_port) as callback:
-        storage = MCPTokenStorage(storage_path)
+    callback = OAuthCallbackServer(config.callback_port)
+    storage = MCPTokenStorage(storage_path)
+    authorization_lock_path = storage_path.with_suffix(".lock")
+    try:
         metadata = OAuthClientMetadata(
             redirect_uris=[AnyUrl(callback.redirect_uri)],
             client_name="ai-assist",
             scope=" ".join(config.scopes) if config.scopes else None,
         )
-        if config.client_id:
-            await store_pre_registered_client(
-                storage,
-                metadata,
-                config.client_id,
-                config.client_secret,
-                config.token_endpoint_auth_method,
-            )
-        elif config.registration_endpoint:
-            await register_oauth_client(config.registration_endpoint, metadata, storage)
+        async with OAuthFlowLock(authorization_lock_path):
+            if config.client_id:
+                await store_pre_registered_client(
+                    storage,
+                    metadata,
+                    config.client_id,
+                    config.client_secret,
+                    config.token_endpoint_auth_method,
+                )
+            elif config.registration_endpoint:
+                await register_oauth_client(config.registration_endpoint, metadata, storage)
 
         async def redirect(authorization_url: str) -> None:
+            await callback.start()
             await callback.redirect(replace_authorization_endpoint(authorization_url, config.authorization_endpoint))
 
         async def callback_handler() -> AuthorizationCodeResult:
-            result = await callback.callback()
-            metadata = provider.context.oauth_metadata
-            issuer = str(metadata.issuer) if metadata else None
-            return populate_missing_response_issuer(result, issuer, config.assume_authorization_response_issuer)
+            try:
+                result = await callback.callback()
+                metadata = provider.context.oauth_metadata
+                issuer = str(metadata.issuer) if metadata else None
+                return populate_missing_response_issuer(result, issuer, config.assume_authorization_response_issuer)
+            finally:
+                await callback.close()
 
         provider = ConfiguredOAuthClientProvider(
             server_url,
@@ -285,6 +365,9 @@ async def oauth_streamable_http_client(
             callback_handler=callback_handler,
             token_endpoint=config.token_endpoint,
             normalize_root_issuer=config.normalize_root_issuer,
+            authorization_lock_path=authorization_lock_path,
         )
         async with httpx2.AsyncClient(auth=cast(httpx2.Auth, provider)) as client:
             yield client
+    finally:
+        await callback.close()
