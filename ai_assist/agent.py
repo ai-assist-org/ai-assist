@@ -1602,6 +1602,14 @@ class AiAssistAgent:
                     event = next_event.result()
                 except StopAsyncIteration:
                     return
+                finally:
+                    # If our caller is cancelled while polling, anext(stream) is
+                    # still driving the inner async generator.  Finish that task
+                    # before aclosing() attempts to close the generator.
+                    if not next_event.done():
+                        next_event.cancel()
+                        with suppress(asyncio.CancelledError):
+                            await next_event
                 yield event
 
     @asynccontextmanager

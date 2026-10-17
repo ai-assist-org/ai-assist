@@ -75,6 +75,32 @@ async def test_auto_mode_allows_git_status_without_callback(tmp_path, monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_auto_mode_allows_sleep_without_callback(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    config = AiAssistConfig(anthropic_api_key="test", permission_mode="auto", allowed_paths=[str(tmp_path)])
+    tools = FilesystemTools(config, load_user_config=False)
+
+    result = await tools.execute_tool("execute_command", {"command": "sleep 0 && echo done"})
+
+    assert "done" in result
+    assert "not allowed" not in result.lower()
+
+
+def test_auto_mode_allows_read_only_date_and_sqlite_queries(tmp_path):
+    config = AiAssistConfig(anthropic_api_key="test", permission_mode="auto", allowed_paths=[str(tmp_path)])
+    tools = FilesystemTools(config, load_user_config=False)
+
+    assert tools._is_auto_command_safe('date -u +"%Y-%m-%d %H:%M:%S UTC"')
+    assert tools._is_auto_command_safe('sqlite3 -header -column measurements.db "SELECT COUNT(*) FROM measurements"')
+    assert tools._is_auto_command_safe(
+        'sqlite3 measurements.db "WITH m AS (SELECT * FROM measurements) SELECT * FROM m"'
+    )
+    assert not tools._is_auto_command_safe('date -s "2026-01-01"')
+    assert not tools._is_auto_command_safe('sqlite3 measurements.db "DELETE FROM measurements"')
+    assert not tools._is_auto_command_safe('sqlite3 measurements.db ".shell id"')
+
+
+@pytest.mark.asyncio
 async def test_auto_mode_still_prompts_for_git_push(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     config = AiAssistConfig(anthropic_api_key="test", permission_mode="auto", allowed_paths=[str(tmp_path)])
