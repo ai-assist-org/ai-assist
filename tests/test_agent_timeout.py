@@ -237,3 +237,23 @@ async def test_execute_mcp_prompt_explicit_timeout_overrides_deadline(agent):
         await agent.execute_mcp_prompt("test", "my_prompt", max_time_seconds=42)
 
     assert captured_timeout == 42
+
+
+@pytest.mark.asyncio
+async def test_query_cancellation_waits_for_pending_stream_event(agent, monkeypatch):
+    """Cancelling a query must not close its inner generator while anext() runs."""
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def blocked_inner(*args, **kwargs):
+        started.set()
+        await release.wait()
+        yield "unreachable"
+
+    monkeypatch.setattr(agent, "_query_streaming_inner", blocked_inner)
+    task = asyncio.create_task(agent.query("test"))
+    await started.wait()
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task

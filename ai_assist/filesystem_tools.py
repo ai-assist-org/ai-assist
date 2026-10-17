@@ -1294,6 +1294,14 @@ class FilesystemTools:
 
     def _is_auto_known_command_safe(self, name: str, args: list[str]) -> bool:
         """Classify non-allowlisted command families supported by auto mode."""
+        if name == "sleep":
+            # It has no side effects beyond consuming time; non-interactive
+            # command execution is already capped at five minutes.
+            return True
+        if name == "date":
+            return self._is_auto_date_safe(args)
+        if name == "sqlite3":
+            return self._is_auto_sqlite_read_safe(args)
         if name == "git":
             return self._is_auto_git_safe(args)
         if name == "gh":
@@ -1306,6 +1314,43 @@ class FilesystemTools:
             name in {"python", "python3"}
             and args[:2] == ["-m", "pytest"]
             and not self._has_outside_workspace_path(args[2:])
+        )
+
+    @staticmethod
+    def _is_auto_date_safe(args: list[str]) -> bool:
+        """Allow date display formats, never clock-setting forms."""
+        index = 0
+        while index < len(args):
+            arg = args[index]
+            if arg in {"-u", "--utc"} or arg.startswith(("+", "-I", "--iso-8601")):
+                index += 1
+                continue
+            if arg in {"-d", "--date"}:
+                index += 2
+                continue
+            if arg.startswith("--date="):
+                index += 1
+                continue
+            return False
+        return index == len(args)
+
+    @staticmethod
+    def _is_auto_sqlite_read_safe(args: list[str]) -> bool:
+        """Allow a single read-only SQLite query with display-only options."""
+        display_options = {"-header", "-noheader", "-column", "-csv", "-json", "-line", "-list", "-tabs"}
+        index = 0
+        while index < len(args) and args[index] in display_options:
+            index += 1
+        if len(args) - index != 2:
+            return False
+
+        query = args[index + 1].strip()
+        if ";" in query or not re.match(r"(?:select\b|with\b|explain\s+select\b)", query, re.IGNORECASE):
+            return False
+        return not re.search(
+            r"\b(?:alter|attach|create|delete|detach|drop|insert|load_extension|pragma|replace|update|vacuum)\b",
+            query,
+            re.IGNORECASE,
         )
 
     def _is_auto_git_safe(self, args: list[str]) -> bool:
