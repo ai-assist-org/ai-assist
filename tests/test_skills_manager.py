@@ -40,6 +40,21 @@ def test_install_local_skill(skills_manager):
     assert skill.branch == "main"
 
 
+def test_install_local_skill_relative_path(skills_manager, monkeypatch):
+    """A './relative/path' is treated as local and cached as an absolute path."""
+    monkeypatch.chdir("/tmp")
+    result = skills_manager.install_skill("./test-skills/hello@main")
+
+    assert "installed successfully" in result
+    skill = skills_manager.installed_skills[0]
+    assert skill.source_type == "local"
+    # Both cache_path and the recorded source must be absolute so they stay valid
+    # from any cwd later (the displayed Source should not be the relative spec).
+    assert Path(skill.cache_path).is_absolute()
+    assert Path(skill.cache_path) == Path("/tmp/test-skills/hello").resolve()
+    assert skill.source == str(Path("/tmp/test-skills/hello").resolve())
+
+
 def test_uninstall_skill(skills_manager):
     """Test uninstalling a skill"""
     # Install first

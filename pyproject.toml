@@ -17,6 +17,9 @@ dependencies = [
     "rich>=15.0.0",
     "fastembed>=0.9.0",
     "sqlite-vec>=0.1.9",
+    "markdownify>=0.13.1",
+    "ddgs>=9.0.0",
+    "trafilatura>=2.0.0",
 ]
 
 [project.optional-dependencies]
