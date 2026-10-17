@@ -328,6 +328,41 @@ class AiAssistConfig(BaseModel):
         default_factory=lambda: os.getenv("AI_ASSIST_JEV_VERIFY_NARRATION", "false").lower() == "true",
     )
 
+    # Web tools (search + fetch). web_fetch works keyless via a built-in HTTP
+    # provider; web_search needs a configured search provider (Tavily). The
+    # TAVILY_API_KEY env name matches the Tavily CLI so a single key serves both.
+    tavily_api_key: str | None = Field(default_factory=lambda: os.getenv("TAVILY_API_KEY"))
+    # Additional keyed search providers (all optional). Set any to enable it.
+    brave_api_key: str | None = Field(default_factory=lambda: os.getenv("BRAVE_API_KEY"))
+    exa_api_key: str | None = Field(default_factory=lambda: os.getenv("EXA_API_KEY"))
+    perplexity_api_key: str | None = Field(default_factory=lambda: os.getenv("PERPLEXITY_API_KEY"))
+    # Keyed fetch provider for JS-rendered / anti-bot pages (403 on plain HTTP).
+    firecrawl_api_key: str | None = Field(default_factory=lambda: os.getenv("FIRECRAWL_API_KEY"))
+    # Optional self-hosted/public SearXNG instance for keyless search (e.g.
+    # https://searx.example.org). Preferred over DuckDuckGo when set.
+    web_searxng_url: str | None = Field(default_factory=lambda: os.getenv("AI_ASSIST_SEARXNG_URL"))
+    # Provider selection. "auto" picks the first configured provider in priority
+    # order; set to a provider id (tavily, brave, exa, perplexity, searxng,
+    # duckduckgo / firecrawl, tavily, http) to force that one.
+    web_search_provider: str = Field(
+        default_factory=lambda: os.getenv("AI_ASSIST_WEB_SEARCH_PROVIDER", "auto"),
+    )
+    web_fetch_provider: str = Field(
+        default_factory=lambda: os.getenv("AI_ASSIST_WEB_FETCH_PROVIDER", "auto"),
+    )
+    web_search_enabled: bool = Field(
+        default_factory=lambda: os.getenv("AI_ASSIST_WEB_SEARCH_ENABLED", "true").lower() == "true",
+    )
+    web_fetch_enabled: bool = Field(
+        default_factory=lambda: os.getenv("AI_ASSIST_WEB_FETCH_ENABLED", "true").lower() == "true",
+    )
+    web_fetch_max_chars: int = Field(
+        default_factory=lambda: int(os.getenv("AI_ASSIST_WEB_FETCH_MAX_CHARS", "20000")),
+    )
+    web_timeout_seconds: int = Field(
+        default_factory=lambda: int(os.getenv("AI_ASSIST_WEB_TIMEOUT_SECONDS", "30")),
+    )
+
     @property
     def use_custom_endpoint(self) -> bool:
         """Check if a custom Anthropic-compatible endpoint is configured"""
@@ -518,6 +553,18 @@ class AiAssistConfig(BaseModel):
             jev_verify_tasks=os.getenv("AI_ASSIST_JEV_VERIFY_TASKS", "false").lower() == "true",
             jev_rerank=os.getenv("AI_ASSIST_JEV_RERANK", "false").lower() == "true",
             jev_verify_narration=os.getenv("AI_ASSIST_JEV_VERIFY_NARRATION", "false").lower() == "true",
+            tavily_api_key=os.getenv("TAVILY_API_KEY"),
+            brave_api_key=os.getenv("BRAVE_API_KEY"),
+            exa_api_key=os.getenv("EXA_API_KEY"),
+            perplexity_api_key=os.getenv("PERPLEXITY_API_KEY"),
+            firecrawl_api_key=os.getenv("FIRECRAWL_API_KEY"),
+            web_searxng_url=os.getenv("AI_ASSIST_SEARXNG_URL"),
+            web_search_provider=os.getenv("AI_ASSIST_WEB_SEARCH_PROVIDER", "auto"),
+            web_fetch_provider=os.getenv("AI_ASSIST_WEB_FETCH_PROVIDER", "auto"),
+            web_search_enabled=os.getenv("AI_ASSIST_WEB_SEARCH_ENABLED", "true").lower() == "true",
+            web_fetch_enabled=os.getenv("AI_ASSIST_WEB_FETCH_ENABLED", "true").lower() == "true",
+            web_fetch_max_chars=int(os.getenv("AI_ASSIST_WEB_FETCH_MAX_CHARS", "20000")),
+            web_timeout_seconds=int(os.getenv("AI_ASSIST_WEB_TIMEOUT_SECONDS", "30")),
             mcp_servers=mcp_servers,
         )
 

@@ -86,7 +86,7 @@ class SkillsManager:
                         - Git: 'owner/repo/path/to/skill@branch'
                         - Git (top-level): 'owner/repo@branch'
                         - Git URL: 'https://github.com/owner/repo@branch'
-                        - Local: '/absolute/path/to/skill@branch'
+                        - Local: '/absolute/path/to/skill', '~/path', or './relative/path'
 
         Returns:
             Success message or error
@@ -127,13 +127,22 @@ class SkillsManager:
 
                 return f"Skill '{skill_name}' installed successfully"
 
-            # Determine source type
+            # Determine source type. An absolute path, a '~' path, or an explicit
+            # relative path ('./', '../') is a local filesystem skill; a bare
+            # 'owner/repo[/path]' is a git source. Explicit-relative paths are
+            # resolved to an absolute path so the cached location is cwd-independent.
             source_path = Path(source).expanduser()
-            if source_path.is_absolute() and source_path.exists():
+            is_explicit_local = source.startswith(("./", "../")) or source in (".", "..")
+            if source_path.is_absolute() or is_explicit_local:
+                # Always store a fully-resolved absolute path so the skill still
+                # loads if the agent is later started from a different directory.
+                source_path = source_path.resolve()
+            if (source_path.is_absolute() or is_explicit_local) and source_path.exists():
                 # Local path
                 source_type = "local"
                 content = self.skills_loader.load_skill_from_local(source_path)
-                cache_path = str(source_path)  # Use original path as cache
+                cache_path = str(source_path)  # Absolute path, usable from any cwd later
+                source = cache_path  # Record the absolute path, not the cwd-relative spec
             else:
                 # Git repository
                 source_type = "git"

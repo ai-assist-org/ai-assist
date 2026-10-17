@@ -235,7 +235,7 @@ Install specialized skills following the [agentskills.io](https://agentskills.io
 ```bash
 # In interactive mode
 /skill/install anthropics/skills/skills/pdf@main     # Install PDF skill from GitHub
-/skill/install /path/to/my-skill@main                # Install local skill
+/skill/install /path/to/my-skill@main                # Install local skill (absolute, ~, or ./relative path)
 /skill/list                                          # List installed skills
 /skill/uninstall pdf                                 # Uninstall skill
 /skill/search pdf                                    # Search ClawHub and skills.sh
@@ -840,6 +840,26 @@ Actions stored in `~/.ai-assist/event-event-schedules.json` with hot-reload supp
 **JSON Processing** (requires `jq` installed):
 - `json_query` - Query or transform JSON files using jq filter expressions
 - `__jq_filter` parameter - Apply a jq filter inline on any tool call (no file needed)
+
+**Web Tools:**
+- `web_fetch` - Fetch an http(s) URL and return the readable article as markdown/text. Keyless; pass `__save_to_file` to keep large pages in full
+- `web_search` - Search the web for ranked results (and a synthesized answer when the provider supports it). Works keyless via DuckDuckGo
+
+Both tools use a **pluggable provider** system, auto-selected by which keys are configured (or forced via `AI_ASSIST_WEB_SEARCH_PROVIDER` / `AI_ASSIST_WEB_FETCH_PROVIDER`):
+
+| | Keyless | Keyed (set the env var to enable) |
+|---|---|---|
+| **Search** (priority order) | SearXNG (`AI_ASSIST_SEARXNG_URL`), DuckDuckGo | Tavily (`TAVILY_API_KEY`), Brave (`BRAVE_API_KEY`), Exa (`EXA_API_KEY`), Perplexity (`PERPLEXITY_API_KEY`) |
+| **Fetch** (auto: HTTP → Firecrawl → Tavily) | HTTP (trafilatura extraction, markdownify fallback) | Firecrawl (`FIRECRAWL_API_KEY`, for JS/anti-bot pages), Tavily extract |
+
+Search priority: Tavily > Brave > Exa > Perplexity > SearXNG > DuckDuckGo. Fetch is cost-aware — free HTTP is tried first, and keyed providers escalate only for pages HTTP can't retrieve (e.g. 403 from anti-bot protection). See `.env.example` for all variables.
+
+**Web research skill:** the repo ships a `web-research` Agent Skill that turns a question into a cited, multi-source report. It runs the search → read → synthesize loop in a **background task** (so fetched pages stay out of your conversation) and saves the result as a report. Install and use it with:
+
+```bash
+/skill/install ./skills/web-research@main    # from the repo root
+/web-research "compare Postgres vs MySQL for time-series workloads"
+```
 
 **Filesystem Tools:**
 - `read_file` - Read files with line-range support

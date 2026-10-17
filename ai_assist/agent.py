@@ -45,6 +45,7 @@ from .tool_result_router import (
     _extract_data_items,  # noqa: F401  (re-exported for tests)
     _resolve_dotpath,  # noqa: F401  (re-exported for tests)
 )
+from .web_tools import WebTools
 
 if TYPE_CHECKING:
     from .context import ConversationMemory
@@ -73,7 +74,7 @@ _CONTENT_BLOCK_KEYS = {
 
 # Internal tools (besides MCP tools) allowed to use __save_to_file. Mirrors the
 # "selected internal tools" wording in system_prompt_builder.py.
-_SAVE_TO_FILE_ALLOWED_INTERNAL = {"internal__execute_command", "internal__json_query"}
+_SAVE_TO_FILE_ALLOWED_INTERNAL = {"internal__execute_command", "internal__json_query", "internal__web_fetch"}
 
 # JSON schema fragments for the special redirection/filtering parameters
 # documented in system_prompt_builder.py. These are popped from `arguments` in
@@ -382,6 +383,9 @@ class AiAssistAgent:
         # Initialize jev decision tool (only offered when jev is configured)
         self.jev_tools = JevTools(config)
 
+        # Initialize web tools (web_search needs a provider; web_fetch is keyless)
+        self.web_tools = WebTools(config)
+
         self.anthropic: Anthropic | AnthropicVertex
         if config.use_custom_endpoint:
             console_print(f"Using custom endpoint: {config.anthropic_base_url}")
@@ -658,6 +662,12 @@ class AiAssistAgent:
             jev_tool_defs = self.jev_tools.get_tool_definitions()
             self.available_tools.extend(jev_tool_defs)
             console_print(f"✓ Added {len(jev_tool_defs)} jev decision tools (decide/choose/score)")
+
+        # Add web tools (web_fetch keyless; web_search only when a provider is configured)
+        web_tool_defs = self.web_tools.get_tool_definitions()
+        if web_tool_defs:
+            self.available_tools.extend(web_tool_defs)
+            console_print(f"✓ Added {len(web_tool_defs)} web tools (search/fetch)")
 
         # Load installed skills
         self.skills_manager.load_installed_skills()
@@ -2567,6 +2577,7 @@ class AiAssistAgent:
                 think_tools = ["think"]
                 json_tool_names = ["json_query"]
                 jev_tool_names = ["jev_decide", "jev_choose", "jev_score"]
+                web_tool_names = ["web_search", "web_fetch"]
                 schedule_action_tools = ["schedule_action"]
                 action_tools = [
                     "create_action",
@@ -2612,6 +2623,8 @@ class AiAssistAgent:
                     result_text = await self.json_tools.execute_tool(original_tool_name, arguments)
                 elif original_tool_name in jev_tool_names:
                     result_text = await self.jev_tools.execute_tool(original_tool_name, arguments)
+                elif original_tool_name in web_tool_names:
+                    result_text = await self.web_tools.execute_tool(original_tool_name, arguments)
                 elif original_tool_name in schedule_action_tools:
                     result_text = await self.schedule_action_tools.execute_tool(
                         f"internal__{original_tool_name}", arguments
