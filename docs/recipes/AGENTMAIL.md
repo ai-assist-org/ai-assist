@@ -5,9 +5,7 @@ inbound webhook endpoint. A local AgentMail MCP server holds an outbound
 connection to AgentMail, emits an MCP event, and ai-assist runs an action in
 response.
 
-This recipe uses the event bridge in the [AgentMail MCP pull request
-#91](https://github.com/agentmail-to/agentmail-mcp/pull/91). Use a local checkout
-that includes that change.
+This recipe uses the event bridge in the [AgentMail MCP pull request #91](https://github.com/agentmail-to/agentmail-mcp/pull/91). Use a local checkout that includes that change.
 
 ## How it works
 

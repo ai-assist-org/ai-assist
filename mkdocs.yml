@@ -81,5 +81,6 @@ nav:
       - Logging: LOGGING.md
   - Recipes:
       - AgentMail: recipes/AGENTMAIL.md
+      - Telegram: recipes/TELEGRAM.md
   - Reference:
       - AWL Specifications: AWL_SPECIFICATIONS.md
