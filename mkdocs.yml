@@ -79,5 +79,7 @@ nav:
       - Multi-Instance: MULTI_INSTANCE.md
       - Identity: IDENTITY.md
       - Logging: LOGGING.md
+  - Recipes:
+      - AgentMail: recipes/AGENTMAIL.md
   - Reference:
       - AWL Specifications: AWL_SPECIFICATIONS.md

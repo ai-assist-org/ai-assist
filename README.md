@@ -26,6 +26,7 @@ Works with skills like:
 - 🔌 **MCP Integration**: Connect to any MCP server for tools and data
 - 📊 **Monitoring**: Automated scheduled checks with smart notifications
 - ⏰ **Scheduled Actions**: One-shot future actions with notifications
+- ⚡ **Event Reactions**: Run actions for MQTT, D-Bus, filesystem, and MCP server events
 - 💬 **Interactive Mode**: Rich TUI with streaming responses and history
 - **Consistent execution**: Interactive queries, background tasks, and workflows share one streaming engine
 - 🧠 **Knowledge Graph**: Temporal database tracking entities and changes
@@ -500,29 +501,43 @@ React to external events via MQTT, D-Bus, filesystem changes, or a local MCP eve
 
 File triggers support exact paths (`/etc/app/config.json`), directories (`~/Downloads` — any file change), and glob patterns (`~/Downloads/*.pdf`).
 
-**Example: local MCP event bridge**
+**Example: react to an event from a local MCP server**
+
+This is useful when a provider exposes its own event stream, but ai-assist is
+behind a firewall. Run an MCP server locally that keeps an outbound connection
+to the provider and translates provider events into MCP event notifications.
+No inbound webhook or public ai-assist endpoint is needed.
+
+The trigger is generic: `server` is the configured MCP server name and `event`
+is the event name it exposes. `arguments` is optional and can be used by a
+bridge that supports server-side filtering.
 
 ```json
 {
   "event_sources": { "mcp": {} },
   "actions": [
     {
-      "name": "New AgentMail email",
+      "name": "New provider event",
       "trigger": {
         "type": "mcp",
-        "server": "agentmail",
-        "event": "message.received",
-        "arguments": { "inboxId": "agent@example.com" }
+        "server": "provider",
+        "event": "resource.changed",
+        "arguments": {}
       },
       "prompt": "Fetch the referenced email, summarize it, and identify any action needed.",
       "notify": true,
-      "notification_channels": ["desktop", "console"]
+      "notification_channels": ["desktop", "console", "file"]
     }
   ]
 }
 ```
 
-The bridge subscribes over an outbound connection and sends only event, inbox, and message IDs to ai-assist; the action fetches message contents through its normal MCP tools.
+Include `file` when the result should appear in an interactive ai-assist
+session: it is the shared notification channel used by `/monitor` and the TUI.
+
+The bridge should send only identifiers and event metadata; the action fetches
+contents through ordinary MCP tools. See the Recipes section of the website for
+provider-specific setup guides.
 
 **Trigger types**: `interval`, `schedule`, `interval_range`, `once`, `mqtt`, `dbus`, `file`, `mcp`
 
