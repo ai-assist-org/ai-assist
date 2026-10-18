@@ -16,7 +16,9 @@ from typing import TYPE_CHECKING, Any
 from mcp import types
 from pydantic import BaseModel, ConfigDict, Field
 
+from .config import MCPChannelConfig
 from .event_sources import EventContext, EventSource
+from .mcp_channel import MCPChannelEnvelope, get_reply_value
 
 if TYPE_CHECKING:
     from .agent import AiAssistAgent
@@ -75,6 +77,7 @@ class MCPEventSource(EventSource):
         self._dispatch = dispatch
         self._running = True
         self.agent.add_mcp_event_listener(self._on_notification)
+        self.agent.add_mcp_channel_listener(self._on_channel_notification)
         self.agent.add_mcp_server_listener(self._on_server_connected)
         for server in tuple(self.agent.sessions):
             await self._subscribe_server(server)
@@ -82,6 +85,7 @@ class MCPEventSource(EventSource):
     async def stop(self) -> None:
         self._running = False
         self.agent.remove_mcp_event_listener(self._on_notification)
+        self.agent.remove_mcp_channel_listener(self._on_channel_notification)
         self.agent.remove_mcp_server_listener(self._on_server_connected)
         for entry in tuple(self._subscriptions.values()):
             await self._request(entry["server"], "events/unsubscribe", entry, quiet=True)
@@ -142,4 +146,32 @@ class MCPEventSource(EventSource):
             timestamp=envelope.timestamp,
         )
         # The ActionScheduler owns the matching and therefore needs each event once.
+        await self._dispatch("mcp", event)
+
+    async def _on_channel_notification(
+        self,
+        server: str,
+        config: MCPChannelConfig,
+        message: MCPChannelEnvelope,
+    ) -> None:
+        """Expose configured channel messages through the normal MCP event path."""
+        if not self._running or self._dispatch is None:
+            return
+        reply_value = get_reply_value(server, config, message)
+        if not reply_value:
+            return
+        data = {
+            "content": message.content,
+            "meta": message.meta,
+            "reply_tool": f"{server}__{config.reply_tool}",
+            "reply_metadata_field": config.reply_metadata_field,
+            "reply_value": reply_value,
+        }
+        event = EventContext(
+            source_type="mcp",
+            event_type="channel.message",
+            payload=message.content,
+            metadata={"server": server, "data": data, **data},
+            timestamp=datetime.now().astimezone(),
+        )
         await self._dispatch("mcp", event)

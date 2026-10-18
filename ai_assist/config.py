@@ -5,10 +5,11 @@ import logging.handlers
 import os
 import stat
 from pathlib import Path
+from typing import Literal
 
 import yaml
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 _project_env = Path(__file__).parent.parent / ".env"
 if _project_env.exists():
@@ -185,6 +186,39 @@ class MCPChannelConfig(BaseModel):
     reply_metadata_field: str = "chat_id"
 
 
+MCPRuntimeMode = Literal["interactive", "monitor", "query", "run"]
+
+
+def _all_mcp_runtime_modes() -> set[MCPRuntimeMode]:
+    return {"interactive", "monitor", "query", "run"}
+
+
+class MCPScopeConfig(BaseModel):
+    """Restrict which ai-assist processes may connect to an MCP server."""
+
+    modes: set[MCPRuntimeMode] = Field(default_factory=_all_mcp_runtime_modes)
+    interactive_sessions: set[str] = Field(default_factory=set)
+    exclusive: bool = False
+
+    @field_validator("interactive_sessions")
+    @classmethod
+    def validate_interactive_sessions(cls, sessions: set[str]) -> set[str]:
+        for session in sessions:
+            if not session or not all(char.isalnum() or char in "_-" for char in session):
+                raise ValueError("interactive session names may contain only letters, digits, '_' and '-'")
+        return sessions
+
+    def skip_reason(self, mode: str, session_name: str | None) -> str | None:
+        """Return why this scope excludes a runtime, or ``None`` when it permits it."""
+        if mode not in self.modes:
+            return f"mode '{mode}' is not allowed"
+        if mode == "interactive" and self.interactive_sessions and session_name not in self.interactive_sessions:
+            expected = ", ".join(sorted(self.interactive_sessions))
+            actual = session_name or "unnamed"
+            return f"interactive session '{actual}' is not allowed (allowed: {expected})"
+        return None
+
+
 class MCPServerConfig(BaseModel):
     """MCP Server configuration"""
 
@@ -210,6 +244,7 @@ class MCPServerConfig(BaseModel):
     pagination: PaginationConfig | None = None
     readonly_tools: list[str] = Field(default_factory=list)
     channel: MCPChannelConfig | None = None
+    scope: MCPScopeConfig = Field(default_factory=MCPScopeConfig)
 
 
 def _env_model_tiers() -> dict[str, str]:
@@ -611,6 +646,7 @@ def load_mcp_servers_from_yaml(path: Path) -> dict[str, MCPServerConfig]:
                 pagination = PaginationConfig(**config["pagination"])
 
             channel = MCPChannelConfig(**config["channel"]) if "channel" in config else None
+            scope = MCPScopeConfig(**config["scope"]) if "scope" in config else MCPScopeConfig()
 
             servers[name] = MCPServerConfig(
                 command=config.get("command", ""),
@@ -639,6 +675,7 @@ def load_mcp_servers_from_yaml(path: Path) -> dict[str, MCPServerConfig]:
                 pagination=pagination,
                 readonly_tools=config.get("readonly_tools", []),
                 channel=channel,
+                scope=scope,
             )
 
         return servers

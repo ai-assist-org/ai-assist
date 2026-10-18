@@ -15,6 +15,7 @@ from .config import get_config, get_config_dir
 from .identity import AssistantIdentity, Identity, UserIdentity, get_identity
 from .kg_queries import KnowledgeGraphQueries
 from .knowledge_graph import KnowledgeGraph
+from .mcp_runtime import MCPRuntimeIdentity, MCPServerLease, format_lease_owner
 from .prompt_utils import extract_prompt_messages
 from .service import SUBCOMMANDS, install_service, remove_service, service_logs, service_status, service_systemctl
 from .state import StateManager
@@ -727,6 +728,16 @@ async def main_async():
             print("Error: --model requires a model id")
             sys.exit(1)
 
+    session_override = None
+    session_flag_used = "--session" in sys.argv
+    if session_flag_used:
+        idx = sys.argv.index("--session")
+        if idx + 1 >= len(sys.argv) or sys.argv[idx + 1].startswith("-"):
+            print("Error: --session requires a session name")
+            sys.exit(1)
+        session_override = sys.argv[idx + 1]
+        del sys.argv[idx : idx + 2]
+
     config = get_config()
     if model_override:
         config.model = model_override
@@ -756,6 +767,12 @@ async def main_async():
     if command and not is_valid_cli_command(command):
         print(get_command_suggestion(f"/{command}", is_interactive=False))
         sys.exit(1)
+
+    runtime_mode = command if command in {"monitor", "query", "run"} else "interactive"
+    if session_flag_used and runtime_mode != "interactive":
+        print("Error: --session is only valid with /interactive (or the default interactive mode)")
+        sys.exit(1)
+    session_name = (session_override or os.getenv("AI_ASSIST_SESSION_NAME")) if runtime_mode == "interactive" else None
 
     # Define which commands need the agent
     kg_commands = ["kg-stats", "kg-asof", "kg-late", "kg-changes", "kg-show", "kg-viz"]
@@ -817,7 +834,11 @@ async def main_async():
     if needs_agent:
         from .agent import AiAssistAgent
 
-        agent = AiAssistAgent(config, knowledge_graph=knowledge_graph)
+        agent = AiAssistAgent(
+            config,
+            knowledge_graph=knowledge_graph,
+            runtime_identity=MCPRuntimeIdentity(mode=runtime_mode, session_name=session_name),
+        )
 
     from .awl_executor import cleanup_session_tmpdir, init_session_tmpdir
 
@@ -837,7 +858,7 @@ async def main_async():
                 print("  /monitor           - Start monitoring DCI and Jira")
                 print("  /query '<text>'    - Run a one-time query")
                 print("  /run <script.awl> [key=value ...]  - Run an AWL workflow script")
-                print("  /interactive       - Interactive mode")
+                print("  /interactive [--session NAME] - Interactive mode")
                 print("  /status            - Show state statistics")
                 print("  /clear-cache       - Clear expired cache")
                 print("  /identity-show     - Show current identity configuration")
@@ -892,6 +913,15 @@ async def main_async():
                 print("=" * 40)
                 for key, value in stats.items():
                     print(f"{key:20s}: {value}")
+                exclusive_servers = {
+                    name: server for name, server in config.mcp_servers.items() if server.scope.exclusive
+                }
+                if exclusive_servers:
+                    print("\nMCP exclusive leases:")
+                    lease_dir = get_config_dir() / "state" / "mcp-leases"
+                    for name in sorted(exclusive_servers):
+                        owner = MCPServerLease.current_owner(lease_dir / f"{name}.json")
+                        print(f"{name:20s}: {format_lease_owner(owner) if owner else 'not held'}")
                 print()
             elif command == "clear-cache":
                 removed = state_manager.cleanup_expired_cache()

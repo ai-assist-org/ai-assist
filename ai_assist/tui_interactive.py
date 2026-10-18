@@ -1360,7 +1360,7 @@ async def tui_interactive_mode(agent: AiAssistAgent, state_manager: StateManager
                     continue
 
                 if user_input.lower() == "/status":
-                    await handle_status_command(state_manager, console)
+                    await handle_status_command(state_manager, console, agent)
                     continue
 
                 if user_input.lower() == "/debug":
@@ -1592,13 +1592,19 @@ async def handle_bg_command(user_input: str, bg_manager, console: Console):
     console.print_json(task.model_dump_json(indent=2))
 
 
-async def handle_status_command(state_manager: StateManager, console: Console):
+async def handle_status_command(state_manager: StateManager, console: Console, agent: AiAssistAgent | None = None):
     """Handle /status command"""
     stats = state_manager.get_stats()
 
     console.print("\n[bold]State Statistics:[/bold]")
     for key, value in stats.items():
         console.print(f"  [cyan]{key}:[/cyan] {value}")
+    if agent is not None:
+        mcp_status = agent.get_mcp_connection_status()
+        if mcp_status:
+            console.print("\n[bold]MCP servers:[/bold]")
+            for name, status in sorted(mcp_status.items()):
+                console.print(f"  [cyan]{name}:[/cyan] {status}")
     console.print()
 
 

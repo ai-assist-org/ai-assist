@@ -148,6 +148,39 @@ ai-assist /service remove ~/.iris       # stop, disable, and remove
 Config dir falls back to `AI_ASSIST_CONFIG_DIR` env var, then `~/.ai-assist`.
 Reports dir falls back to `AI_ASSIST_REPORTS_DIR` env var.
 
+## MCP Ownership and Named Interactive Sessions
+
+Servers normally connect in every mode. Limit a server with `scope` when it
+must have a single owner, such as a polling chat bot:
+
+```yaml
+servers:
+  telegram:
+    command: /path/to/telegram-mcp
+    scope:
+      modes: [monitor]
+      exclusive: true
+```
+
+`exclusive: true` uses a lease under the instance's `state/mcp-leases/`
+directory. Another process using the same configuration directory skips the
+server and reports its owner instead of starting a competing connection.
+
+For interactive-only servers, restrict allowed session names and start an
+identified session with either form below:
+
+```yaml
+scope:
+  modes: [interactive]
+  interactive_sessions: [desk, laptop]
+  exclusive: true
+```
+
+```bash
+ai-assist /interactive --session desk
+AI_ASSIST_SESSION_NAME=desk ai-assist /interactive
+```
+
 ### Boot persistence
 
 ```bash

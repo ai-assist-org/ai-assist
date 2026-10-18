@@ -25,6 +25,18 @@ class MCPChannelEnvelope(BaseModel):
     meta: dict[str, str] = Field(default_factory=dict)
 
 
+def get_reply_value(server: str, config: MCPChannelConfig, message: MCPChannelEnvelope) -> str | None:
+    """Return the configured reply address, logging malformed channel messages."""
+    reply_value = message.meta.get(config.reply_metadata_field)
+    if not reply_value:
+        logger.warning(
+            "Ignoring MCP channel message from %s without '%s' metadata",
+            server,
+            config.reply_metadata_field,
+        )
+    return reply_value
+
+
 class MCPChannelRouter:
     """Turn configured MCP channel notifications into isolated agent tasks."""
 
@@ -42,13 +54,8 @@ class MCPChannelRouter:
             self._agent = None
 
     async def _on_message(self, server: str, config: MCPChannelConfig, message: MCPChannelEnvelope) -> None:
-        reply_value = message.meta.get(config.reply_metadata_field)
+        reply_value = get_reply_value(server, config, message)
         if not reply_value:
-            logger.warning(
-                "Ignoring MCP channel message from %s without '%s' metadata",
-                server,
-                config.reply_metadata_field,
-            )
             return
 
         reply_tool = f"{server}__{config.reply_tool}"

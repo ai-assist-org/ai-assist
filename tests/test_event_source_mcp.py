@@ -3,7 +3,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from ai_assist.config import MCPChannelConfig
 from ai_assist.event_source_mcp import MCPEventEnvelope, MCPEventSource
+from ai_assist.mcp_channel import MCPChannelEnvelope
 
 
 @pytest.fixture
@@ -61,3 +63,27 @@ async def test_falls_back_to_legacy_bridge_control_tool(agent):
         "_event_bridge_subscribe", {"event": "message.received", "inboxId": "a@example.com"}
     )
     await source.stop()
+
+
+@pytest.mark.asyncio
+async def test_dispatches_configured_channel_message_as_mcp_event(agent):
+    source = MCPEventSource({}, agent)
+    dispatch = AsyncMock()
+    await source.start(dispatch)
+
+    await source._on_channel_notification(
+        "telegram",
+        MCPChannelConfig(reply_tool="reply", reply_metadata_field="chat_id"),
+        MCPChannelEnvelope(content="Hello", meta={"chat_id": "42", "sender": "Fred"}),
+    )
+
+    _, event = dispatch.await_args.args
+    assert event.source_type == "mcp"
+    assert event.event_type == "channel.message"
+    assert event.payload == "Hello"
+    assert event.metadata["server"] == "telegram"
+    assert event.metadata["reply_tool"] == "telegram__reply"
+    assert event.metadata["reply_metadata_field"] == "chat_id"
+    assert event.metadata["reply_value"] == "42"
+    await source.stop()
+    agent.remove_mcp_channel_listener.assert_called_once()
