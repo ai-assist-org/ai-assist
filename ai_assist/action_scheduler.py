@@ -137,7 +137,7 @@ class ActionScheduler:
             )
             return
 
-        self.event_source_manager = EventSourceManager()
+        self.event_source_manager = EventSourceManager(self.agent)
         self.event_source_manager.register_available_sources(event_configs)
 
         for action in event_actions:

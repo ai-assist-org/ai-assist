@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import stat
+import time
 import webbrowser
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -100,7 +101,15 @@ class MCPTokenStorage:
     async def set_tokens(self, tokens: OAuthToken) -> None:
         data = self._read()
         data["tokens"] = tokens.model_dump(mode="json")
+        # ``expires_in`` is relative to the time the token response was received.
+        # The MCP SDK keeps its calculated absolute expiry only in memory, so retain
+        # it here to prevent a restarted client from presenting an expired token.
+        data["token_expiry_time"] = time.time() + int(tokens.expires_in) if tokens.expires_in is not None else None
         self._write(data)
+
+    async def get_token_expiry_time(self) -> float | None:
+        value = self._read().get("token_expiry_time")
+        return float(value) if value is not None else None
 
     async def get_client_info(self) -> OAuthClientInformationFull | None:
         value = self._read().get("client_info")
@@ -223,6 +232,16 @@ class ConfiguredOAuthClientProvider(OAuthClientProvider):
         self._normalize_root_issuer = normalize_root_issuer
         self._authorization_lock_path = authorization_lock_path
 
+    async def _initialize(self) -> None:
+        """Restore the absolute expiry that the base provider keeps only in memory."""
+        await super()._initialize()
+        if self.context.current_tokens and self.context.current_tokens.expires_in is not None:
+            expiry_time = await cast(MCPTokenStorage, self.context.storage).get_token_expiry_time()
+            # Caches written before absolute expiry persistence are conservatively
+            # expired.  This lets their refresh token recover the session instead
+            # of sending an already-expired access token and starting browser OAuth.
+            self.context.token_expiry_time = expiry_time if expiry_time is not None else -1.0
+
     def _get_token_endpoint(self) -> str:
         return self._configured_token_endpoint or super()._get_token_endpoint()
 
@@ -254,6 +273,17 @@ class ConfiguredOAuthClientProvider(OAuthClientProvider):
 
     async def _auth_flow(self, request):
         """Relay the parent auth generator while retaining its response values."""
+        if request.method == "DELETE":
+            # streamable_http_client sends DELETE while closing a session.  A 401
+            # from that best-effort cleanup request must not open a browser as the
+            # application is shutting down.
+            if not self._initialized:
+                await self._initialize()
+            if self.context.is_token_valid():
+                self._add_auth_header(request)
+            yield request
+            return
+
         async with self._authorization_lock_if_needed():
             flow = super()._auth_flow(request)
             try:

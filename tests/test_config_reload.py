@@ -367,6 +367,49 @@ async def test_run_server_retries_on_failure():
 
 
 @pytest.mark.asyncio
+async def test_oauth_server_initialization_is_not_limited_to_sixty_seconds():
+    """A user completing browser OAuth must not be interrupted by MCP's normal timeout."""
+    from ai_assist.agent import AiAssistAgent
+    from ai_assist.config import AiAssistConfig, MCPServerConfig
+
+    config = AiAssistConfig(
+        mcp_servers={
+            "oauth-server": MCPServerConfig(
+                url="https://mcp.example.test", transport="streamablehttp", oauth=True, enabled=True
+            ),
+        }
+    )
+    with patch("ai_assist.agent.Anthropic"):
+        agent = AiAssistAgent(config)
+
+    class FakeTransport:
+        async def __aenter__(self):
+            return (MagicMock(), MagicMock())
+
+        async def __aexit__(self, *args):
+            pass
+
+    agent._connection_transport = lambda _config: FakeTransport()
+    mock_session = MagicMock()
+    mock_session.initialize = AsyncMock()
+    mock_session.list_tools = AsyncMock(return_value=MagicMock(tools=[]))
+    mock_session.list_prompts = AsyncMock(return_value=MagicMock(prompts=[]))
+    mock_session.list_resources = AsyncMock(return_value=MagicMock(resources=[]))
+    mock_session.list_resource_templates = AsyncMock(return_value=MagicMock(resource_templates=[]))
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("ai_assist.agent.ClientSession", return_value=mock_session):
+        with patch("ai_assist.agent.asyncio.wait_for", side_effect=AssertionError("unexpected timeout")):
+            with patch("ai_assist.agent.asyncio.Event") as mock_event:
+                mock_event.return_value.wait = AsyncMock(side_effect=asyncio.CancelledError)
+                await agent._run_server("oauth-server", config.mcp_servers["oauth-server"])
+
+    mock_session.initialize.assert_awaited_once()
+    assert "oauth-server" in agent.sessions
+
+
+@pytest.mark.asyncio
 async def test_run_server_stops_retry_on_cancel():
     """Test that _run_server stops retrying when cancelled during backoff"""
     from ai_assist.agent import AiAssistAgent

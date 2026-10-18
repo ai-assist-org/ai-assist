@@ -231,6 +231,43 @@ class TestActionDefinition:
 
 
 class TestTriggerMatcher:
+    def test_mcp_match(self):
+        matcher = TriggerMatcher()
+        event = _make_event(
+            source_type="mcp",
+            event_type="message.received",
+            metadata={
+                "server": "agentmail",
+                "data": {"inboxId": "agent@example.com", "messageId": "msg_1"},
+            },
+        )
+        assert matcher.matches(
+            event,
+            {
+                "type": "mcp",
+                "server": "agentmail",
+                "event": "message.received",
+                "arguments": {"inboxId": "agent@example.com"},
+            },
+        )
+
+    def test_mcp_does_not_match_other_inbox(self):
+        matcher = TriggerMatcher()
+        event = _make_event(
+            source_type="mcp",
+            event_type="message.received",
+            metadata={"server": "agentmail", "data": {"inboxId": "other@example.com"}},
+        )
+        assert not matcher.matches(
+            event,
+            {
+                "type": "mcp",
+                "server": "agentmail",
+                "event": "message.received",
+                "arguments": {"inboxId": "agent@example.com"},
+            },
+        )
+
     def test_mqtt_source_match(self):
         matcher = TriggerMatcher()
         event = _make_event()

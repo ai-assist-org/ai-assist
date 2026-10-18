@@ -11,7 +11,7 @@ from .event_sources import EventContext
 from .tasks import TaskLoader
 
 TRIGGER_TYPES_TIME = {"interval", "schedule", "interval_range", "once"}
-TRIGGER_TYPES_EVENT = {"mqtt", "dbus", "file"}
+TRIGGER_TYPES_EVENT = {"mqtt", "dbus", "file", "mcp"}
 TRIGGER_TYPES_ALL = TRIGGER_TYPES_TIME | TRIGGER_TYPES_EVENT
 
 
@@ -57,7 +57,7 @@ class ActionDefinition(BaseModel):
 
         return parse_mcp_prompt(self.prompt)
 
-    def validate_definition(self) -> None:
+    def validate_definition(self) -> None:  # noqa: PLR0912
         if not self.name:
             raise ValueError("Action name is required")
         if not self.prompt:
@@ -111,6 +111,14 @@ class ActionDefinition(BaseModel):
         elif trigger_type == "file":
             if "path" not in self.trigger:
                 raise ValueError("File trigger requires 'path' field")
+
+        elif trigger_type == "mcp":
+            if "server" not in self.trigger:
+                raise ValueError("MCP trigger requires 'server' field")
+            if "event" not in self.trigger:
+                raise ValueError("MCP trigger requires 'event' field")
+            if "arguments" in self.trigger and not isinstance(self.trigger["arguments"], dict):
+                raise ValueError("MCP trigger arguments must be an object")
 
         if self.is_mcp_prompt:
             try:
@@ -182,6 +190,8 @@ class TriggerMatcher:
             return self._match_dbus(event, trigger)
         if trigger_type == "file":
             return self._match_file(event, trigger)
+        if trigger_type == "mcp":
+            return self._match_mcp(event, trigger)
 
         return False
 
@@ -210,6 +220,15 @@ class TriggerMatcher:
         event_path = event.metadata.get("path", "")
         trigger_path = str(Path(trigger.get("path", "")).expanduser())
         if not _path_matches_pattern(event_path, trigger_path):
+            return False
+        return self._match_payload_filters(event, trigger)
+
+    def _match_mcp(self, event: EventContext, trigger: dict[str, Any]) -> bool:
+        if event.metadata.get("server") != trigger.get("server") or event.event_type != trigger.get("event"):
+            return False
+        expected = trigger.get("arguments", {})
+        data = event.metadata.get("data", {})
+        if not isinstance(data, dict) or any(data.get(key) != value for key, value in expected.items()):
             return False
         return self._match_payload_filters(event, trigger)
 
