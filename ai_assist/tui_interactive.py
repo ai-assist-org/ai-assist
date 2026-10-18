@@ -973,6 +973,11 @@ async def tui_interactive_mode(agent: AiAssistAgent, state_manager: StateManager
     agent.background_task_tools = BackgroundTaskTools(bg_manager)
     agent.available_tools.extend(agent.background_task_tools.get_tool_definitions())
 
+    from .mcp_channel import MCPChannelRouter
+
+    channel_router = MCPChannelRouter(bg_manager)
+    channel_router.start(agent)
+
     # Inner execution uses the agent's renderer (set by query_with_feedback)
     agent.on_inner_execution = agent.renderer.on_inner_execution
 
@@ -1537,6 +1542,7 @@ async def tui_interactive_mode(agent: AiAssistAgent, state_manager: StateManager
             console.print(f"[yellow]Cancelled {cancelled} background task(s)[/yellow]")
 
         # Stop watchers on exit
+        channel_router.stop()
         await config_watcher.stop()
         await notification_watcher.stop()
 

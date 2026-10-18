@@ -20,7 +20,7 @@ from mcp.client.extension import NotificationBinding
 
 from .action_tools import ActionTools
 from .audit import AuditLogger
-from .config import AiAssistConfig, MCPServerConfig
+from .config import AiAssistConfig, MCPChannelConfig, MCPServerConfig
 from .event_source_mcp import EVENT_NOTIFICATION_METHOD, MCPEventEnvelope
 from .filesystem_tools import FilesystemTools
 from .identity import get_identity
@@ -28,6 +28,7 @@ from .introspection_tools import IntrospectionTools
 from .jev_client import JevError, jev_configured, jev_decide, noul, noul_probability
 from .jev_tools import JevTools
 from .json_tools import JsonTools
+from .mcp_channel import MCPChannelEnvelope
 from .mcp_oauth import OAuthConnectionConfig, oauth_streamable_http_client
 from .mcp_stdio_fix import stdio_client_fixed
 from .mlflow_tracing import end_span, record_query_trace, setup_mlflow, start_query_span, start_tool_span
@@ -423,6 +424,7 @@ class AiAssistAgent:
             console_print(f"⚖️  jev: goal-success decisions via {config.jev_model}")
         self.sessions: dict[str, ClientSession] = {}
         self._mcp_event_listeners: set[Any] = set()
+        self._mcp_channel_listeners: set[Any] = set()
         self._mcp_server_listeners: set[Any] = set()
         self.tool_result_router = ToolResultRouter(
             agent=self,
@@ -804,6 +806,13 @@ class AiAssistAgent:
         """Register a consumer for local event-bridge MCP notifications."""
         self._mcp_event_listeners.add(listener)
 
+    def add_mcp_channel_listener(self, listener) -> None:
+        """Register a consumer for configured MCP channel notifications."""
+        self._mcp_channel_listeners.add(listener)
+
+    def remove_mcp_channel_listener(self, listener) -> None:
+        self._mcp_channel_listeners.discard(listener)
+
     def remove_mcp_event_listener(self, listener) -> None:
         self._mcp_event_listeners.discard(listener)
 
@@ -826,16 +835,33 @@ class AiAssistAgent:
                         for listener in tuple(self._mcp_event_listeners):
                             await listener(name, params)
 
+                    async def channel_notification(params: MCPChannelEnvelope) -> None:
+                        channel_config: MCPChannelConfig | None = config.channel
+                        if channel_config is None:
+                            return
+                        for listener in tuple(self._mcp_channel_listeners):
+                            await listener(name, channel_config, params)
+
+                    notification_bindings: list[NotificationBinding[Any]] = [
+                        NotificationBinding(
+                            method=EVENT_NOTIFICATION_METHOD,
+                            params_type=MCPEventEnvelope,
+                            handler=event_notification,
+                        )
+                    ]
+                    if config.channel is not None:
+                        notification_bindings.append(
+                            NotificationBinding(
+                                method=config.channel.notification_method,
+                                params_type=MCPChannelEnvelope,
+                                handler=channel_notification,
+                            )
+                        )
+
                     async with ClientSession(
                         read_stream,
                         write_stream,
-                        notification_bindings=[
-                            NotificationBinding(
-                                method=EVENT_NOTIFICATION_METHOD,
-                                params_type=MCPEventEnvelope,
-                                handler=event_notification,
-                            )
-                        ],
+                        notification_bindings=notification_bindings,
                     ) as session:
                         try:
                             # OAuth authorization requires a person to complete a

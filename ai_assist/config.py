@@ -177,6 +177,14 @@ class PaginationConfig(BaseModel):
     tool_overrides: dict[str, dict[str, str]] = Field(default_factory=dict)
 
 
+class MCPChannelConfig(BaseModel):
+    """Opt-in mapping for an MCP server that delivers inbound channel messages."""
+
+    notification_method: str = "notifications/claude/channel"
+    reply_tool: str = "reply"
+    reply_metadata_field: str = "chat_id"
+
+
 class MCPServerConfig(BaseModel):
     """MCP Server configuration"""
 
@@ -201,6 +209,7 @@ class MCPServerConfig(BaseModel):
     enabled: bool = True
     pagination: PaginationConfig | None = None
     readonly_tools: list[str] = Field(default_factory=list)
+    channel: MCPChannelConfig | None = None
 
 
 def _env_model_tiers() -> dict[str, str]:
@@ -601,6 +610,8 @@ def load_mcp_servers_from_yaml(path: Path) -> dict[str, MCPServerConfig]:
             if "pagination" in config:
                 pagination = PaginationConfig(**config["pagination"])
 
+            channel = MCPChannelConfig(**config["channel"]) if "channel" in config else None
+
             servers[name] = MCPServerConfig(
                 command=config.get("command", ""),
                 args=config.get("args", []),
@@ -627,6 +638,7 @@ def load_mcp_servers_from_yaml(path: Path) -> dict[str, MCPServerConfig]:
                 enabled=config.get("enabled", True),
                 pagination=pagination,
                 readonly_tools=config.get("readonly_tools", []),
+                channel=channel,
             )
 
         return servers
