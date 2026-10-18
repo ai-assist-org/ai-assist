@@ -20,7 +20,7 @@ from mcp.client.extension import NotificationBinding
 
 from .action_tools import ActionTools
 from .audit import AuditLogger
-from .config import AiAssistConfig, MCPServerConfig
+from .config import AiAssistConfig, MCPChannelConfig, MCPServerConfig
 from .event_source_mcp import EVENT_NOTIFICATION_METHOD, MCPEventEnvelope
 from .filesystem_tools import FilesystemTools
 from .identity import get_identity
@@ -28,7 +28,9 @@ from .introspection_tools import IntrospectionTools
 from .jev_client import JevError, jev_configured, jev_decide, noul, noul_probability
 from .jev_tools import JevTools
 from .json_tools import JsonTools
+from .mcp_channel import MCPChannelEnvelope
 from .mcp_oauth import OAuthConnectionConfig, oauth_streamable_http_client
+from .mcp_runtime import MCPRuntimeIdentity, MCPServerLease, format_lease_owner
 from .mcp_stdio_fix import stdio_client_fixed
 from .mlflow_tracing import end_span, record_query_trace, setup_mlflow, start_query_span, start_tool_span
 from .output import console_print
@@ -316,8 +318,14 @@ class AiAssistAgent:
 
     CONTEXT_BUDGET_WARNING_THRESHOLD = 0.8
 
-    def __init__(self, config: AiAssistConfig, knowledge_graph: KnowledgeGraph | None = None):
+    def __init__(
+        self,
+        config: AiAssistConfig,
+        knowledge_graph: KnowledgeGraph | None = None,
+        runtime_identity: MCPRuntimeIdentity | None = None,
+    ):
         self.config = config
+        self.runtime_identity = runtime_identity or MCPRuntimeIdentity(mode="interactive")
         self.knowledge_graph = knowledge_graph
         self.kg_save_enabled = True  # Can be toggled by user
         self._no_kg = False  # Per-query flag: @no-kg prefix suppresses KG injection
@@ -423,6 +431,7 @@ class AiAssistAgent:
             console_print(f"⚖️  jev: goal-success decisions via {config.jev_model}")
         self.sessions: dict[str, ClientSession] = {}
         self._mcp_event_listeners: set[Any] = set()
+        self._mcp_channel_listeners: set[Any] = set()
         self._mcp_server_listeners: set[Any] = set()
         self.tool_result_router = ToolResultRouter(
             agent=self,
@@ -437,6 +446,8 @@ class AiAssistAgent:
         self.available_resources: dict[str, list] = {}  # {server_name: [Resource, ...]}
         self.available_resource_templates: dict[str, list] = {}  # {server_name: [ResourceTemplate, ...]}
         self._server_tasks: list[asyncio.Task] = []
+        self._mcp_leases: dict[str, MCPServerLease] = {}
+        self._mcp_connection_status: dict[str, str] = {}
 
         # Security: tool definition registry for rug-pull detection
         self._tool_registry = ToolDefinitionRegistry()
@@ -563,8 +574,11 @@ class AiAssistAgent:
 
         for server_name, server_config in self.config.mcp_servers.items():
             try:
+                if not self._may_connect_server(server_name, server_config):
+                    continue
                 task = asyncio.create_task(self._run_server(server_name, server_config), name=f"mcp_{server_name}")
                 self._server_tasks.append(task)
+                self._mcp_connection_status[server_name] = "connecting"
 
                 # Wait for server initialization (up to 5 seconds)
                 for _ in range(20):  # Wait up to 10 seconds
@@ -804,6 +818,13 @@ class AiAssistAgent:
         """Register a consumer for local event-bridge MCP notifications."""
         self._mcp_event_listeners.add(listener)
 
+    def add_mcp_channel_listener(self, listener) -> None:
+        """Register a consumer for configured MCP channel notifications."""
+        self._mcp_channel_listeners.add(listener)
+
+    def remove_mcp_channel_listener(self, listener) -> None:
+        self._mcp_channel_listeners.discard(listener)
+
     def remove_mcp_event_listener(self, listener) -> None:
         self._mcp_event_listeners.discard(listener)
 
@@ -826,16 +847,33 @@ class AiAssistAgent:
                         for listener in tuple(self._mcp_event_listeners):
                             await listener(name, params)
 
+                    async def channel_notification(params: MCPChannelEnvelope) -> None:
+                        channel_config: MCPChannelConfig | None = config.channel
+                        if channel_config is None:
+                            return
+                        for listener in tuple(self._mcp_channel_listeners):
+                            await listener(name, channel_config, params)
+
+                    notification_bindings: list[NotificationBinding[Any]] = [
+                        NotificationBinding(
+                            method=EVENT_NOTIFICATION_METHOD,
+                            params_type=MCPEventEnvelope,
+                            handler=event_notification,
+                        )
+                    ]
+                    if config.channel is not None:
+                        notification_bindings.append(
+                            NotificationBinding(
+                                method=config.channel.notification_method,
+                                params_type=MCPChannelEnvelope,
+                                handler=channel_notification,
+                            )
+                        )
+
                     async with ClientSession(
                         read_stream,
                         write_stream,
-                        notification_bindings=[
-                            NotificationBinding(
-                                method=EVENT_NOTIFICATION_METHOD,
-                                params_type=MCPEventEnvelope,
-                                handler=event_notification,
-                            )
-                        ],
+                        notification_bindings=notification_bindings,
                     ) as session:
                         try:
                             # OAuth authorization requires a person to complete a
@@ -957,6 +995,36 @@ class AiAssistAgent:
                     break
                 backoff = min(backoff * 2, 60)
 
+    def _may_connect_server(self, name: str, config: MCPServerConfig) -> bool:
+        """Apply runtime scope and acquire an exclusive lease when requested."""
+        reason = config.scope.skip_reason(self.runtime_identity.mode, self.runtime_identity.session_name)
+        if reason:
+            self._mcp_connection_status[name] = f"skipped: {reason}"
+            logger.info("Skipping MCP server %s: %s", name, reason)
+            return False
+
+        if not config.scope.exclusive:
+            return True
+
+        from .config import get_config_dir
+
+        lease = MCPServerLease(get_config_dir(), name, self.runtime_identity)
+        owner = lease.acquire()
+        if owner is not None:
+            holder = format_lease_owner(owner)
+            self._mcp_connection_status[name] = f"skipped: exclusive lease held by {holder}"
+            logger.warning("Skipping MCP server %s: exclusive lease held by %s", name, holder)
+            return False
+        self._mcp_leases[name] = lease
+        return True
+
+    def get_mcp_connection_status(self) -> dict[str, str]:
+        """Return safe MCP lifecycle and ownership diagnostics."""
+        status = dict(self._mcp_connection_status)
+        for name in self.sessions:
+            status[name] = "connected"
+        return status
+
     def _disconnect_server(self, name: str):
         """Disconnect a single MCP server, cleaning up session, tools, prompts, resources, and task"""
         if name in self.sessions:
@@ -971,11 +1039,18 @@ class AiAssistAgent:
         for task in self._server_tasks:
             if task.get_name() == f"mcp_{name}":
                 task.cancel()
+        lease = self._mcp_leases.pop(name, None)
+        if lease is not None:
+            lease.release()
+        self._mcp_connection_status.pop(name, None)
 
     async def _connect_server(self, name: str, config) -> bool:
         """Connect a single MCP server and wait for initialization (up to 5s)"""
+        if not self._may_connect_server(name, config):
+            return False
         task = asyncio.create_task(self._run_server(name, config), name=f"mcp_{name}")
         self._server_tasks.append(task)
+        self._mcp_connection_status[name] = "connecting"
         for _ in range(10):
             await asyncio.sleep(0.5)
             if name in self.sessions:
@@ -2927,4 +3002,7 @@ class AiAssistAgent:
 
         self._server_tasks.clear()
         self.sessions.clear()
+        for lease in self._mcp_leases.values():
+            lease.release()
+        self._mcp_leases.clear()
         logger.info("Closed all connections")

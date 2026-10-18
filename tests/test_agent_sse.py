@@ -2,7 +2,7 @@
 
 from unittest.mock import MagicMock, patch
 
-from ai_assist.config import MCPServerConfig, load_mcp_servers_from_yaml
+from ai_assist.config import MCPChannelConfig, MCPServerConfig, load_mcp_servers_from_yaml
 
 
 class TestMCPServerConfigUrl:
@@ -23,6 +23,11 @@ class TestMCPServerConfigUrl:
         config = MCPServerConfig(command="test-cmd", url="http://localhost:8001/sse")
         assert config.url == "http://localhost:8001/sse"
         assert config.command == "test-cmd"
+
+    def test_channel_config_is_opt_in(self):
+        config = MCPServerConfig(channel=MCPChannelConfig())
+        assert config.channel is not None
+        assert config.channel.notification_method == "notifications/claude/channel"
 
 
 class TestTransportSelection:
