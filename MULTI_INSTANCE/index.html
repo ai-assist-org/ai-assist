@@ -890,7 +890,18 @@
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Systemd Services">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mcp-ownership-and-named-interactive-sessions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        MCP Ownership and Named Interactive Sessions
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="MCP Ownership and Named Interactive Sessions">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -1400,7 +1411,18 @@
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Systemd Services">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mcp-ownership-and-named-interactive-sessions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        MCP Ownership and Named Interactive Sessions
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="MCP Ownership and Named Interactive Sessions">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -1676,8 +1698,31 @@
 </code></pre></div>
 <p>Config dir falls back to <code>AI_ASSIST_CONFIG_DIR</code> env var, then <code>~/.ai-assist</code>.
 Reports dir falls back to <code>AI_ASSIST_REPORTS_DIR</code> env var.</p>
+<h2 id="mcp-ownership-and-named-interactive-sessions">MCP Ownership and Named Interactive Sessions<a class="headerlink" href="#mcp-ownership-and-named-interactive-sessions" title="Permanent link">&para;</a></h2>
+<p>Servers normally connect in every mode. Limit a server with <code>scope</code> when it
+must have a single owner, such as a polling chat bot:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="nt">servers</span><span class="p">:</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">  </span><span class="nt">telegram</span><span class="p">:</span>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="w">    </span><span class="nt">command</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/path/to/telegram-mcp</span>
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="w">    </span><span class="nt">scope</span><span class="p">:</span>
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="w">      </span><span class="nt">modes</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">monitor</span><span class="p p-Indicator">]</span>
+<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="w">      </span><span class="nt">exclusive</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+</code></pre></div>
+<p><code>exclusive: true</code> uses a lease under the instance's <code>state/mcp-leases/</code>
+directory. Another process using the same configuration directory skips the
+server and reports its owner instead of starting a competing connection.</p>
+<p>For interactive-only servers, restrict allowed session names and start an
+identified session with either form below:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="nt">scope</span><span class="p">:</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="w">  </span><span class="nt">modes</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">interactive</span><span class="p p-Indicator">]</span>
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="w">  </span><span class="nt">interactive_sessions</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">desk</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">laptop</span><span class="p p-Indicator">]</span>
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="w">  </span><span class="nt">exclusive</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>ai-assist<span class="w"> </span>/interactive<span class="w"> </span>--session<span class="w"> </span>desk
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="nv">AI_ASSIST_SESSION_NAME</span><span class="o">=</span>desk<span class="w"> </span>ai-assist<span class="w"> </span>/interactive
+</code></pre></div>
 <h3 id="boot-persistence">Boot persistence<a class="headerlink" href="#boot-persistence" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>loginctl<span class="w"> </span>enable-linger<span class="w"> </span><span class="nv">$USER</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>loginctl<span class="w"> </span>enable-linger<span class="w"> </span><span class="nv">$USER</span>
 </code></pre></div>
 <p>Without this, user services stop when you log out.</p>
 <h3 id="note-on-env-files">Note on .env files<a class="headerlink" href="#note-on-env-files" title="Permanent link">&para;</a></h3>
@@ -1697,42 +1742,42 @@ Reports dir falls back to <code>AI_ASSIST_REPORTS_DIR</code> env var.</p>
 </ol>
 <h2 id="troubleshooting">Troubleshooting<a class="headerlink" href="#troubleshooting" title="Permanent link">&para;</a></h2>
 <h3 id="check-current-config-directory">Check Current Config Directory<a class="headerlink" href="#check-current-config-directory" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">ai_assist.config</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_config_dir</span>
-<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="nb">print</span><span class="p">(</span><span class="n">get_config_dir</span><span class="p">())</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">ai_assist.config</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_config_dir</span>
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="nb">print</span><span class="p">(</span><span class="n">get_config_dir</span><span class="p">())</span>
 </code></pre></div>
 <h3 id="verify-instance-isolation">Verify Instance Isolation<a class="headerlink" href="#verify-instance-isolation" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="c1"># Instance 1</span>
-<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="nb">export</span><span class="w"> </span><span class="nv">AI_ASSIST_CONFIG_DIR</span><span class="o">=</span>/tmp/instance1
-<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>ai-assist<span class="w"> </span>/setup-identity
-<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a>ls<span class="w"> </span>/tmp/instance1/<span class="w">  </span><span class="c1"># Should see identity.yaml</span>
-<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a>
-<a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a><span class="c1"># Instance 2</span>
-<a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a><span class="nb">export</span><span class="w"> </span><span class="nv">AI_ASSIST_CONFIG_DIR</span><span class="o">=</span>/tmp/instance2
-<a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a>ai-assist<span class="w"> </span>/setup-identity
-<a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a>ls<span class="w"> </span>/tmp/instance2/<span class="w">  </span><span class="c1"># Should see different identity.yaml</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="c1"># Instance 1</span>
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="nb">export</span><span class="w"> </span><span class="nv">AI_ASSIST_CONFIG_DIR</span><span class="o">=</span>/tmp/instance1
+<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a>ai-assist<span class="w"> </span>/setup-identity
+<a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a>ls<span class="w"> </span>/tmp/instance1/<span class="w">  </span><span class="c1"># Should see identity.yaml</span>
+<a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a>
+<a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a><span class="c1"># Instance 2</span>
+<a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a><span class="nb">export</span><span class="w"> </span><span class="nv">AI_ASSIST_CONFIG_DIR</span><span class="o">=</span>/tmp/instance2
+<a id="__codelineno-13-8" name="__codelineno-13-8" href="#__codelineno-13-8"></a>ai-assist<span class="w"> </span>/setup-identity
+<a id="__codelineno-13-9" name="__codelineno-13-9" href="#__codelineno-13-9"></a>ls<span class="w"> </span>/tmp/instance2/<span class="w">  </span><span class="c1"># Should see different identity.yaml</span>
 </code></pre></div>
 <h3 id="clean-start">Clean Start<a class="headerlink" href="#clean-start" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="c1"># Remove all data for an instance</span>
-<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>rm<span class="w"> </span>-rf<span class="w"> </span>~/.ai-assist-work
-<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>
-<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="c1"># Restart fresh</span>
-<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="nb">export</span><span class="w"> </span><span class="nv">AI_ASSIST_CONFIG_DIR</span><span class="o">=</span>~/.ai-assist-work
-<a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a>ai-assist<span class="w"> </span>/setup-identity
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="c1"># Remove all data for an instance</span>
+<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>rm<span class="w"> </span>-rf<span class="w"> </span>~/.ai-assist-work
+<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a>
+<a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a><span class="c1"># Restart fresh</span>
+<a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a><span class="nb">export</span><span class="w"> </span><span class="nv">AI_ASSIST_CONFIG_DIR</span><span class="o">=</span>~/.ai-assist-work
+<a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a>ai-assist<span class="w"> </span>/setup-identity
 </code></pre></div>
 <h2 id="migration-from-single-instance">Migration from Single Instance<a class="headerlink" href="#migration-from-single-instance" title="Permanent link">&para;</a></h2>
 <p>If you have an existing <code>~/.ai-assist</code> and want to split into multiple instances:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="c1"># Backup original</span>
-<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>cp<span class="w"> </span>-r<span class="w"> </span>~/.ai-assist<span class="w"> </span>~/.ai-assist.backup
-<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a>
-<a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="c1"># Create work instance (copy from original)</span>
-<a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a>cp<span class="w"> </span>-r<span class="w"> </span>~/.ai-assist<span class="w"> </span>~/.ai-assist-work
-<a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a>
-<a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a><span class="c1"># Create personal instance (fresh)</span>
-<a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a><span class="nb">export</span><span class="w"> </span><span class="nv">AI_ASSIST_CONFIG_DIR</span><span class="o">=</span>~/.ai-assist-personal
-<a id="__codelineno-12-9" name="__codelineno-12-9" href="#__codelineno-12-9"></a>ai-assist<span class="w"> </span>/setup-identity
-<a id="__codelineno-12-10" name="__codelineno-12-10" href="#__codelineno-12-10"></a>
-<a id="__codelineno-12-11" name="__codelineno-12-11" href="#__codelineno-12-11"></a><span class="c1"># Keep original as default or remove it</span>
-<a id="__codelineno-12-12" name="__codelineno-12-12" href="#__codelineno-12-12"></a><span class="c1"># mv ~/.ai-assist ~/.ai-assist-legacy</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="c1"># Backup original</span>
+<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>cp<span class="w"> </span>-r<span class="w"> </span>~/.ai-assist<span class="w"> </span>~/.ai-assist.backup
+<a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a>
+<a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a><span class="c1"># Create work instance (copy from original)</span>
+<a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a>cp<span class="w"> </span>-r<span class="w"> </span>~/.ai-assist<span class="w"> </span>~/.ai-assist-work
+<a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a>
+<a id="__codelineno-15-7" name="__codelineno-15-7" href="#__codelineno-15-7"></a><span class="c1"># Create personal instance (fresh)</span>
+<a id="__codelineno-15-8" name="__codelineno-15-8" href="#__codelineno-15-8"></a><span class="nb">export</span><span class="w"> </span><span class="nv">AI_ASSIST_CONFIG_DIR</span><span class="o">=</span>~/.ai-assist-personal
+<a id="__codelineno-15-9" name="__codelineno-15-9" href="#__codelineno-15-9"></a>ai-assist<span class="w"> </span>/setup-identity
+<a id="__codelineno-15-10" name="__codelineno-15-10" href="#__codelineno-15-10"></a>
+<a id="__codelineno-15-11" name="__codelineno-15-11" href="#__codelineno-15-11"></a><span class="c1"># Keep original as default or remove it</span>
+<a id="__codelineno-15-12" name="__codelineno-15-12" href="#__codelineno-15-12"></a><span class="c1"># mv ~/.ai-assist ~/.ai-assist-legacy</span>
 </code></pre></div>
 <h2 id="see-also">See Also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
 <ul>
