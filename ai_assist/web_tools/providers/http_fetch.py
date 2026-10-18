@@ -62,8 +62,12 @@ class HttpFetchProvider:
                 response = await client.get(url, headers=_DEFAULT_HEADERS)
                 response.raise_for_status()
         except httpx.HTTPStatusError as e:
-            # Expected, handled outcome (e.g. 403/404) — log concisely, no traceback.
-            logger.warning("HTTP fetch of %s returned %s", url, e.response.status_code)
+            # A status response is a normal outcome for a research crawl: sites
+            # commonly block bots (403), rate-limit them (429), or have stale
+            # search-result URLs (404).  The failure is returned to the agent,
+            # which can try the next fetch provider, so avoid filling a user's
+            # normal logs with expected dead ends.
+            logger.debug("HTTP fetch of %s returned %s", url, e.response.status_code)
             raise ProviderError(f"HTTP {e.response.status_code}") from e
         except httpx.HTTPError as e:
             logger.exception("HTTP fetch of %s failed", url)

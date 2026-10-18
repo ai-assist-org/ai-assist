@@ -116,7 +116,15 @@ DESCRIPTION_SUSPICIOUS_PATTERNS: list[tuple[str, re.Pattern]] = [
     ),
     (
         "data_exfiltration",
-        re.compile(r"(?i)(send\s+to|post\s+to|exfiltrate|" r"include\s+in\s+(every|all)\s+(response|output|answer))"),
+        re.compile(
+            r"(?i)(exfiltrate|"
+            r"(?:send|post)\s+(?:the\s+)?(?:all\s+)?"
+            r"(?:user(?:'s)?\s+|private\s+|sensitive\s+|collected\s+|secret\s+|"
+            r"credential\s+|api\s*key\s+|token\s+|system\s+prompt\s+)?data\s+to|"
+            r"(?:send|post)\s+(?:the\s+)?(?:user(?:'s)?\s+)?"
+            r"(?:api\s*key|secret|credential|token|system\s+prompt)\s+to|"
+            r"include\s+in\s+(every|all)\s+(response|output|answer))"
+        ),
     ),
     (
         "hidden_instructions",

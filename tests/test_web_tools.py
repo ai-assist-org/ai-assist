@@ -222,7 +222,7 @@ class TestWebSearchExecution:
         assert "https://python.org" in out
         assert calls["n"] == 2
 
-    async def test_search_duckduckgo_fails_after_retries(self, mocker):
+    async def test_search_duckduckgo_fails_after_retries_without_warning(self, mocker, caplog):
         from ddgs.exceptions import DDGSException
 
         def always_fail(*a, **k):
@@ -233,6 +233,7 @@ class TestWebSearchExecution:
         out = await WebTools(make_config()).execute_tool("web_search", {"query": "python"})
         assert out.startswith("Error: web search failed")
         assert "after 3 attempts" in out
+        assert not [record for record in caplog.records if record.levelname == "WARNING"]
 
     async def test_search_searxng_preferred_over_ddg(self, mocker):
         # A SearXNG url wins over keyless DuckDuckGo (but still loses to Tavily).
@@ -286,6 +287,15 @@ class TestWebFetchExecution:
         out = await WebTools(make_config(firecrawl_api_key="k")).execute_tool("web_fetch", {"url": "https://e.com"})
         assert "scraped body" in out
         assert "Provider: firecrawl" in out
+
+    async def test_fetch_expected_http_status_is_not_a_warning(self, mocker, caplog):
+        forbidden = _FakeResponse(status_code=403, headers={"content-type": "text/html"})
+        mocker.patch.object(http_fetch.httpx, "AsyncClient", _FakeClient(get_response=forbidden))
+
+        out = await WebTools(make_config()).execute_tool("web_fetch", {"url": "https://e.com"})
+
+        assert "HTTP 403" in out
+        assert not [record for record in caplog.records if record.levelname == "WARNING"]
 
     async def test_fetch_provider_override(self, mocker):
         # Forcing firecrawl skips HTTP entirely.

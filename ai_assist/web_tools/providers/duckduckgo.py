@@ -42,9 +42,11 @@ class DuckDuckGoProvider:
             try:
                 raw = await asyncio.to_thread(self._search_sync, query, count, timelimit)
             except DDGSException as e:
-                # Expected, transient failure — log concisely and retry.
+                # DDGS uses this exception for both transient backend failures
+                # and empty results.  Retrying may recover, while the eventual
+                # failure is returned to the agent; attempts are diagnostic only.
                 last_error = e
-                logger.warning("DuckDuckGo search attempt %d/%d failed: %s", attempt, _MAX_ATTEMPTS, e)
+                logger.debug("DuckDuckGo search attempt %d/%d failed: %s", attempt, _MAX_ATTEMPTS, e)
                 if attempt < _MAX_ATTEMPTS:
                     await asyncio.sleep(_RETRY_DELAY_SECONDS * attempt)
                 continue
