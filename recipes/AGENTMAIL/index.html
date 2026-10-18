@@ -16,7 +16,7 @@
         <link rel="prev" href="../../LOGGING/">
       
       
-        <link rel="next" href="../../AWL_SPECIFICATIONS/">
+        <link rel="next" href="../TELEGRAM/">
       
       
         
@@ -858,6 +858,24 @@
         
       
       
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AgentMail
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
       <a href="./" class="md-nav__link md-nav__link--active">
         
   
@@ -875,6 +893,108 @@
 
       </a>
       
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#how-it-works" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How it works
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configure-the-local-mcp-server" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configure the local MCP server
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#create-the-email-action" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Create the email action
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#receive-the-result-interactively" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Receive the result interactively
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#choose-the-level-of-automation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Choose the level of automation
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../TELEGRAM/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Telegram
+  
+
+    
+  </span>
+  
+  
+
+      </a>
     </li>
   
 
@@ -994,6 +1114,69 @@
     
   
   
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#how-it-works" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How it works
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configure-the-local-mcp-server" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configure the local MCP server
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#create-the-email-action" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Create the email action
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#receive-the-result-interactively" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Receive the result interactively
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#choose-the-level-of-automation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Choose the level of automation
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
 </nav>
                   </div>
                 </div>
@@ -1017,9 +1200,7 @@
 inbound webhook endpoint. A local AgentMail MCP server holds an outbound
 connection to AgentMail, emits an MCP event, and ai-assist runs an action in
 response.</p>
-<p>This recipe uses the event bridge in the [AgentMail MCP pull request</p>
-<h1 id="91httpsgithubcomagentmail-toagentmail-mcppull91-use-a-local-checkout">91](https://github.com/agentmail-to/agentmail-mcp/pull/91). Use a local checkout<a class="headerlink" href="#91httpsgithubcomagentmail-toagentmail-mcppull91-use-a-local-checkout" title="Permanent link">&para;</a></h1>
-<p>that includes that change.</p>
+<p>This recipe uses the event bridge in the <a href="https://github.com/agentmail-to/agentmail-mcp/pull/91">AgentMail MCP pull request #91</a>. Use a local checkout that includes that change.</p>
 <h2 id="how-it-works">How it works<a class="headerlink" href="#how-it-works" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>AgentMail event stream → local AgentMail MCP server → ai-assist /monitor
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>                                                     → action → notification
