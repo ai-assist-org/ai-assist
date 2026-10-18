@@ -423,7 +423,7 @@ When `notify` is true, you'll receive notifications on task completion via:
 
 ### Event-Driven Actions
 
-React to external events via MQTT, D-Bus, or filesystem changes. Actions in `~/.ai-assist/event-event-schedules.json` use a unified **trigger + prompt** model. D-Bus triggers support per-trigger bus selection (`system` or `session`).
+React to external events via MQTT, D-Bus, filesystem changes, or a local MCP event bridge. Actions in `~/.ai-assist/event-event-schedules.json` use a unified **trigger + prompt** model. D-Bus triggers support per-trigger bus selection (`system` or `session`).
 
 **Example: USB device monitoring**
 
@@ -500,7 +500,31 @@ React to external events via MQTT, D-Bus, or filesystem changes. Actions in `~/.
 
 File triggers support exact paths (`/etc/app/config.json`), directories (`~/Downloads` — any file change), and glob patterns (`~/Downloads/*.pdf`).
 
-**Trigger types**: `interval`, `schedule`, `interval_range`, `once`, `mqtt`, `dbus`, `file`
+**Example: local MCP event bridge**
+
+```json
+{
+  "event_sources": { "mcp": {} },
+  "actions": [
+    {
+      "name": "New AgentMail email",
+      "trigger": {
+        "type": "mcp",
+        "server": "agentmail",
+        "event": "message.received",
+        "arguments": { "inboxId": "agent@example.com" }
+      },
+      "prompt": "Fetch the referenced email, summarize it, and identify any action needed.",
+      "notify": true,
+      "notification_channels": ["desktop", "console"]
+    }
+  ]
+}
+```
+
+The bridge subscribes over an outbound connection and sends only event, inbox, and message IDs to ai-assist; the action fetches message contents through its normal MCP tools.
+
+**Trigger types**: `interval`, `schedule`, `interval_range`, `once`, `mqtt`, `dbus`, `file`, `mcp`
 
 **Event filtering**: `payload_contains` and `payload_regex` filter events before execution. Burst signals are debounced (3s window).
 

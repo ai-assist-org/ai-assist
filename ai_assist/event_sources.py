@@ -57,7 +57,8 @@ class EventSource(ABC):
 class EventSourceManager:
     """Registry and lifecycle manager for event sources"""
 
-    def __init__(self) -> None:
+    def __init__(self, agent: Any | None = None) -> None:
+        self._agent = agent
         self._sources: dict[str, EventSource] = {}
         self._runners: dict[str, Any] = {}
         self._event_handler: Callable[[EventContext], Awaitable[None]] | None = None
@@ -102,6 +103,15 @@ class EventSourceManager:
             file_source = FileEventSource(configs["file"])
             self.register_source("file", file_source)
             logger.info("Event source enabled: File watcher")
+
+        if "mcp" in configs:
+            if self._agent is None:
+                logger.warning("MCP event source configured without an agent")
+            else:
+                from .event_source_mcp import MCPEventSource
+
+                self.register_source("mcp", MCPEventSource(configs["mcp"], self._agent))
+                logger.info("Event source enabled: MCP notifications")
 
     def configure(self, triggered_tasks: list[tuple[str, dict[str, Any], Any]]) -> None:
         for task_name, trigger_config, runner in triggered_tasks:

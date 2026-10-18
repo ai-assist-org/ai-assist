@@ -16,10 +16,12 @@ from typing import TYPE_CHECKING, Any, cast
 from anthropic import Anthropic, AnthropicVertex, APIConnectionError, APIError, BadRequestError, RateLimitError
 from anthropic.types import TextBlockParam
 from mcp import ClientSession, StdioServerParameters
+from mcp.client.extension import NotificationBinding
 
 from .action_tools import ActionTools
 from .audit import AuditLogger
 from .config import AiAssistConfig, MCPServerConfig
+from .event_source_mcp import EVENT_NOTIFICATION_METHOD, MCPEventEnvelope
 from .filesystem_tools import FilesystemTools
 from .identity import get_identity
 from .introspection_tools import IntrospectionTools
@@ -420,6 +422,8 @@ class AiAssistAgent:
         if jev_configured(config):
             console_print(f"⚖️  jev: goal-success decisions via {config.jev_model}")
         self.sessions: dict[str, ClientSession] = {}
+        self._mcp_event_listeners: set[Any] = set()
+        self._mcp_server_listeners: set[Any] = set()
         self.tool_result_router = ToolResultRouter(
             agent=self,
             config=config,
@@ -703,7 +707,7 @@ class AiAssistAgent:
             "dbus": ("dbus_next", "dbus-next"),
         }
 
-        for source_type in ("mqtt", "dbus", "file"):
+        for source_type in ("mqtt", "dbus", "file", "mcp"):
             type_actions = [a for a in event_actions if a.trigger_type == source_type]
             if not type_actions:
                 continue
@@ -796,6 +800,20 @@ class AiAssistAgent:
             async with self._transport(config) as transport:
                 yield transport
 
+    def add_mcp_event_listener(self, listener) -> None:
+        """Register a consumer for local event-bridge MCP notifications."""
+        self._mcp_event_listeners.add(listener)
+
+    def remove_mcp_event_listener(self, listener) -> None:
+        self._mcp_event_listeners.discard(listener)
+
+    def add_mcp_server_listener(self, listener) -> None:
+        """Register a callback invoked after an MCP server reconnects."""
+        self._mcp_server_listeners.add(listener)
+
+    def remove_mcp_server_listener(self, listener) -> None:
+        self._mcp_server_listeners.discard(listener)
+
     async def _run_server(self, name: str, config: MCPServerConfig):
         """Run an MCP server connection with automatic retry on failure"""
         backoff = 5
@@ -803,7 +821,22 @@ class AiAssistAgent:
             try:
                 async with self._connection_transport(config) as transport:
                     read_stream, write_stream = transport[:2]
-                    async with ClientSession(read_stream, write_stream) as session:
+
+                    async def event_notification(params: MCPEventEnvelope) -> None:
+                        for listener in tuple(self._mcp_event_listeners):
+                            await listener(name, params)
+
+                    async with ClientSession(
+                        read_stream,
+                        write_stream,
+                        notification_bindings=[
+                            NotificationBinding(
+                                method=EVENT_NOTIFICATION_METHOD,
+                                params_type=MCPEventEnvelope,
+                                handler=event_notification,
+                            )
+                        ],
+                    ) as session:
                         try:
                             # OAuth authorization requires a person to complete a
                             # browser flow.  Do not cancel that flow after the
@@ -820,6 +853,8 @@ class AiAssistAgent:
                             logger.exception("Error connecting to %s: %s", name, e)
                             raise
                         self.sessions[name] = session
+                        for listener in tuple(self._mcp_server_listeners):
+                            await listener(name)
 
                         tools_list = await session.list_tools()
                         for tool in tools_list.tools:
