@@ -1,6 +1,8 @@
 """Tests for remote MCP OAuth token persistence."""
 
 import stat
+import time
+from unittest.mock import AsyncMock
 
 import httpx2
 import pytest
@@ -31,6 +33,43 @@ async def test_token_storage_round_trips_credentials_with_private_permissions(tm
     assert (await storage.get_tokens()).access_token == "access"
     assert (await storage.get_client_info()).client_id == "client-id"
     assert stat.S_IMODE((tmp_path / "oauth.json").stat().st_mode) == 0o600
+
+
+@pytest.mark.asyncio
+async def test_configured_provider_restores_persisted_token_expiry(tmp_path):
+    storage = MCPTokenStorage(tmp_path / "oauth.json")
+    await storage.set_tokens(OAuthToken(access_token="access", refresh_token="refresh", expires_in=3600))
+    stored_expiry = await storage.get_token_expiry_time()
+
+    provider = ConfiguredOAuthClientProvider(
+        "https://mcp.example.test",
+        OAuthClientMetadata(redirect_uris=[AnyUrl("http://127.0.0.1:8765/callback")]),
+        storage,
+        authorization_lock_path=tmp_path / "oauth.lock",
+    )
+    await provider._initialize()
+
+    assert stored_expiry is not None
+    assert stored_expiry > time.time()
+    assert provider.context.token_expiry_time == stored_expiry
+    assert provider.context.is_token_valid()
+
+
+@pytest.mark.asyncio
+async def test_configured_provider_expires_legacy_token_cache(tmp_path):
+    storage = MCPTokenStorage(tmp_path / "oauth.json")
+    storage._write({"tokens": OAuthToken(access_token="access", refresh_token="refresh", expires_in=3600).model_dump()})
+    provider = ConfiguredOAuthClientProvider(
+        "https://mcp.example.test",
+        OAuthClientMetadata(redirect_uris=[AnyUrl("http://127.0.0.1:8765/callback")]),
+        storage,
+        authorization_lock_path=tmp_path / "oauth.lock",
+    )
+
+    await provider._initialize()
+
+    assert provider.context.token_expiry_time == -1.0
+    assert not provider.context.is_token_valid()
 
 
 @pytest.mark.asyncio
@@ -179,6 +218,25 @@ async def test_configured_provider_forwards_responses_to_parent_auth_flow(tmp_pa
     with pytest.raises(StopAsyncIteration):
         await flow.asend(response)
     assert received_responses == [response]
+
+
+@pytest.mark.asyncio
+async def test_session_cleanup_401_never_starts_browser_oauth(tmp_path):
+    redirect_handler = AsyncMock()
+    provider = ConfiguredOAuthClientProvider(
+        "https://mcp.example.test",
+        OAuthClientMetadata(redirect_uris=[AnyUrl("http://127.0.0.1:8765/callback")]),
+        MCPTokenStorage(tmp_path / "oauth.json"),
+        redirect_handler=redirect_handler,
+        authorization_lock_path=tmp_path / "oauth.lock",
+    )
+    request = httpx2.Request("DELETE", "https://mcp.example.test")
+    flow = provider._auth_flow(request)
+
+    assert await anext(flow) is request
+    with pytest.raises(StopAsyncIteration):
+        await flow.asend(httpx2.Response(401, request=request))
+    redirect_handler.assert_not_awaited()
 
 
 def test_populate_missing_response_issuer_is_opt_in():

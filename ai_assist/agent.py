@@ -805,7 +805,14 @@ class AiAssistAgent:
                     read_stream, write_stream = transport[:2]
                     async with ClientSession(read_stream, write_stream) as session:
                         try:
-                            await asyncio.wait_for(session.initialize(), timeout=60.0)
+                            # OAuth authorization requires a person to complete a
+                            # browser flow.  Do not cancel that flow after the
+                            # ordinary MCP initialization timeout and immediately
+                            # launch another browser challenge.
+                            if config.oauth:
+                                await session.initialize()
+                            else:
+                                await asyncio.wait_for(session.initialize(), timeout=60.0)
                         except TimeoutError:
                             logger.warning("%s timed out during initialization", name)
                             raise
