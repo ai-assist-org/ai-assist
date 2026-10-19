@@ -253,7 +253,21 @@ async def test_streaming_no_history_keeps_only_current_request(make_replay_agent
     assert events[-1]["text"] == "Done"
     sent = stream.call_args.kwargs["messages"]
     assert not any("Old" in str(message) for message in sent)
+    assert "output_config" not in stream.call_args.kwargs
     assert len(history) == 3
+
+
+async def test_streaming_sends_configured_effort(make_replay_agent):
+    agent = await make_replay_agent([{"content": [{"type": "text", "text": "Done"}], "stop_reason": "end_turn"}])
+    agent.config.effort = "medium"
+
+    from unittest.mock import patch
+
+    with patch.object(agent.anthropic.messages, "stream", wraps=agent.anthropic.messages.stream) as stream:
+        events = [event async for event in agent.query_streaming("go")]
+
+    assert events[-1]["text"] == "Done"
+    assert stream.call_args.kwargs["output_config"] == {"effort": "medium"}
 
 
 async def test_streaming_stops_after_repeated_empty_responses(make_replay_agent):

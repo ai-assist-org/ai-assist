@@ -583,6 +583,8 @@ Skills are \alert{untrusted code} --- defense in depth:
 \textbf{Slash Commands}
 \begin{itemize}\scriptsize
   \item \texttt{/status} --- system and schedule status
+  \item \texttt{/model [model[:effort]]} --- show or change the session model
+  \item \texttt{/effort [level|auto]} --- control request effort for the session
   \item \texttt{/debug} --- current query diagnostic state
   \item \texttt{/history} --- recent monitoring history
   \item \texttt{/prompts} --- list MCP prompts
@@ -1577,12 +1579,13 @@ ai-assist /sandbox service pr-review logs -f
   \item Variables propagate between tasks
   \item Built-in vars: \texttt{\$\{date\}}, \texttt{\$\{config\_dir\}}, etc.
   \item User vars via \texttt{variables.yaml}
+  \item Model defaults can include effort: \texttt{claude-sonnet-4-6:medium}
 \end{itemize}
 
 \smallskip
 \textbf{Directives}
 \begin{itemize}\scriptsize\setlength{\itemsep}{1pt}
-  \item \texttt{@task} -- agent objectives with exposed variables, optional \texttt{model=}
+  \item \texttt{@task} -- agent objectives with exposed variables, optional \texttt{model=} and \texttt{effort=}
   \item \texttt{@set} -- variable assignment
   \item \texttt{@if/@else} -- conditional execution
   \item \texttt{@loop} -- iterate over collections
@@ -1593,14 +1596,14 @@ ai-assist /sandbox service pr-review logs -f
 \begin{column}{0.48\textwidth}
 \begin{lstlisting}[style=code,basicstyle=\ttfamily\fontsize{5.5}{7}\selectfont,language={}]
 @start
-@task find_handlers @no-kg model=low
+@task find_handlers @no-kg model=low effort=low
 Goal: Find HTTP handlers.
 Expose: handlers
 @end
 
 @if len(handlers) > 0
 @loop handlers as h limit=5
-  @task inspect @no-history model=medium
+  @task inspect @no-history model=medium effort=high
   Goal: What does ${h} do?
   Expose: summary
   @end

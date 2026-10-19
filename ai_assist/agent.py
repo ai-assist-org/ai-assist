@@ -426,7 +426,9 @@ class AiAssistAgent:
 
         # Display model configuration
         max_tokens = self.get_max_tokens()
-        console_print(f"🤖 Model: {config.model} (max output tokens: {max_tokens:,})")
+        configured_effort = getattr(config, "effort", None)
+        effort = f", effort: {configured_effort}" if configured_effort else ""
+        console_print(f"🤖 Model: {config.model} (max output tokens: {max_tokens:,}{effort})")
         if jev_configured(config):
             console_print(f"⚖️  jev: goal-success decisions via {config.jev_model}")
         self.sessions: dict[str, ClientSession] = {}
@@ -1983,6 +1985,16 @@ class AiAssistAgent:
                     def create_stream(
                         system: Any = system_prompt, tools: Any = api_tools, request_messages: Any = messages
                     ) -> Any:
+                        effort = getattr(self.config, "effort", None)
+                        if effort:
+                            return self.anthropic.messages.stream(
+                                model=self.config.model,
+                                max_tokens=self.get_max_tokens(),
+                                system=system,
+                                tools=tools,
+                                messages=request_messages,
+                                output_config={"effort": effort},
+                            )
                         return self.anthropic.messages.stream(
                             model=self.config.model,
                             max_tokens=self.get_max_tokens(),

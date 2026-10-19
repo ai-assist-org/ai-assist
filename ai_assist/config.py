@@ -5,7 +5,7 @@ import logging.handlers
 import os
 import stat
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 
 import yaml
 from dotenv import load_dotenv
@@ -16,6 +16,24 @@ if _project_env.exists():
     load_dotenv(_project_env)
 
 logger = logging.getLogger(__name__)
+
+EffortLevel = Literal["low", "medium", "high", "xhigh", "max"]
+EFFORT_LEVELS: tuple[EffortLevel, ...] = ("low", "medium", "high", "xhigh", "max")
+
+
+def _split_model_effort(value: str | None) -> tuple[str | None, EffortLevel | None]:
+    """Split a model's optional ``model:effort`` suffix."""
+    if not value:
+        return value, None
+    model, separator, suffix = value.rpartition(":")
+    if separator and suffix in EFFORT_LEVELS and model:
+        return model, suffix
+    return value, None
+
+
+def _env_effort() -> EffortLevel | None:
+    """Return the configured effort, leaving validation to Pydantic."""
+    return cast(EffortLevel | None, os.getenv("AI_ASSIST_EFFORT"))
 
 
 class _WatchedTimedRotatingFileHandler(logging.handlers.TimedRotatingFileHandler):
@@ -250,7 +268,21 @@ class MCPServerConfig(BaseModel):
 def _env_model_tiers() -> dict[str, str]:
     """AWL model-tier overrides from env (level -> model id); unset levels omitted."""
     env = {"low": "AI_ASSIST_MODEL_LOW", "medium": "AI_ASSIST_MODEL_MEDIUM", "high": "AI_ASSIST_MODEL_HIGH"}
-    return {level: os.environ[var] for level, var in env.items() if os.getenv(var)}
+    tiers: dict[str, str] = {}
+    for level, var in env.items():
+        model, _ = _split_model_effort(os.getenv(var))
+        if model:
+            tiers[level] = model
+    return tiers
+
+
+def _env_model_tier_efforts() -> dict[str, EffortLevel]:
+    env = {"low": "AI_ASSIST_MODEL_LOW", "medium": "AI_ASSIST_MODEL_MEDIUM", "high": "AI_ASSIST_MODEL_HIGH"}
+    return {
+        level: effort
+        for level, var in env.items()
+        if os.getenv(var) and (effort := _split_model_effort(os.environ[var])[1])
+    }
 
 
 def _env_session_model() -> str:
@@ -260,7 +292,13 @@ def _env_session_model() -> str:
     config that only sets the AWL levels still runs on a sensible model instead
     of the built-in Anthropic default.
     """
-    return os.getenv("AI_ASSIST_MODEL") or os.getenv("AI_ASSIST_MODEL_HIGH") or "claude-sonnet-4-6"
+    value = os.getenv("AI_ASSIST_MODEL") or os.getenv("AI_ASSIST_MODEL_HIGH") or "claude-sonnet-4-6"
+    return _split_model_effort(value)[0] or "claude-sonnet-4-6"
+
+
+def _env_session_model_effort() -> EffortLevel | None:
+    value = os.getenv("AI_ASSIST_MODEL") or os.getenv("AI_ASSIST_MODEL_HIGH") or "claude-sonnet-4-6"
+    return _split_model_effort(value)[1]
 
 
 class AiAssistConfig(BaseModel):
@@ -290,6 +328,11 @@ class AiAssistConfig(BaseModel):
     # Optional per-role model overrides (fall back to `model` when unset)
     synthesis_model: str | None = Field(default_factory=lambda: os.getenv("AI_ASSIST_SYNTHESIS_MODEL"))
     compaction_model: str | None = Field(default_factory=lambda: os.getenv("AI_ASSIST_COMPACTION_MODEL"))
+
+    # Optional Anthropic Messages API effort level. Unset preserves the provider default.
+    effort: EffortLevel | None = Field(default_factory=_env_effort)
+    model_default_effort: EffortLevel | None = Field(default_factory=_env_session_model_effort)
+    model_tier_efforts: dict[str, EffortLevel] = Field(default_factory=_env_model_tier_efforts)
 
     # AWL model-level overrides: level name -> concrete model id. Levels not set
     # here fall back to `model` (the `default` tier) at resolution time. Valid
@@ -574,6 +617,9 @@ class AiAssistConfig(BaseModel):
             model=_env_session_model(),
             synthesis_model=os.getenv("AI_ASSIST_SYNTHESIS_MODEL"),
             compaction_model=os.getenv("AI_ASSIST_COMPACTION_MODEL"),
+            effort=_env_effort() or _env_session_model_effort(),
+            model_default_effort=_env_session_model_effort(),
+            model_tier_efforts=_env_model_tier_efforts(),
             model_tiers=_env_model_tiers(),
             enable_prompt_caching=os.getenv("AI_ASSIST_ENABLE_CACHE", "true").lower() == "true",
             enable_mlflow=os.getenv("AI_ASSIST_ENABLE_MLFLOW", "false").lower() == "true",

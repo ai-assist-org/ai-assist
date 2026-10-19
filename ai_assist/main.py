@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from .commands import get_command_suggestion, is_valid_cli_command, is_valid_interactive_command
-from .config import get_config, get_config_dir
+from .config import EFFORT_LEVELS, EffortLevel, _split_model_effort, get_config, get_config_dir
 from .identity import AssistantIdentity, Identity, UserIdentity, get_identity
 from .kg_queries import KnowledgeGraphQueries
 from .knowledge_graph import KnowledgeGraph
@@ -24,6 +24,20 @@ if TYPE_CHECKING:
     from .agent import AiAssistAgent
 
 logger = logging.getLogger(__name__)
+
+
+def _pop_effort_override(argv: list[str]) -> EffortLevel | None:
+    """Remove and validate an optional --effort value from argv."""
+    if "--effort" not in argv:
+        return None
+    idx = argv.index("--effort")
+    if idx + 1 >= len(argv) or argv[idx + 1].startswith("-"):
+        raise ValueError("--effort requires one of: " + ", ".join(EFFORT_LEVELS))
+    value = argv[idx + 1]
+    if value not in EFFORT_LEVELS:
+        raise ValueError(f"Invalid --effort value '{value}'. Choose one of: " + ", ".join(EFFORT_LEVELS))
+    del argv[idx : idx + 2]
+    return value
 
 
 def set_terminal_title(title: str):
@@ -728,6 +742,12 @@ async def main_async():
             print("Error: --model requires a model id")
             sys.exit(1)
 
+    try:
+        effort_override = _pop_effort_override(sys.argv)
+    except ValueError as e:
+        print(f"Error: {e}")
+        sys.exit(1)
+
     session_override = None
     session_flag_used = "--session" in sys.argv
     if session_flag_used:
@@ -740,7 +760,13 @@ async def main_async():
 
     config = get_config()
     if model_override:
-        config.model = model_override
+        model, model_effort = _split_model_effort(model_override)
+        config.model = model or model_override
+        config.model_default_effort = model_effort
+        if not effort_override and not os.getenv("AI_ASSIST_EFFORT") and model_effort:
+            config.effort = model_effort
+    if effort_override:
+        config.effort = effort_override
 
     # Initialize event-schedules.json (migrate from legacy formats if needed)
     from .action_loader import ActionLoader

@@ -44,7 +44,7 @@ periodic automated monitoring and interactive querying.
     ---
 
     A rich terminal UI with streaming responses, markdown rendering, history
-    search, and tab completion.
+    search, tab completion, and session model/effort controls.
 
 -   📊 **Monitoring**
 
@@ -64,8 +64,8 @@ periodic automated monitoring and interactive querying.
 
     ---
 
-    Script multi-step agent workflows with conditionals, loops, and variable
-    propagation in the Agent Workflow Language.
+    Script multi-step agent workflows with conditionals, loops, variable
+    propagation, and per-task model/effort controls in the Agent Workflow Language.
 
 -   🚀 **Agent Skills**
 

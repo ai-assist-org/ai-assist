@@ -16,6 +16,7 @@ class TaskNode:
     max_tool_calls: int | None = None
     max_time: int | None = None
     model: str | None = None
+    effort: str | None = None
 
 
 @dataclass

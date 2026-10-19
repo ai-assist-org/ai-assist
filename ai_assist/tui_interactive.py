@@ -10,7 +10,7 @@ import sys
 import threading
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.filters import has_completions
@@ -23,7 +23,7 @@ from rich.table import Table
 
 from .agent import AiAssistAgent
 from .commands import get_command_suggestion, is_valid_interactive_command
-from .config import get_config_dir
+from .config import EFFORT_LEVELS, EffortLevel, _split_model_effort, get_config_dir
 from .config_watcher import ConfigWatcher
 from .context import ConversationMemory, KnowledgeGraphContext
 from .escape_watcher import EscapeWatcher
@@ -905,7 +905,11 @@ async def tui_interactive_mode(agent: AiAssistAgent, state_manager: StateManager
         async def _bg():
             try:
                 summary, facts = await asyncio.to_thread(
-                    conversation_memory.summarize_and_extract, agent.anthropic, model, old
+                    conversation_memory.summarize_and_extract,
+                    agent.anthropic,
+                    model,
+                    old,
+                    effort=agent.config.effort,
                 )
                 # If /clear reset the conversation while we were summarizing,
                 # discard the result rather than resurrecting stale exchanges.
@@ -936,7 +940,11 @@ async def tui_interactive_mode(agent: AiAssistAgent, state_manager: StateManager
         async def _bg():
             try:
                 _summary, facts = await asyncio.to_thread(
-                    conversation_memory.summarize_and_extract, agent.anthropic, model, exchanges
+                    conversation_memory.summarize_and_extract,
+                    agent.anthropic,
+                    model,
+                    exchanges,
+                    effort=agent.config.effort,
                 )
                 if facts:
                     await asyncio.to_thread(agent._save_insights, facts, "clear_extraction")
@@ -1328,6 +1336,14 @@ async def tui_interactive_mode(agent: AiAssistAgent, state_manager: StateManager
                         continue
 
                 # Handle commands
+                if user_input.lower() == "/model" or user_input.lower().startswith("/model "):
+                    await handle_model_effort_command(user_input, agent, console)
+                    continue
+
+                if user_input.lower() == "/effort" or user_input.lower().startswith("/effort "):
+                    await handle_model_effort_command(user_input, agent, console)
+                    continue
+
                 if user_input.lower() == "/mode" or user_input.lower().startswith("/mode "):
                     parts = user_input.split()
                     fs_tools = agent.filesystem_tools
@@ -1530,6 +1546,7 @@ async def tui_interactive_mode(agent: AiAssistAgent, state_manager: StateManager
                     agent.anthropic,
                     model,
                     list(conversation_memory.exchanges),
+                    effort=agent.config.effort,
                 )
                 if facts:
                     await asyncio.to_thread(agent._save_insights, facts, "exit_extraction")
@@ -1606,6 +1623,40 @@ async def handle_status_command(state_manager: StateManager, console: Console, a
             for name, status in sorted(mcp_status.items()):
                 console.print(f"  [cyan]{name}:[/cyan] {status}")
     console.print()
+
+
+async def handle_model_effort_command(user_input: str, agent: AiAssistAgent, console: Console) -> None:
+    """Show or change the current session model and effort."""
+    parts = user_input.split(maxsplit=1)
+    command = parts[0].lower()
+    value = parts[1].strip() if len(parts) > 1 else None
+
+    if command == "/model":
+        if not value:
+            console.print(f"\n[cyan]Model: {agent.config.model}[/cyan]\n")
+            return
+        model, attached_effort = _split_model_effort(value)
+        agent.config.model = model or value
+        if attached_effort:
+            agent.config.model_default_effort = attached_effort
+            agent.config.effort = attached_effort
+        console.print(f"\n[green]Model set to {agent.config.model} for this session[/green]\n")
+        return
+
+    if not value:
+        current = agent.config.effort or "provider default"
+        console.print(f"\n[cyan]Effort: {current}[/cyan]\n")
+        return
+    if value.lower() == "auto":
+        agent.config.effort = getattr(agent.config, "model_default_effort", None)
+        current = agent.config.effort or "provider default"
+        console.print(f"\n[green]Effort reset to {current} for this session[/green]\n")
+        return
+    if value.lower() not in EFFORT_LEVELS:
+        console.print("\n[red]Usage: /effort [low|medium|high|xhigh|max|auto][/red]\n")
+        return
+    agent.config.effort = cast(EffortLevel, value.lower())
+    console.print(f"\n[green]Effort set to {agent.config.effort} for this session[/green]\n")
 
 
 async def handle_debug_command(agent: AiAssistAgent, console: Console):

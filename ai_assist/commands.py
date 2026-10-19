@@ -54,6 +54,15 @@ register_command(CommandDef("/search", "Search conversation history", mode="inte
 register_command(
     CommandDef("/mode", "Show or set permission mode", mode="interactive", args="[manual|auto|autonomous]")
 )
+register_command(CommandDef("/model", "Show or set the session model", mode="interactive", args="[model[:effort]]"))
+register_command(
+    CommandDef(
+        "/effort",
+        "Show or set the session effort",
+        mode="interactive",
+        args="[low|medium|high|xhigh|max|auto]",
+    )
+)
 
 # --- Skill management (interactive-only) ---
 

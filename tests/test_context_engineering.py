@@ -589,6 +589,17 @@ class TestCompactionFactExtraction:
         assert facts[0]["category"] == "project_context"
         assert facts[0]["key"] == "eco-gotests-location"
 
+    def test_summarize_and_extract_sends_effort_when_configured(self):
+        mem = self._mem_with(8)
+        resp = MagicMock()
+        resp.content = [MagicMock(text='Summary.\n\n```json\n{"facts": []}\n```')]
+        client = MagicMock()
+        client.messages.stream.return_value = _mock_stream_message(resp)
+
+        mem.summarize_and_extract(client, "m", mem.exchanges[:-4], effort="low")
+
+        assert client.messages.stream.call_args.kwargs["output_config"] == {"effort": "low"}
+
     def test_summarize_and_extract_malformed_facts_keeps_summary(self):
         text = "Just a summary.\n\n```json\n{not valid json]\n```"
         resp = MagicMock()

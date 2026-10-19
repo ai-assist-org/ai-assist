@@ -8,6 +8,7 @@ import pytest
 from ai_assist.identity import AssistantIdentity, Identity, UserIdentity
 from ai_assist.knowledge_graph import KnowledgeGraph
 from ai_assist.main import (
+    _pop_effort_override,
     cost_command,
     eval_stats_command,
     identity_init_command,
@@ -21,6 +22,18 @@ from ai_assist.main import (
     set_terminal_title,
     should_use_tui,
 )
+
+
+def test_pop_effort_override_validates_and_removes_value():
+    argv = ["ai-assist", "--effort", "xhigh", "/query", "hi"]
+    assert _pop_effort_override(argv) == "xhigh"
+    assert argv == ["ai-assist", "/query", "hi"]
+
+
+@pytest.mark.parametrize("argv", [["ai-assist", "--effort"], ["ai-assist", "--effort", "adaptive"]])
+def test_pop_effort_override_rejects_invalid_value(argv):
+    with pytest.raises(ValueError, match="--effort"):
+        _pop_effort_override(argv)
 
 
 @pytest.fixture

@@ -33,6 +33,7 @@ def isolate_llm_env(monkeypatch):
         "ANTHROPIC_VERTEX_REGION",
         "AI_ASSIST_API_KEY",
         "AI_ASSIST_MODEL",
+        "AI_ASSIST_EFFORT",
         "AI_ASSIST_MODEL_LOW",
         "AI_ASSIST_MODEL_MEDIUM",
         "AI_ASSIST_MODEL_HIGH",
