@@ -1289,6 +1289,12 @@ set by <code>--model</code>. <code>default</code> and <code>high</code> <strong>
 <code>AI_ASSIST_MODEL</code> and <code>high</code> tracks it; set only <code>AI_ASSIST_MODEL_HIGH</code> and the
 session model tracks that (so a config that defines only the AWL levels still
 runs on a sensible model). Set both explicitly to make them differ.</p>
+<p>Model environment values may include an effort suffix, for example
+<code>AI_ASSIST_MODEL=claude-sonnet-4-6:medium</code> or
+<code>AI_ASSIST_MODEL_HIGH=claude-opus-4-6:max</code>. A recognized suffix is removed from
+the model ID and becomes that model's default effort. Explicit
+<code>AI_ASSIST_EFFORT</code> and <code>--effort</code> values take precedence. Unrecognized suffixes
+are preserved as part of the model ID for custom providers.</p>
 <p>The value is validated at workflow load time. Any value other than <code>low</code>,
 <code>medium</code>, <code>high</code>, or <code>default</code> (including a concrete model id) fails the
 workflow before any task executes.</p>
@@ -1301,6 +1307,20 @@ Expose: failed_jobs
 Goal: Perform root cause analysis on ${failed_jobs}.
 Expose: rca_result
 @end</p>
+<h2 id="effort">effort=<level><a class="headerlink" href="#effort" title="Permanent link">&para;</a></h2>
+<p>An optional <code>effort</code> attribute overrides the configured request effort for one
+task. Valid values are <code>low</code>, <code>medium</code>, <code>high</code>, <code>xhigh</code>, and <code>max</code>; availability
+depends on the selected model and endpoint. A task without <code>effort=</code> inherits
+<code>AI_ASSIST_EFFORT</code> (or the provider default when unset). Effort does not change
+the model's thinking mode.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>@task quick_lookup effort=low
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>Goal: Find the matching job.
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>@end
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>@task investigate effort=high
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>Goal: Explain the root cause.
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>@end
+</code></pre></div>
 <hr />
 <h2 id="continue-on-failure">@continue-on-failure<a class="headerlink" href="#continue-on-failure" title="Permanent link">&para;</a></h2>
 <p>By default, if a top-level task (outside a loop) fails, the workflow <strong>stops immediately</strong> and returns <code>success: false</code>. This prevents cascading errors from missing variables.</p>
@@ -1314,7 +1334,7 @@ Goal: Clean up temporary files. Not critical if this fails.
 <h1 id="tasks">Tasks<a class="headerlink" href="#tasks" title="Permanent link">&para;</a></h1>
 <p>Tasks represent <strong>objectives for the agent</strong>.</p>
 <p>Syntax:</p>
-<p>@task <task_id> [hints...] [max_tool_calls=N] [max_time=N] [model=<model_name>]
+<p>@task <task_id> [hints...] [max_tool_calls=N] [max_time=N] [model=<model_name>] [effort=<level>]
 ...
 @end</p>
 <p>Example:</p>
@@ -1376,7 +1396,7 @@ Goal: Fetch the latest changes using <code>git -C /path/to/repo fetch origin mas
 <h2 id="initial-variables">Initial Variables<a class="headerlink" href="#initial-variables" title="Permanent link">&para;</a></h2>
 <p>Variables can be injected before the script runs, without needing <code>@set</code>.</p>
 <p><strong>From the CLI:</strong></p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>ai-assist<span class="w"> </span>/run<span class="w"> </span>workflow.awl<span class="w"> </span><span class="nv">target</span><span class="o">=</span><span class="s2">"HTTP server"</span><span class="w"> </span><span class="nv">days</span><span class="o">=</span><span class="m">7</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>ai-assist<span class="w"> </span>/run<span class="w"> </span>workflow.awl<span class="w"> </span><span class="nv">target</span><span class="o">=</span><span class="s2">"HTTP server"</span><span class="w"> </span><span class="nv">days</span><span class="o">=</span><span class="m">7</span>
 </code></pre></div>
 <p><strong>From an agent prompt:</strong> ask the agent to run a <code>.awl</code> file and it will call the
 <code>introspection__execute_awl_script</code> tool with the variables you specify.</p>
@@ -1459,9 +1479,9 @@ Goal: Fetch the latest changes using <code>git -C /path/to/repo fetch origin mas
 </table>
 <h2 id="user-defined-variables-variablesyaml">User-Defined Variables (<code>variables.yaml</code>)<a class="headerlink" href="#user-defined-variables-variablesyaml" title="Permanent link">&para;</a></h2>
 <p>Define custom variables in <code>~/.ai-assist/variables.yaml</code> to make them available in all AWL scripts. This makes scripts location-independent — different users can run the same script with their own settings.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">workspace</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">~/ai-assist/workspace</span>
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="nt">team</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">dci</span>
-<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="nt">jira_project</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">CILAB</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nt">workspace</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">~/ai-assist/workspace</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="nt">team</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">dci</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="nt">jira_project</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">CILAB</span>
 </code></pre></div>
 <p>Values support <code>~</code> expansion and <code>$ENV_VAR</code> substitution. The file is optional.</p>
 <p><strong>Precedence</strong> (highest wins):</p>
