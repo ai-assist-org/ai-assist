@@ -5,13 +5,18 @@ enabling intelligent decisions about when to use cached data vs fresh API calls.
 """
 
 import json
+import logging
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
+
+from .skill_performance import SkillPerformanceStore
 
 if TYPE_CHECKING:
     from .agent import AiAssistAgent
     from .context import ConversationMemory
     from .knowledge_graph import KnowledgeGraph
+
+logger = logging.getLogger(__name__)
 
 
 class IntrospectionTools:
@@ -1088,6 +1093,15 @@ Do NOT compact if you still need the old tool results for your current task.
                     "available_skills": available,
                 }
             )
+
+        # Record the invocation (the model requesting a skill's body is the
+        # cleanest "skill was used" signal). Best-effort: never fail the tool.
+        kg = getattr(self.agent, "knowledge_graph", None)
+        if kg is not None:
+            try:
+                SkillPerformanceStore(kg).record_invocation(skill_name)
+            except Exception:
+                logger.exception("Failed to record skill invocation for %r", skill_name)
 
         result = {
             "skill_name": skill_name,

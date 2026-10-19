@@ -89,7 +89,7 @@ Bi-temporal database tracking:
 
 **Compaction-time extraction**: In interactive mode, durable facts the user stated are extracted into the KG when the conversation is compacted, cleared (`/clear`), or the session exits (synchronous on exit so short sessions still contribute), as a background task, so they survive a growing context window. Extraction reuses an existing `project_context` key when a new fact is a near-duplicate (semantic similarity ≥ `AiAssistAgent.DEDUP_SIM_THRESHOLD`), letting the KG's last-write-wins upsert supersede it instead of accreting parallel entries. The threshold is deliberately conservative — a false merge overwrites a distinct fact irrecoverably.
 
-**Auto Context Injection**: Semantically relevant entities are automatically surfaced in the system prompt based on query similarity.
+**Auto Context Injection**: Semantically relevant entities are automatically surfaced in the system prompt based on query similarity. Bookkeeping types in `KnowledgeGraph.NON_EMBEDDED_TYPES` (`tool_result`, `skill_performance`) are never embedded, so they stay out of semantic recall and context injection.
 
 Files: `knowledge_graph.py`, `kg_queries.py`, `kg_query_tools.py`, `knowledge_tools.py`, `embedding.py`, `context.py`
 
@@ -105,12 +105,14 @@ Skills follow the [agentskills.io](https://agentskills.io) specification:
   precedence over same-named skills. Handled by `handle_skill_invocation`
   (`tui_interactive.py`).
 
+**Usage tracking**: Each skill invocation — model-invoked (via `introspection__get_skill_help`) and manual (`/<skill-name>`) — is counted in the KG as a `skill_performance` entity (invocation count + last used). View with `/skill/stats`. Recording is best-effort and never blocks the skill run. This is invocation-only (no outcome/confidence) by design; `skill_performance.py` carries the confidence-update machinery for a future outcome-scoring step.
+
 **Script Execution Security** (disabled by default):
 - Requires `AI_ASSIST_ALLOW_SCRIPT_EXECUTION=true`
 - Sandboxed environment (no API keys, 30s timeout, 20KB output limit)
 - Per-skill env var allowlist via `/skill/add_env` (persisted in `~/.ai-assist/skill_env.json`)
 
-Files: `skills_loader.py`, `skills_manager.py`, `script_execution_tools.py`, `security.py`
+Files: `skills_loader.py`, `skills_manager.py`, `script_execution_tools.py`, `security.py`, `skill_performance.py`
 
 ### Claude Code Plugins
 

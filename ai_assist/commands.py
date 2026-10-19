@@ -86,6 +86,7 @@ register_command(
     )
 )
 register_command(CommandDef("/skill/list", "List all installed Agent Skills", mode="interactive"))
+register_command(CommandDef("/skill/stats", "Show skill usage stats (invocation counts)", mode="interactive"))
 register_command(
     CommandDef("/skill/search", "Search ClawHub and skills.sh for skills", mode="interactive", args="<query>")
 )
