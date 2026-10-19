@@ -101,7 +101,7 @@ class ConversationMemory:
         self._compacting = False
 
     def summarize_and_extract(
-        self, anthropic_client: Any, model: str, old_exchanges: list[dict[str, str]]
+        self, anthropic_client: Any, model: str, old_exchanges: list[dict[str, str]], effort: str | None = None
     ) -> tuple[str | None, list[dict]]:
         """Summarize old exchanges and extract durable facts in a single LLM call.
 
@@ -151,6 +151,7 @@ class ConversationMemory:
                 model=model,
                 max_tokens=1500,
                 messages=[{"role": "user", "content": prompt}],
+                **({"output_config": {"effort": effort}} if effort else {}),
             ) as stream:
                 response = stream.get_final_message()
 
@@ -217,7 +218,7 @@ class ConversationMemory:
         )
         return True
 
-    def compact(self, anthropic_client: Any, model: str, keep_recent: int = 4) -> bool:
+    def compact(self, anthropic_client: Any, model: str, keep_recent: int = 4, effort: str | None = None) -> bool:
         """Compact old exchanges into a summary using Claude (synchronous).
 
         Takes the oldest exchanges (all except keep_recent most recent),
@@ -239,7 +240,7 @@ class ConversationMemory:
         old_exchanges = self.exchanges[:-keep_recent]
         old_ids = {id(ex) for ex in old_exchanges}
 
-        summary_text, _facts = self.summarize_and_extract(anthropic_client, model, old_exchanges)
+        summary_text, _facts = self.summarize_and_extract(anthropic_client, model, old_exchanges, effort=effort)
         if summary_text:
             self.finish_compaction(old_ids, summary_text)
             return True

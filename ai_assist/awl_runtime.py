@@ -24,6 +24,7 @@ from .awl_ast import (
     WorkflowNode,
 )
 from .awl_expressions import AWLExpressionEvaluator
+from .config import EFFORT_LEVELS
 from .filesystem_tools import extract_command_names
 from .jev_client import JevError, jev_configured, jev_decide, noul, noul_probability
 from .output import console_print
@@ -110,6 +111,31 @@ def _validate_workflow_models(workflow: WorkflowNode, valid_levels: tuple[str, .
                         f"@task '{node.task_id}': model '{node.model}' is not a valid level; "
                         f"use one of: {', '.join(valid_levels)}"
                     )
+            elif isinstance(node, IfNode):
+                _walk(node.then_body)
+                _walk(node.else_body)
+            elif isinstance(node, LoopNode):
+                _walk(node.body)
+            elif isinstance(node, WhileNode):
+                _walk(node.body)
+            elif isinstance(node, GoalNode):
+                _walk(node.body)
+
+    _walk(workflow.body)
+    return errors
+
+
+def _validate_workflow_efforts(workflow: WorkflowNode) -> list[str]:
+    """Check that every effort= override uses a supported effort level."""
+    errors: list[str] = []
+
+    def _walk(nodes: list[ASTNode]):
+        for node in nodes:
+            if isinstance(node, TaskNode) and node.effort and node.effort not in EFFORT_LEVELS:
+                errors.append(
+                    f"@task '{node.task_id}': effort '{node.effort}' is not valid; "
+                    f"use one of: {', '.join(EFFORT_LEVELS)}"
+                )
             elif isinstance(node, IfNode):
                 _walk(node.then_body)
                 _walk(node.else_body)
@@ -350,6 +376,10 @@ class AWLRuntime:
         for err in model_errors:
             raise AWLRuntimeError(f"Model validation failed: {err}")
 
+        effort_errors = _validate_workflow_efforts(workflow)
+        for err in effort_errors:
+            raise AWLRuntimeError(f"Effort validation failed: {err}")
+
         if workflow.max_steps is not None:
             self._limits.max_steps = workflow.max_steps
 
@@ -474,8 +504,12 @@ class AWLRuntime:
             try:
                 max_turns = task.max_tool_calls or self._limits.max_tool_calls
                 saved_model = self._agent.config.model
+                saved_effort = getattr(self._agent.config, "effort", None)
                 resolved_model = _resolve_model_level(task.model, self._agent.config.model_tiers, saved_model)
                 self._agent.config.model = resolved_model
+                tier_efforts = getattr(self._agent.config, "model_tier_efforts", None)
+                tier_effort = tier_efforts.get(task.model or "") if isinstance(tier_efforts, dict) else None
+                self._agent.config.effort = task.effort or tier_effort or saved_effort
                 if resolved_model != saved_model:
                     logger.info(
                         "AWL task '%s' using model level '%s': %s",
@@ -492,6 +526,7 @@ class AWLRuntime:
                     )
                 finally:
                     self._agent.config.model = saved_model
+                    self._agent.config.effort = saved_effort
             finally:
                 self._agent.on_inner_execution = prev_inner
 

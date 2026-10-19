@@ -86,8 +86,13 @@ class TestSynthesisEngine:
             )
         ]
 
-        with patch.object(agent.anthropic.messages, "stream", return_value=_mock_stream_message(mock_response)):
+        agent.config.effort = "medium"
+        with patch.object(
+            agent.anthropic.messages, "stream", return_value=_mock_stream_message(mock_response)
+        ) as stream:
             await agent._run_synthesis(conversation, focus="preferences")
+
+        assert stream.call_args.kwargs["output_config"] == {"effort": "medium"}
 
         results = agent.knowledge_graph.search_knowledge(entity_type="user_preference")
         assert len(results) >= 1

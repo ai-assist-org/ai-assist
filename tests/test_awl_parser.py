@@ -85,6 +85,18 @@ Goal: Re-evaluate where the HTTP server is initialized.
     assert task.hints == ["no-history", "no-kg"]
 
 
+def test_parse_task_with_effort():
+    script = """\
+@start
+@task analyze model=high effort=xhigh
+Goal: Investigate the issue.
+@end
+@end"""
+    task = AWLParser(script).parse().body[0]
+    assert task.model == "high"
+    assert task.effort == "xhigh"
+
+
 def test_parse_return():
     script = """\
 @start

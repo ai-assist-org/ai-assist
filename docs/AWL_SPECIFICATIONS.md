@@ -173,6 +173,13 @@ set by `--model`. `default` and `high` **fall back to each other**: set only
 session model tracks that (so a config that defines only the AWL levels still
 runs on a sensible model). Set both explicitly to make them differ.
 
+Model environment values may include an effort suffix, for example
+`AI_ASSIST_MODEL=claude-sonnet-4-6:medium` or
+`AI_ASSIST_MODEL_HIGH=claude-opus-4-6:max`. A recognized suffix is removed from
+the model ID and becomes that model's default effort. Explicit
+`AI_ASSIST_EFFORT` and `--effort` values take precedence. Unrecognized suffixes
+are preserved as part of the model ID for custom providers.
+
 The value is validated at workflow load time. Any value other than `low`,
 `medium`, `high`, or `default` (including a concrete model id) fails the
 workflow before any task executes.
@@ -188,6 +195,24 @@ Expose: failed_jobs
 Goal: Perform root cause analysis on ${failed_jobs}.
 Expose: rca_result
 @end
+
+## effort=<level>
+
+An optional `effort` attribute overrides the configured request effort for one
+task. Valid values are `low`, `medium`, `high`, `xhigh`, and `max`; availability
+depends on the selected model and endpoint. A task without `effort=` inherits
+`AI_ASSIST_EFFORT` (or the provider default when unset). Effort does not change
+the model's thinking mode.
+
+```awl
+@task quick_lookup effort=low
+Goal: Find the matching job.
+@end
+
+@task investigate effort=high
+Goal: Explain the root cause.
+@end
+```
 
 ---
 
@@ -213,7 +238,7 @@ Tasks represent **objectives for the agent**.
 
 Syntax:
 
-@task <task_id> [hints...] [max_tool_calls=N] [max_time=N] [model=<model_name>]
+@task <task_id> [hints...] [max_tool_calls=N] [max_time=N] [model=<model_name>] [effort=<level>]
 ...
 @end
 

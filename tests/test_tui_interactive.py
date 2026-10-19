@@ -11,6 +11,7 @@ from ai_assist.tui_interactive import (
     handle_clear_cache_command,
     handle_help_command,
     handle_history_command,
+    handle_model_effort_command,
     handle_status_command,
     tui_interactive_mode,
 )
@@ -114,6 +115,45 @@ async def test_history_command(mock_state_manager):
     mock_state_manager.get_history.assert_called_once_with("jira_monitor", limit=5)
     output_text = output.getvalue()
     assert "Recent Jira checks" in output_text
+
+
+@pytest.mark.asyncio
+async def test_model_command_shows_and_sets_model():
+    from io import StringIO
+
+    from rich.console import Console
+
+    agent = MagicMock()
+    agent.config.model = "claude-sonnet-4-6"
+    agent.config.effort = "medium"
+    agent.config.model_default_effort = "medium"
+    output = StringIO()
+    console = Console(file=output, force_terminal=False)
+
+    await handle_model_effort_command("/model", agent, console)
+    await handle_model_effort_command("/model claude-opus-4-6:high", agent, console)
+
+    assert agent.config.model == "claude-opus-4-6"
+    assert agent.config.effort == "high"
+    assert "claude-sonnet-4-6" in output.getvalue()
+
+
+@pytest.mark.asyncio
+async def test_effort_command_sets_and_resets_effort():
+    from io import StringIO
+
+    from rich.console import Console
+
+    agent = MagicMock()
+    agent.config.effort = "medium"
+    agent.config.model_default_effort = "low"
+    output = StringIO()
+    console = Console(file=output, force_terminal=False)
+
+    await handle_model_effort_command("/effort high", agent, console)
+    assert agent.config.effort == "high"
+    await handle_model_effort_command("/effort auto", agent, console)
+    assert agent.config.effort == "low"
 
 
 @pytest.mark.asyncio

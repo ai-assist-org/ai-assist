@@ -98,6 +98,13 @@ export AI_ASSIST_ENABLE_CACHE='false'
 Optional per-role overrides (`AI_ASSIST_SYNTHESIS_MODEL`, `AI_ASSIST_COMPACTION_MODEL`) and
 capability overrides for unknown models (`AI_ASSIST_MODEL_MAX_TOKENS`,
 `AI_ASSIST_MODEL_CONTEXT_WINDOW`) are documented in `.env.example`.
+Set `AI_ASSIST_EFFORT` to `low`, `medium`, `high`, `xhigh`, or `max` to control
+request effort on supported models. You can override it for one invocation with
+`--effort`; support depends on the selected model and endpoint. When unset,
+ai-assist leaves the provider's default unchanged. Setting effort does not change
+the model's thinking mode. You can also attach the default effort to a model,
+such as `AI_ASSIST_MODEL=claude-sonnet-4-6:medium`. An explicit
+`AI_ASSIST_EFFORT` or `--effort` takes precedence.
 
 **Non-Anthropic models** (Gemini, GPT-5, ...): ai-assist only speaks the Anthropic Messages
 dialect, so reaching OpenAI/Gemini-only backends needs a translating proxy in front of them.
@@ -167,6 +174,8 @@ uv run ai-assist
 
 **Built-in Commands:**
 - `/status` - Show statistics
+- `/model [model[:effort]]` - Show or change the session model
+- `/effort [low|medium|high|xhigh|max|auto]` - Show or change request effort
 - `/history` - Recent monitoring history
 - `/clear` - Clear conversation memory
 - `/clear-cache` - Clear response cache
@@ -804,6 +813,7 @@ Task parameters:
 - `max_tool_calls=N` — override tool call budget (default: 100)
 - `max_time=N` — override timeout in seconds (default: 600)
 - `model=<level>` — capability level for this task: `low`, `medium`, `high`, or `default` (omitting `model=` uses `default`, the session model); each maps to a concrete model via `AI_ASSIST_MODEL_LOW`/`_MEDIUM`/`_HIGH`, falling back to `AI_ASSIST_MODEL`; `default` and `high` fall back to each other; validated at load time
+- `effort=<level>` — request effort for this task: `low`, `medium`, `high`, `xhigh`, or `max`; inherits the configured effort when omitted
 
 Loops support `collect=<var>` to accumulate results across iterations (map-reduce pattern). Use `collect=<var>(<fields>)` to capture only specific fields.
 
@@ -1163,6 +1173,16 @@ Use the `--model` flag to override `AI_ASSIST_MODEL` for a single invocation:
 ```bash
 uv run ai-assist --model anthropic/claude-sonnet-4.6 /query "say hi"
 ```
+
+Use `--effort` to override `AI_ASSIST_EFFORT` for a single invocation:
+
+```bash
+uv run ai-assist --effort medium /query "say hi"
+```
+
+In interactive mode, `/model` and `/effort` show or change the session values:
+`/model claude-opus-4-6:high`, `/effort low`, and `/effort auto` to restore the
+model-associated default.
 
 ### MLflow Tracing (optional)
 

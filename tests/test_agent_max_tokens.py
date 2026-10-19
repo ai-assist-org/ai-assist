@@ -4,6 +4,23 @@ from ai_assist.agent import AiAssistAgent
 from ai_assist.config import AiAssistConfig
 
 
+def test_startup_model_display_includes_configured_effort(monkeypatch):
+    """Startup display shows the selected effort when configured."""
+    messages = []
+    monkeypatch.setattr("ai_assist.agent.console_print", messages.append)
+
+    AiAssistAgent(
+        AiAssistConfig(
+            anthropic_api_key="test-key",
+            model="claude-sonnet-4-6",
+            effort="high",
+            mcp_servers={},
+        )
+    )
+
+    assert "🤖 Model: claude-sonnet-4-6 (max output tokens: 64,000, effort: high)" in messages
+
+
 def test_opus_46_max_tokens():
     """Claude Opus 4.6 should have 128K max output tokens"""
     config = AiAssistConfig(

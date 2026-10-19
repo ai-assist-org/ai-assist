@@ -29,6 +29,67 @@ def test_custom_endpoint_config_from_env():
         assert config.model == "anthropic/claude-sonnet-4.6"
 
 
+def test_effort_config_from_env():
+    with patch.dict(os.environ, {"AI_ASSIST_EFFORT": "xhigh"}, clear=True):
+        config = AiAssistConfig.from_env()
+        assert config.effort == "xhigh"
+
+
+def test_model_suffix_sets_effort_and_strips_suffix():
+    with patch.dict(
+        os.environ,
+        {"AI_ASSIST_MODEL": "claude-sonnet-4-6:high", "ANTHROPIC_API_KEY": "sk-ant-test"},
+        clear=True,
+    ):
+        config = AiAssistConfig.from_env()
+        assert config.model == "claude-sonnet-4-6"
+        assert config.effort == "high"
+
+
+def test_explicit_effort_overrides_model_suffix():
+    with patch.dict(
+        os.environ,
+        {
+            "AI_ASSIST_MODEL": "claude-sonnet-4-6:low",
+            "AI_ASSIST_EFFORT": "high",
+            "ANTHROPIC_API_KEY": "sk-ant-test",
+        },
+        clear=True,
+    ):
+        config = AiAssistConfig.from_env()
+        assert config.model == "claude-sonnet-4-6"
+        assert config.effort == "high"
+
+
+def test_model_tier_suffix_sets_tier_effort():
+    with patch.dict(
+        os.environ,
+        {"AI_ASSIST_MODEL_LOW": "claude-haiku-4-5:low", "ANTHROPIC_API_KEY": "sk-ant-test"},
+        clear=True,
+    ):
+        config = AiAssistConfig.from_env()
+        assert config.model_tiers == {"low": "claude-haiku-4-5"}
+        assert config.model_tier_efforts == {"low": "low"}
+
+
+def test_unrecognized_model_suffix_is_preserved():
+    with patch.dict(
+        os.environ,
+        {"AI_ASSIST_MODEL": "provider:model-v1", "ANTHROPIC_API_KEY": "sk-ant-test"},
+        clear=True,
+    ):
+        config = AiAssistConfig.from_env()
+        assert config.model == "provider:model-v1"
+        assert config.effort is None
+
+
+def test_invalid_effort_config_is_rejected():
+    import pytest
+
+    with pytest.raises(ValueError):
+        AiAssistConfig(anthropic_api_key="test-key", effort="adaptive")
+
+
 def test_effective_api_key_falls_back_to_anthropic_key():
     """effective_api_key falls back to anthropic_api_key when llm_api_key unset"""
     with patch.dict(

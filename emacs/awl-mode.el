@@ -31,8 +31,8 @@
     ("\\${\\([^}]+\\)}" 0 font-lock-variable-name-face t)
     ;; @set variable name
     ("@set[ \t]+\\(\\w+\\)" 1 font-lock-variable-name-face t)
-    ;; Loop options: limit=N collect=var(fields)
-    ("\\b\\(limit\\|collect\\|max_actions\\|max_tool_calls\\|max_steps\\)=" 1 font-lock-builtin-face)
+    ;; Task/workflow options: model=level effort=level, plus loop limits
+    ("\\b\\(model\\|effort\\|limit\\|collect\\|max_actions\\|max_tool_calls\\|max_time\\|max_steps\\)=" 1 font-lock-builtin-face)
     ;; Loop variable: as <var>
     ("\\bas[ \t]+\\(\\w+\\)" 1 font-lock-variable-name-face)
     ;; Built-in functions

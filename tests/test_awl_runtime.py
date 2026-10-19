@@ -27,6 +27,7 @@ from ai_assist.awl_runtime import (
     _compute_input_variables,
     _extract_commands_from_workflow,
     _resolve_model_level,
+    _validate_workflow_efforts,
     _validate_workflow_models,
     validate_workflow_variables,
 )
@@ -1525,6 +1526,17 @@ def test_validate_workflow_models_nested():
     assert "bad-model" in errors[0]
 
 
+def test_validate_workflow_efforts_valid_and_invalid():
+    for level in ("low", "medium", "high", "xhigh", "max"):
+        workflow = WorkflowNode(body=[TaskNode(task_id="t1", goal="Do.", effort=level)])
+        assert _validate_workflow_efforts(workflow) == []
+
+    workflow = WorkflowNode(body=[TaskNode(task_id="t1", goal="Do.", effort="adaptive")])
+    errors = _validate_workflow_efforts(workflow)
+    assert len(errors) == 1
+    assert "adaptive" in errors[0]
+
+
 @pytest.mark.asyncio
 async def test_task_model_override(mock_agent):
     """Task with model= should temporarily swap the agent's config.model."""
@@ -1561,6 +1573,46 @@ async def test_task_model_override_restored_on_failure(mock_agent):
     )
     await runtime.execute(workflow)
     assert mock_agent.config.model == "claude-sonnet-4-6"
+
+
+@pytest.mark.asyncio
+async def test_task_effort_override_and_restore(mock_agent):
+    observed_efforts = []
+
+    async def query(*args, **kwargs):
+        observed_efforts.append(mock_agent.config.effort)
+        return '{"result": "ok"}'
+
+    mock_agent.query.side_effect = query
+    mock_agent.config.effort = "medium"
+
+    runtime = AWLRuntime(mock_agent, limits=RuntimeLimits(max_tool_calls=100))
+    workflow = WorkflowNode(body=[TaskNode(task_id="t1", goal="Do.", effort="high", expose=["result"])])
+    await runtime.execute(workflow)
+
+    assert observed_efforts == ["high"]
+    assert mock_agent.config.effort == "medium"
+
+
+@pytest.mark.asyncio
+async def test_task_effort_override_restored_on_failure(mock_agent):
+    mock_agent.query.side_effect = Exception("boom")
+    mock_agent.config.effort = "medium"
+
+    runtime = AWLRuntime(mock_agent, limits=RuntimeLimits(max_tool_calls=100))
+    workflow = WorkflowNode(body=[TaskNode(task_id="t1", goal="Do.", effort="high", hints=["continue-on-failure"])])
+    await runtime.execute(workflow)
+
+    assert mock_agent.config.effort == "medium"
+
+
+@pytest.mark.asyncio
+async def test_task_effort_validation_rejects_unknown(mock_agent):
+    runtime = AWLRuntime(mock_agent, limits=RuntimeLimits(max_tool_calls=100))
+    workflow = WorkflowNode(body=[TaskNode(task_id="t1", goal="Do.", effort="adaptive")])
+    with pytest.raises(AWLRuntimeError, match="Effort validation failed"):
+        await runtime.execute(workflow)
+    mock_agent.query.assert_not_called()
 
 
 @pytest.mark.asyncio

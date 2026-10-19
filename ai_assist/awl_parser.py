@@ -159,6 +159,12 @@ class AWLParser:
         if model_match:
             model = model_match.group(1)
 
+        # Extract effort=<level> (optional)
+        effort = None
+        effort_match = re.search(r"effort=([\w.\-]+)", line)
+        if effort_match:
+            effort = effort_match.group(1)
+
         self._advance()
 
         goal = None
@@ -205,6 +211,7 @@ class AWLParser:
             max_tool_calls=max_tool_calls,
             max_time=max_time,
             model=model,
+            effort=effort,
         )
 
     def _parse_field_value(self, prefix: str, all_fields: set[str]) -> str:
