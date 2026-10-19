@@ -131,6 +131,18 @@ Notes:
   keeping the skill available to the assistant.
 - Type `/` and press Tab to see installed skill commands; `/help` lists them too.
 
+## Skill Usage Stats
+
+Each time a skill is used — whether the assistant picks it up automatically or
+you run it with `/<skill-name>` — the invocation is counted. See the totals with:
+
+```
+> /skill/stats
+```
+
+This shows each skill with its invocation count and the date it was last used,
+most-used first. It tracks how often skills are used, not whether they succeeded.
+
 ## Example: Home Automation Skill
 
 ```yaml

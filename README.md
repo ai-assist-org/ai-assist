@@ -189,6 +189,7 @@ uv run ai-assist
 - `/skill/uninstall <name>` - Uninstall an Agent Skill
 - `/skill/update [name]` - Reinstall skill(s) from source (all if name omitted)
 - `/skill/list` - List installed Agent Skills
+- `/skill/stats` - Show skill usage stats (invocation counts)
 - `/skill/search <query>` - Search ClawHub and skills.sh registries
 - `/skill/add_env <skill> <VAR>` - Allow an environment variable for a skill's scripts
 - `/skill/remove_env <skill> <VAR>` - Remove an allowed env var from a skill

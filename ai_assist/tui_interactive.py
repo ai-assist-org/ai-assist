@@ -32,6 +32,7 @@ from .identity import get_identity
 from .knowledge_graph import KnowledgeGraph
 from .main import reset_terminal_title, set_terminal_title
 from .prompt_utils import extract_prompt_messages
+from .skill_performance import SkillPerformanceStore
 from .state import StateManager
 from .tui import AiAssistCompleter, format_tool_display_name
 
@@ -293,6 +294,8 @@ async def handle_skill_management_command(command: str, agent: AiAssistAgent, co
         _handle_skill_update(parts, agent, console)
     elif subcommand == "list":
         console.print(agent.skills_manager.list_installed())
+    elif subcommand == "stats":
+        _handle_skill_stats(agent, console)
     elif subcommand == "search":
         _handle_skill_search(parts, agent, console)
     elif subcommand == "add_env":
@@ -304,10 +307,30 @@ async def handle_skill_management_command(command: str, agent: AiAssistAgent, co
     else:
         console.print(f"[yellow]Unknown skill command: {subcommand}[/yellow]")
         console.print(
-            "Available: /skill/install, /skill/uninstall, /skill/update, /skill/list, /skill/search, /skill/add_env, /skill/remove_env, /skill/list_env"
+            "Available: /skill/install, /skill/uninstall, /skill/update, /skill/list, /skill/stats, /skill/search, /skill/add_env, /skill/remove_env, /skill/list_env"
         )
 
     return True
+
+
+def _handle_skill_stats(agent: AiAssistAgent, console: Console):
+    if agent.knowledge_graph is None:
+        console.print("[yellow]No knowledge graph available; skill usage is not tracked.[/yellow]")
+        return
+
+    stats = SkillPerformanceStore(agent.knowledge_graph).usage_stats()
+    if not stats:
+        console.print("No skill usage recorded yet.")
+        return
+
+    table = Table(title="Skill usage")
+    table.add_column("Skill", style="cyan")
+    table.add_column("Uses", justify="right")
+    table.add_column("Last used")
+    for perf in stats:
+        last_used = perf.last_used.split("T")[0] if perf.last_used else "-"
+        table.add_row(perf.name, str(perf.usage_count), last_used)
+    console.print(table)
 
 
 def _handle_skill_install(parts: list[str], agent: AiAssistAgent, console: Console):
@@ -781,6 +804,14 @@ async def handle_skill_invocation(
 
     if skill is None or not skill.metadata.user_invocable:
         return False
+
+    # Record the manual invocation (same signal as the model-invoked path).
+    # Best-effort: never let logging break running the skill.
+    if agent.knowledge_graph is not None:
+        try:
+            SkillPerformanceStore(agent.knowledge_graph).record_invocation(name)
+        except Exception:
+            logger.exception("Failed to record skill invocation for %r", name)
 
     prompt_text = substitute_skill_args(skill.body, args)
     console.print(f"[green]Running skill: {name}[/green]")

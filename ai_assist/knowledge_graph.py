@@ -120,6 +120,11 @@ class Relationship:
 class KnowledgeGraph:
     """Bi-temporal knowledge graph storage engine"""
 
+    # Entity types that are never embedded for semantic search: high-frequency
+    # JSON blobs (tool_result) and internal bookkeeping (skill_performance) that
+    # must not leak into semantic recall or system-prompt context injection.
+    NON_EMBEDDED_TYPES = ("tool_result", "skill_performance")
+
     def __init__(self, db_path: str | None = None):
         """Initialize the knowledge graph
 
@@ -348,7 +353,7 @@ class KnowledgeGraph:
                 json.dumps(entity.data),
             ),
         )
-        if entity.entity_type != "tool_result":
+        if entity.entity_type not in self.NON_EMBEDDED_TYPES:
             text = self._entity_text_repr(entity.entity_type, entity.data, entity.valid_from)
             self._embed_and_store(entity.id, text, entity.entity_type)
         self._maybe_commit()
@@ -416,7 +421,7 @@ class KnowledgeGraph:
                 json.dumps(entity.data),
             ),
         )
-        if entity.entity_type != "tool_result":
+        if entity.entity_type not in self.NON_EMBEDDED_TYPES:
             text = self._entity_text_repr(entity.entity_type, entity.data, entity.valid_from)
             self._embed_and_store(entity.id, text, entity.entity_type)
         self._maybe_commit()
@@ -1315,20 +1320,23 @@ class KnowledgeGraph:
     def backfill_embeddings(self) -> int:
         """Populate vector embeddings for entities that don't have them yet.
 
-        Skips tool_result entities (high-frequency JSON blobs not useful for
-        text embedding).  Called automatically at startup to migrate
+        Skips NON_EMBEDDED_TYPES entities (high-frequency JSON blobs and
+        internal bookkeeping).  Called automatically at startup to migrate
         pre-existing KG databases.
 
         Returns:
             Number of entities backfilled.
         """
-        cursor = self.conn.execute("""
-            SELECT e.id, e.entity_type, e.data, e.valid_from
-            FROM entities e
-            LEFT JOIN vec_embeddings v ON e.id = v.entity_id
-            WHERE e.tx_to IS NULL AND v.entity_id IS NULL
-            AND e.entity_type != 'tool_result'
-            """)
+        placeholders = ",".join("?" for _ in self.NON_EMBEDDED_TYPES)
+        # placeholders derive from a constant (NON_EMBEDDED_TYPES), not user input
+        query = (
+            "SELECT e.id, e.entity_type, e.data, e.valid_from "  # nosec B608
+            "FROM entities e "
+            "LEFT JOIN vec_embeddings v ON e.id = v.entity_id "
+            "WHERE e.tx_to IS NULL AND v.entity_id IS NULL "
+            f"AND e.entity_type NOT IN ({placeholders})"
+        )
+        cursor = self.conn.execute(query, self.NON_EMBEDDED_TYPES)
         count = 0
         for row in cursor.fetchall():
             entity_id, entity_type, data_json, valid_from_str = row

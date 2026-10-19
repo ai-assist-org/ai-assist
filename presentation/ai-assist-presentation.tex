@@ -465,12 +465,14 @@ servers:
   \item Model-invoked \emph{or} run directly as \texttt{/<skill-name>}
   \item Optional sandboxed script execution
   \item Hot-reloaded on file change
+  \item Usage tracked per skill (\texttt{/skill/stats})
 \end{itemize}
 \end{column}
 \begin{column}{0.48\textwidth}
 \begin{lstlisting}[style=code,language=bash,basicstyle=\ttfamily\tiny,title={\scriptsize Skill Management}]
 /skill/install user/repo/skills/pdf@main
 /skill/list
+/skill/stats
 /skill/search "data analysis"
 /skill/add_env pdf MY_API_KEY
 /skill/uninstall pdf
