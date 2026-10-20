@@ -21,6 +21,7 @@ from mcp.client.extension import NotificationBinding
 from .action_tools import ActionTools
 from .audit import AuditLogger
 from .config import AiAssistConfig, MCPChannelConfig, MCPServerConfig
+from .effort import effort_output_config
 from .event_source_mcp import EVENT_NOTIFICATION_METHOD, MCPEventEnvelope
 from .filesystem_tools import FilesystemTools
 from .identity import get_identity
@@ -1266,6 +1267,19 @@ class AiAssistAgent:
             return self.config.compaction_model or self.config.model
         return self.config.model
 
+    def _effort_for(self, role: str) -> str | None:
+        """Resolve the effort for a role, mirroring ``_model_for``.
+
+        A role's own ``:effort`` suffix wins; otherwise it inherits the session
+        effort. Roles: "synthesis", "compaction". Any other role uses the session
+        effort.
+        """
+        if role == "synthesis":
+            return self.config.synthesis_effort or self.config.effort
+        if role == "compaction":
+            return self.config.compaction_effort or self.config.effort
+        return self.config.effort
+
     def get_context_window_size(self) -> int:
         """Get context window size for the current model."""
         # Explicit override wins (for custom/self-hosted models not in the tables)
@@ -1985,22 +1999,13 @@ class AiAssistAgent:
                     def create_stream(
                         system: Any = system_prompt, tools: Any = api_tools, request_messages: Any = messages
                     ) -> Any:
-                        effort = getattr(self.config, "effort", None)
-                        if effort:
-                            return self.anthropic.messages.stream(
-                                model=self.config.model,
-                                max_tokens=self.get_max_tokens(),
-                                system=system,
-                                tools=tools,
-                                messages=request_messages,
-                                output_config={"effort": effort},
-                            )
                         return self.anthropic.messages.stream(
                             model=self.config.model,
                             max_tokens=self.get_max_tokens(),
                             system=system,
                             tools=tools,
                             messages=request_messages,
+                            **effort_output_config(getattr(self.config, "effort", None)),
                         )
 
                     stream_context: Any = await asyncio.wait_for(

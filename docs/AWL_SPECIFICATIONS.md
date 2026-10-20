@@ -175,10 +175,13 @@ runs on a sensible model). Set both explicitly to make them differ.
 
 Model environment values may include an effort suffix, for example
 `AI_ASSIST_MODEL=claude-sonnet-4-6:medium` or
-`AI_ASSIST_MODEL_HIGH=claude-opus-4-6:max`. A recognized suffix is removed from
-the model ID and becomes that model's default effort. Explicit
-`AI_ASSIST_EFFORT` and `--effort` values take precedence. Unrecognized suffixes
-are preserved as part of the model ID for custom providers.
+`AI_ASSIST_MODEL_HIGH=claude-opus-4-6:max`. A recognized suffix (`low`, `medium`,
+`high`, `xhigh`, `max`, or `no`) is removed from the model ID and becomes that
+model's effort; `no` means send no effort, for a model that rejects the
+parameter. A tier (`AI_ASSIST_MODEL_LOW`/`_MEDIUM`/`_HIGH`) without its own suffix
+inherits the session effort; `:no` opts it out. Explicit `AI_ASSIST_EFFORT` and
+`--effort` values take precedence. Unrecognized suffixes are preserved as part of
+the model ID for custom providers.
 
 The value is validated at workflow load time. Any value other than `low`,
 `medium`, `high`, or `default` (including a concrete model id) fails the
@@ -199,9 +202,10 @@ Expose: rca_result
 ## effort=<level>
 
 An optional `effort` attribute overrides the configured request effort for one
-task. Valid values are `low`, `medium`, `high`, `xhigh`, and `max`; availability
-depends on the selected model and endpoint. A task without `effort=` inherits
-`AI_ASSIST_EFFORT` (or the provider default when unset). Effort does not change
+task. Valid values are `low`, `medium`, `high`, `xhigh`, `max`, and `no` (send no
+effort); availability depends on the selected model and endpoint. A task without
+`effort=` inherits its tier's effort suffix, or the session effort
+(`AI_ASSIST_EFFORT`), or the provider default when unset. Effort does not change
 the model's thinking mode.
 
 ```awl

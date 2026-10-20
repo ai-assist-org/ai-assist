@@ -6,6 +6,8 @@ import re
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
+from .effort import effort_output_config
+
 if TYPE_CHECKING:
     from .knowledge_graph import KnowledgeGraph
 
@@ -151,7 +153,7 @@ class ConversationMemory:
                 model=model,
                 max_tokens=1500,
                 messages=[{"role": "user", "content": prompt}],
-                **({"output_config": {"effort": effort}} if effort else {}),
+                **effort_output_config(effort),
             ) as stream:
                 response = stream.get_final_message()
 

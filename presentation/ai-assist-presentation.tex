@@ -1581,7 +1581,7 @@ ai-assist /sandbox service pr-review logs -f
   \item Variables propagate between tasks
   \item Built-in vars: \texttt{\$\{date\}}, \texttt{\$\{config\_dir\}}, etc.
   \item User vars via \texttt{variables.yaml}
-  \item Model defaults can include effort: \texttt{claude-sonnet-4-6:medium}
+  \item Model defaults can include effort: \texttt{claude-sonnet-4-6:medium}, or \texttt{:no} to send none; \texttt{/doctor} checks every configured model+effort
 \end{itemize}
 
 \smallskip
