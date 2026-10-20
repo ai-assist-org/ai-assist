@@ -12,6 +12,7 @@ import logging
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+from .effort import effort_output_config
 from .output import console_print
 
 if TYPE_CHECKING:
@@ -101,10 +102,6 @@ class SynthesisEngine:
 
     def __init__(self, agent):
         self._agent = agent
-
-    def _effort_kwargs(self) -> dict[str, dict[str, str]]:
-        effort = getattr(self._agent.config, "effort", None)
-        return {"output_config": {"effort": effort}} if effort else {}
 
     def _resolve_dedup_key(self, entity_type: str, key: str, content: str) -> str:
         """Return the key to persist a fact under, reusing an existing one on a
@@ -224,7 +221,7 @@ class SynthesisEngine:
                 model=self._agent._model_for("synthesis"),
                 max_tokens=2000,
                 messages=[{"role": "user", "content": synthesis_prompt}],
-                **self._effort_kwargs(),
+                **effort_output_config(self._agent._effort_for("synthesis")),
             ) as stream:
                 response = stream.get_final_message()
             self._agent._track_token_usage(response, turn=-1)
@@ -437,7 +434,7 @@ class SynthesisEngine:
                 model=self._agent._model_for("synthesis"),
                 max_tokens=8000,
                 messages=[{"role": "user", "content": prompt}],
-                **self._effort_kwargs(),
+                **effort_output_config(self._agent._effort_for("synthesis")),
             ) as stream:
                 response = stream.get_final_message()
             self._agent._track_token_usage(response, turn=-1)

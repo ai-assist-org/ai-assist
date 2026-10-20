@@ -1,5 +1,6 @@
 """Tests for AWL runtime engine"""
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -29,6 +30,7 @@ from ai_assist.awl_runtime import (
     _resolve_model_level,
     _validate_workflow_efforts,
     _validate_workflow_models,
+    resolve_tier,
     validate_workflow_variables,
 )
 from ai_assist.jev_client import JevError
@@ -1527,7 +1529,7 @@ def test_validate_workflow_models_nested():
 
 
 def test_validate_workflow_efforts_valid_and_invalid():
-    for level in ("low", "medium", "high", "xhigh", "max"):
+    for level in ("low", "medium", "high", "xhigh", "max", "no"):
         workflow = WorkflowNode(body=[TaskNode(task_id="t1", goal="Do.", effort=level)])
         assert _validate_workflow_efforts(workflow) == []
 
@@ -1595,6 +1597,70 @@ async def test_task_effort_override_and_restore(mock_agent):
 
 
 @pytest.mark.asyncio
+async def test_tier_without_suffix_inherits_session_effort(mock_agent):
+    """A model= tier with no effort suffix inherits the session effort."""
+    observed = []
+
+    async def query(*args, **kwargs):
+        observed.append(mock_agent.config.effort)
+        return '{"result": "ok"}'
+
+    mock_agent.query.side_effect = query
+    mock_agent.config.effort = "medium"  # session effort
+    mock_agent.config.model_tiers = {"high": "claude-opus-4-8"}
+    mock_agent.config.model_tier_efforts = {}  # high tier has no effort suffix
+
+    runtime = AWLRuntime(mock_agent, limits=RuntimeLimits(max_tool_calls=100))
+    workflow = WorkflowNode(body=[TaskNode(task_id="t1", goal="Do.", model="high", expose=["result"])])
+    await runtime.execute(workflow)
+
+    assert observed == ["medium"]  # high tier inherited the session effort
+    assert mock_agent.config.effort == "medium"  # session effort restored
+
+
+@pytest.mark.asyncio
+async def test_tier_no_effort_suffix_suppresses_session_effort(mock_agent):
+    """A tier configured with ':no' sends no effort even when a session effort is set."""
+    observed = []
+
+    async def query(*args, **kwargs):
+        observed.append(mock_agent.config.effort)
+        return '{"result": "ok"}'
+
+    mock_agent.query.side_effect = query
+    mock_agent.config.effort = "medium"  # session effort
+    mock_agent.config.model_tiers = {"low": "claude-haiku-4-5"}
+    mock_agent.config.model_tier_efforts = {"low": "no"}  # AI_ASSIST_MODEL_LOW=...:no
+
+    runtime = AWLRuntime(mock_agent, limits=RuntimeLimits(max_tool_calls=100))
+    workflow = WorkflowNode(body=[TaskNode(task_id="t1", goal="Do.", model="low", expose=["result"])])
+    await runtime.execute(workflow)
+
+    assert observed == ["no"]  # 'no' wins over the session effort; effort_output_config omits it
+    assert mock_agent.config.effort == "medium"  # session effort restored
+
+
+@pytest.mark.asyncio
+async def test_default_tier_inherits_session_effort(mock_agent):
+    """A task without model= (default tier) uses the session effort."""
+    observed = []
+
+    async def query(*args, **kwargs):
+        observed.append(mock_agent.config.effort)
+        return '{"result": "ok"}'
+
+    mock_agent.query.side_effect = query
+    mock_agent.config.effort = "medium"
+    mock_agent.config.model_tier_efforts = {}
+
+    runtime = AWLRuntime(mock_agent, limits=RuntimeLimits(max_tool_calls=100))
+    workflow = WorkflowNode(body=[TaskNode(task_id="t1", goal="Do.", expose=["result"])])
+    await runtime.execute(workflow)
+
+    assert observed == ["medium"]
+
+
+@pytest.mark.asyncio
 async def test_task_effort_override_restored_on_failure(mock_agent):
     mock_agent.query.side_effect = Exception("boom")
     mock_agent.config.effort = "medium"
@@ -1646,6 +1712,20 @@ def test_resolve_model_level_omitted_defaults_to_session_model():
 def test_resolve_model_level_default_is_session_model():
     """The explicit 'default' level always resolves to the session model, never high."""
     assert _resolve_model_level("default", {"high": "H"}, "D") == "D"
+
+
+def test_resolve_tier_model_and_effort():
+    """resolve_tier is the single source both the runtime and /doctor use."""
+    cfg = SimpleNamespace(
+        model="D",
+        effort="medium",
+        model_tiers={"low": "haiku", "high": "opus"},
+        model_tier_efforts={"low": "no"},  # low opts out; high has no suffix
+    )
+    assert resolve_tier(cfg, None) == ("D", "medium")  # default -> session model+effort
+    assert resolve_tier(cfg, "low") == ("haiku", "no")  # explicit tier effort wins
+    assert resolve_tier(cfg, "high") == ("opus", "medium")  # inherits session effort
+    assert resolve_tier(cfg, "low", task_effort="max") == ("haiku", "max")  # task override wins
 
 
 # ── @continue / @break tests ───────────────────────────────────

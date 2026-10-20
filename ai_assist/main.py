@@ -11,7 +11,8 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from .commands import get_command_suggestion, is_valid_cli_command, is_valid_interactive_command
-from .config import EFFORT_LEVELS, EffortLevel, _split_model_effort, get_config, get_config_dir
+from .config import EFFORT_SETTINGS, EffortSetting, _split_model_effort, get_config, get_config_dir
+from .effort import effort_output_config
 from .identity import AssistantIdentity, Identity, UserIdentity, get_identity
 from .kg_queries import KnowledgeGraphQueries
 from .knowledge_graph import KnowledgeGraph
@@ -26,16 +27,16 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _pop_effort_override(argv: list[str]) -> EffortLevel | None:
+def _pop_effort_override(argv: list[str]) -> EffortSetting | None:
     """Remove and validate an optional --effort value from argv."""
     if "--effort" not in argv:
         return None
     idx = argv.index("--effort")
     if idx + 1 >= len(argv) or argv[idx + 1].startswith("-"):
-        raise ValueError("--effort requires one of: " + ", ".join(EFFORT_LEVELS))
+        raise ValueError("--effort requires one of: " + ", ".join(EFFORT_SETTINGS))
     value = argv[idx + 1]
-    if value not in EFFORT_LEVELS:
-        raise ValueError(f"Invalid --effort value '{value}'. Choose one of: " + ", ".join(EFFORT_LEVELS))
+    if value not in EFFORT_SETTINGS:
+        raise ValueError(f"Invalid --effort value '{value}'. Choose one of: " + ", ".join(EFFORT_SETTINGS))
     del argv[idx : idx + 2]
     return value
 
@@ -449,6 +450,82 @@ async def run_query(agent: AiAssistAgent, query: str):
     """Run a single query"""
     response = await agent.query(query)
     print(response)
+
+
+def _doctor_model_checks(agent: AiAssistAgent) -> list[tuple[str, str, str | None]]:
+    """Return (label, model, effort) triples for every model the config will use.
+
+    Every (model, effort) comes from the same resolvers the app runs with —
+    ``resolve_tier`` for AWL tiers and ``agent._model_for`` for the synthesis and
+    compaction roles — so doctor only checks, never reinterprets. Deduplicated by
+    (model, effort) so an identical combination is only billed once; labels for
+    the same combination are joined.
+    """
+    from .awl_runtime import resolve_tier
+
+    config = agent.config
+    # Default tier (None) plus each configured AWL tier, resolved exactly as runtime.
+    checks: list[tuple[str, str, str | None]] = []
+    for level in [None, *config.model_tiers]:
+        model, effort = resolve_tier(config, level)
+        checks.append(("default" if level is None else f"tier:{level}", model, effort))
+    # synthesis/compaction run on their resolved model and effort (via _model_for /
+    # _effort_for, as the engines do). Only add a distinct row when a dedicated model
+    # is set; when unset _model_for returns the default model, already covered above.
+    for role in ("synthesis", "compaction"):
+        if getattr(config, f"{role}_model"):
+            checks.append((role, agent._model_for(role), agent._effort_for(role)))
+
+    merged: dict[tuple[str, str | None], list[str]] = {}
+    for label, model, effort in checks:
+        merged.setdefault((model, effort), []).append(label)
+    return [(", ".join(labels), model, effort) for (model, effort), labels in merged.items()]
+
+
+async def run_doctor(agent: AiAssistAgent) -> int:
+    """Send a cheap real query to each configured model and report what works.
+
+    Exercises the exact request shape ai-assist uses (including the configured
+    effort), so a model that rejects a parameter is caught here instead of at
+    runtime. Also probes the jev goal-success service when it is configured.
+    Returns the number of checks that failed.
+    """
+    from .jev_client import jev_configured, jev_decide, noul
+
+    print("\nai-assist doctor — checking configured models")
+    print("=" * 50)
+    failures = 0
+    for labels, model, effort in _doctor_model_checks(agent):
+        output_config = effort_output_config(effort)
+        # Only show an effort when one is actually sent ('no'/unset send nothing).
+        suffix = f" (effort={effort})" if output_config else ""
+        try:
+            agent.anthropic.messages.create(
+                model=model,
+                max_tokens=16,
+                messages=[{"role": "user", "content": "ping"}],
+                **output_config,
+            )
+            print(f"  ✅ {labels:20s} {model}{suffix}")
+        except Exception as e:  # noqa: BLE001 - report every failure, don't abort the sweep
+            failures += 1
+            message = getattr(e, "message", None) or str(e)
+            print(f"  ❌ {labels:20s} {model}{suffix}\n       {message}")
+
+    # jev is a separate service (not the Messages API); probe it with a cheap decision.
+    if jev_configured(agent.config):
+        label, model = "jev", agent.config.jev_model
+        try:
+            await jev_decide(agent.config, "ping", {"ping": noul("Is this a reachability check?")})
+            print(f"  ✅ {label:20s} {model}")
+        except Exception as e:  # noqa: BLE001 - report the failure, don't abort
+            failures += 1
+            message = getattr(e, "message", None) or str(e)
+            print(f"  ❌ {label:20s} {model}\n       {message}")
+
+    print("=" * 50)
+    print("All checks passed" if not failures else f"{failures} check(s) failed — see above")
+    return failures
 
 
 def kg_stats_command(kg: KnowledgeGraph):
@@ -868,10 +945,14 @@ async def main_async():
 
     from .awl_executor import cleanup_session_tmpdir, init_session_tmpdir
 
+    # Commands that need the agent's LLM client but no MCP server connections.
+    # Connecting (and tearing down, especially SSE) is wasteful and noisy for them.
+    agent_only_commands = ["doctor"]
+
     try:
         init_session_tmpdir()
 
-        if agent:
+        if agent and command not in agent_only_commands:
             await agent.connect_to_servers()
 
         # Parse command line arguments
@@ -887,6 +968,7 @@ async def main_async():
                 print("  /interactive [--session NAME] - Interactive mode")
                 print("  /status            - Show state statistics")
                 print("  /clear-cache       - Clear expired cache")
+                print("  /doctor            - Check configured models and jev with cheap queries")
                 print("  /identity-show     - Show current identity configuration")
                 print("  /identity-init     - Initialize identity interactively")
                 print("  /kg-stats          - Show knowledge graph statistics")
@@ -952,6 +1034,9 @@ async def main_async():
             elif command == "clear-cache":
                 removed = state_manager.cleanup_expired_cache()
                 print(f"Cleared {removed} expired cache entries")
+            elif command == "doctor":
+                assert agent is not None
+                sys.exit(1 if await run_doctor(agent) else 0)
             # Identity commands
             elif command == "identity-show":
                 identity_show_command()
