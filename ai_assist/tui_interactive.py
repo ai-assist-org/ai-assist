@@ -23,7 +23,7 @@ from rich.table import Table
 
 from .agent import AiAssistAgent
 from .commands import get_command_suggestion, is_valid_interactive_command
-from .config import EFFORT_LEVELS, EffortLevel, _split_model_effort, get_config_dir
+from .config import EFFORT_SETTINGS, EffortSetting, _split_model_effort, get_config_dir
 from .config_watcher import ConfigWatcher
 from .context import ConversationMemory, KnowledgeGraphContext
 from .escape_watcher import EscapeWatcher
@@ -940,7 +940,7 @@ async def tui_interactive_mode(agent: AiAssistAgent, state_manager: StateManager
                     agent.anthropic,
                     model,
                     old,
-                    effort=agent.config.effort,
+                    effort=agent._effort_for("compaction"),
                 )
                 # If /clear reset the conversation while we were summarizing,
                 # discard the result rather than resurrecting stale exchanges.
@@ -975,7 +975,7 @@ async def tui_interactive_mode(agent: AiAssistAgent, state_manager: StateManager
                     agent.anthropic,
                     model,
                     exchanges,
-                    effort=agent.config.effort,
+                    effort=agent._effort_for("compaction"),
                 )
                 if facts:
                     await asyncio.to_thread(agent._save_insights, facts, "clear_extraction")
@@ -1577,7 +1577,7 @@ async def tui_interactive_mode(agent: AiAssistAgent, state_manager: StateManager
                     agent.anthropic,
                     model,
                     list(conversation_memory.exchanges),
-                    effort=agent.config.effort,
+                    effort=agent._effort_for("compaction"),
                 )
                 if facts:
                     await asyncio.to_thread(agent._save_insights, facts, "exit_extraction")
@@ -1683,10 +1683,10 @@ async def handle_model_effort_command(user_input: str, agent: AiAssistAgent, con
         current = agent.config.effort or "provider default"
         console.print(f"\n[green]Effort reset to {current} for this session[/green]\n")
         return
-    if value.lower() not in EFFORT_LEVELS:
-        console.print("\n[red]Usage: /effort [low|medium|high|xhigh|max|auto][/red]\n")
+    if value.lower() not in EFFORT_SETTINGS:
+        console.print("\n[red]Usage: /effort [low|medium|high|xhigh|max|no|auto][/red]\n")
         return
-    agent.config.effort = cast(EffortLevel, value.lower())
+    agent.config.effort = cast(EffortSetting, value.lower())
     console.print(f"\n[green]Effort set to {agent.config.effort} for this session[/green]\n")
 
 

@@ -102,9 +102,15 @@ Set `AI_ASSIST_EFFORT` to `low`, `medium`, `high`, `xhigh`, or `max` to control
 request effort on supported models. You can override it for one invocation with
 `--effort`; support depends on the selected model and endpoint. When unset,
 ai-assist leaves the provider's default unchanged. Setting effort does not change
-the model's thinking mode. You can also attach the default effort to a model,
-such as `AI_ASSIST_MODEL=claude-sonnet-4-6:medium`. An explicit
-`AI_ASSIST_EFFORT` or `--effort` takes precedence.
+the model's thinking mode. You can also attach an effort to any model variable
+with a `:effort` suffix — including the AWL tiers and the per-role overrides —
+e.g. `AI_ASSIST_MODEL=claude-opus-4-8:medium`, `AI_ASSIST_MODEL_LOW=claude-haiku-4-5:no`,
+`AI_ASSIST_COMPACTION_MODEL=claude-haiku-4-5:no`. Use `:no` for a model that
+rejects the effort parameter. A model var without its own suffix inherits the
+session effort; `:no` opts it out. An explicit `AI_ASSIST_EFFORT` or `--effort`
+takes precedence.
+Run `ai-assist /doctor` to send a cheap live query to every configured model and
+effort — and to the jev service when it is configured — and report which work.
 
 **Non-Anthropic models** (Gemini, GPT-5, ...): ai-assist only speaks the Anthropic Messages
 dialect, so reaching OpenAI/Gemini-only backends needs a translating proxy in front of them.
@@ -175,7 +181,7 @@ uv run ai-assist
 **Built-in Commands:**
 - `/status` - Show statistics
 - `/model [model[:effort]]` - Show or change the session model
-- `/effort [low|medium|high|xhigh|max|auto]` - Show or change request effort
+- `/effort [low|medium|high|xhigh|max|no|auto]` - Show or change request effort (`no` sends none)
 - `/history` - Recent monitoring history
 - `/clear` - Clear conversation memory
 - `/clear-cache` - Clear response cache
@@ -814,7 +820,7 @@ Task parameters:
 - `max_tool_calls=N` — override tool call budget (default: 100)
 - `max_time=N` — override timeout in seconds (default: 600)
 - `model=<level>` — capability level for this task: `low`, `medium`, `high`, or `default` (omitting `model=` uses `default`, the session model); each maps to a concrete model via `AI_ASSIST_MODEL_LOW`/`_MEDIUM`/`_HIGH`, falling back to `AI_ASSIST_MODEL`; `default` and `high` fall back to each other; validated at load time
-- `effort=<level>` — request effort for this task: `low`, `medium`, `high`, `xhigh`, or `max`; inherits the configured effort when omitted
+- `effort=<level>` — request effort for this task: `low`, `medium`, `high`, `xhigh`, `max`, or `no` (send none); inherits the configured effort when omitted
 
 Loops support `collect=<var>` to accumulate results across iterations (map-reduce pattern). Use `collect=<var>(<fields>)` to capture only specific fields.
 
