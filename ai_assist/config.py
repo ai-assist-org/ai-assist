@@ -316,6 +316,17 @@ def _env_session_model_effort() -> EffortSetting | None:
     return _split_model_effort(os.getenv("AI_ASSIST_MODEL"))[1]
 
 
+def _env_repeatable_tools() -> list[str]:
+    """Tool-name patterns (fnmatch) exempt from the result cache and loop detection.
+
+    For poll-safe tools whose repeated identical calls are expected (async status
+    checks like ``apify__get-actor-run``). ``AI_ASSIST_REPEATABLE_TOOLS`` is
+    whitespace- and/or comma-separated (tool names never contain either), matching
+    the whitespace convention of skills' ``allowed-tools``.
+    """
+    return os.getenv("AI_ASSIST_REPEATABLE_TOOLS", "").replace(",", " ").split()
+
+
 def _env_role_model(var: str) -> str | None:
     """Model id for a per-role override (synthesis/compaction), suffix stripped."""
     return _split_model_effort(os.getenv(var))[0]
@@ -574,6 +585,9 @@ class AiAssistConfig(BaseModel):
     confirm_tools: list[str] = Field(
         default_factory=list,
     )
+    # Tools exempt from the per-query result cache and loop detection (poll-safe,
+    # e.g. async status checks). fnmatch patterns from AI_ASSIST_REPEATABLE_TOOLS.
+    repeatable_tools: list[str] = Field(default_factory=_env_repeatable_tools)
 
     # Adaptive truncation limits (percentage of context window)
     message_limit_pct: float = Field(
@@ -652,6 +666,7 @@ class AiAssistConfig(BaseModel):
             synthesis_effort=_env_role_effort("AI_ASSIST_SYNTHESIS_MODEL"),
             compaction_model=_env_role_model("AI_ASSIST_COMPACTION_MODEL"),
             compaction_effort=_env_role_effort("AI_ASSIST_COMPACTION_MODEL"),
+            repeatable_tools=_env_repeatable_tools(),
             effort=_env_effort() or _env_session_model_effort(),
             model_default_effort=_env_session_model_effort(),
             model_tier_efforts=_env_model_tier_efforts(),

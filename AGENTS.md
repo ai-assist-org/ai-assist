@@ -360,6 +360,8 @@ Each holds an agent back-reference so it reads collaborators (`sessions`, `repor
 
 **Large tool results**: All tools support `__save_to_file`, `__write_to_report`, `__append_to_report`, `__collect_to_report`, and `__jq_filter` parameters. Add to any tool call to redirect raw results to a file or report. Agent receives a summary. `__jq_filter` applies a jq filter inline before returning or saving — composes with the other parameters (filter runs first). `__collect_to_report` auto-paginates and collects all results in one call (requires server pagination config in `mcp_servers.yaml`).
 
+**Dedup & loop detection** (`_execute_tools_concurrently` in `agent.py`): within a query, identical tool calls (name + args) are served from a result cache, and a call repeated with the same signature ≥3× in the last 5 triggers loop detection (first offense nudges, a second aborts). **Poll-safe tools** — async status checks like `apify__get-actor-run`, expected to be called repeatedly until they finish — are exempt from both: list fnmatch patterns in `AI_ASSIST_REPEATABLE_TOOLS` (whitespace- or comma-separated; `config.repeatable_tools`), matched by `AiAssistAgent._is_repeatable_tool`. A repeatable tool bypasses the cache (each call re-executes for a fresh result) and is never loop-flagged.
+
 ## Documentation
 
 Only create the minimum document for the end user.

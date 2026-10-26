@@ -5,6 +5,17 @@ import asyncio
 import pytest
 
 from ai_assist.agent import AiAssistAgent
+from ai_assist.config import _env_repeatable_tools
+
+
+def test_env_repeatable_tools_parsing(monkeypatch):
+    monkeypatch.delenv("AI_ASSIST_REPEATABLE_TOOLS", raising=False)
+    assert _env_repeatable_tools() == []
+    # Accepts whitespace, commas, or a mix (tool names contain neither).
+    monkeypatch.setenv("AI_ASSIST_REPEATABLE_TOOLS", "apify__get-actor-run foo__*poll*")
+    assert _env_repeatable_tools() == ["apify__get-actor-run", "foo__*poll*"]
+    monkeypatch.setenv("AI_ASSIST_REPEATABLE_TOOLS", "apify__get-actor-run, foo__*poll* ")
+    assert _env_repeatable_tools() == ["apify__get-actor-run", "foo__*poll*"]
 
 
 class FakeBlock:
@@ -172,6 +183,61 @@ class TestExecuteToolsConcurrently:
         results, loop_detected = await agent._execute_tools_concurrently(blocks)
 
         assert loop_detected
+
+    def test_is_repeatable_tool_matching(self, agent):
+        """repeatable_tools is matched with fnmatch (exact and glob)."""
+        agent.config.repeatable_tools = ["apify__get-actor-run", "foo__*poll*"]
+        assert agent._is_repeatable_tool("apify__get-actor-run")
+        assert agent._is_repeatable_tool("foo__status-poll-run")
+        assert not agent._is_repeatable_tool("apify__get-actor")
+        assert not agent._is_repeatable_tool("bar__run")
+
+    @pytest.mark.asyncio
+    async def test_repeatable_tool_bypasses_cache(self, agent):
+        """A repeatable tool re-executes each call instead of returning a cached result."""
+        agent.config.repeatable_tools = ["apify__get-actor-run"]
+        call_count = 0
+
+        async def mock_execute(name, args):
+            nonlocal call_count
+            call_count += 1
+            return f"status-{call_count}"
+
+        agent._execute_tool = mock_execute
+        agent._tool_result_cache = {}
+
+        blocks = [
+            FakeBlock("tool_use", name="apify__get-actor-run", block_id="1", block_input={"runId": "X"}),
+            FakeBlock("tool_use", name="apify__get-actor-run", block_id="2", block_input={"runId": "X"}),
+        ]
+        results, _ = await agent._execute_tools_concurrently(blocks)
+
+        assert call_count == 2  # both executed, no cache reuse
+        assert results[0]["content"] != results[1]["content"]
+        assert agent._tool_result_cache == {}  # nothing cached for a repeatable tool
+
+    @pytest.mark.asyncio
+    async def test_repeatable_tool_not_loop_flagged(self, agent):
+        """Repeated identical calls to a repeatable tool do not trip loop detection."""
+        import hashlib
+        import json
+
+        agent.config.repeatable_tools = ["apify__*"]  # glob
+
+        async def mock_execute(name, args):
+            return "RUNNING"
+
+        agent._execute_tool = mock_execute
+        agent._tool_result_cache = {}
+
+        sig = f"apify__get-actor-run:{hashlib.md5(json.dumps({}, sort_keys=True).encode()).hexdigest()[:8]}"
+        # Pre-filled as if already seen — a non-repeatable tool would trip here.
+        agent._recent_tool_calls_for_loop = [sig, sig]
+
+        blocks = [FakeBlock("tool_use", name="apify__get-actor-run", block_id="1", block_input={})]
+        _, loop_detected = await agent._execute_tools_concurrently(blocks)
+
+        assert loop_detected is False
 
     @pytest.mark.asyncio
     async def test_cancel_event_stops_execution(self, agent):
