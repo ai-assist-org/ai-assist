@@ -108,7 +108,15 @@ FIND_DANGEROUS_PRIMARIES = frozenset(
     {"-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprintf", "-fprint", "-fprint0", "-fls"}
 )
 
-TRANSPARENT_WRAPPERS = frozenset({"env", "nohup", "nice", "ionice", "timeout", "stdbuf", "script"})
+TRANSPARENT_WRAPPERS = frozenset({"env", "nohup", "nice", "ionice", "timeout", "stdbuf", "script", "xargs"})
+
+# Per-wrapper flags whose argument is a separate, possibly non-numeric token
+# (e.g. `xargs -I {} grep {}`), which the generic numeric-value rule would miss.
+# These are matched by exact flag token; combined forms (`-I{}`, `--replace=X`) are
+# already a single token handled as a plain flag.
+_WRAPPER_VALUE_FLAGS: dict[str, frozenset[str]] = {
+    "xargs": frozenset({"-I", "-E", "-d", "-a", "--replace", "--delimiter", "--arg-file", "--eof"}),
+}
 
 PRIVILEGE_WRAPPERS = frozenset({"sudo", "su", "doas"})
 
@@ -151,22 +159,28 @@ def _resolve_command_token(token: str) -> str:
 _NUMERIC_ARG = re.compile(r"^\d+(\.\d+)?[smhd]?$")
 
 
-def _skip_wrapper_args(tokens: list[str], idx: int) -> int:
+def _skip_wrapper_args(tokens: list[str], idx: int, wrapper: str | None = None) -> int:
     """Skip flags and positional args belonging to a transparent wrapper.
 
     After the wrapper name has been consumed, this skips:
     - env var assignments (KEY=value)
     - flags (-x, --long) and their non-flag argument
     - bare numeric tokens (e.g. timeout's duration, nice's adjustment)
+    - the separate argument of a wrapper's value-taking flags (e.g. `xargs -I {}`)
     Stops at the first token that looks like a command name.
     """
+    value_flags = _WRAPPER_VALUE_FLAGS.get(wrapper or "", frozenset())
     while idx < len(tokens):
         tok = tokens[idx]
         if ENV_VAR_PATTERN.match(tok):
             idx += 1
         elif tok.startswith("-"):
             idx += 1
-            if idx < len(tokens) and not tokens[idx].startswith("-") and not ENV_VAR_PATTERN.match(tokens[idx]):
+            if tok in value_flags:
+                # This flag takes a separate argument (possibly non-numeric); consume it.
+                if idx < len(tokens):
+                    idx += 1
+            elif idx < len(tokens) and not tokens[idx].startswith("-") and not ENV_VAR_PATTERN.match(tokens[idx]):
                 # Could be a flag value (e.g. -n 10) or the real command.
                 # If it's numeric, consume it as a flag value.
                 if _NUMERIC_ARG.match(tokens[idx]):
@@ -175,6 +189,22 @@ def _skip_wrapper_args(tokens: list[str], idx: int) -> int:
             idx += 1
         else:
             break
+    return idx
+
+
+def _strip_transparent_wrappers(tokens: list[str], idx: int) -> int:
+    """Skip leading transparent wrappers (env, timeout, xargs, ...) and their flags,
+    returning the index of the actual command they invoke.
+
+    A wrapper's invoked command is still validated by the caller — so `xargs grep`
+    is allowed (grep is), while `xargs rm` is rejected (rm is not).
+    """
+    while idx < len(tokens):
+        wrapper = _resolve_command_token(tokens[idx])
+        if wrapper not in TRANSPARENT_WRAPPERS:
+            break
+        idx += 1
+        idx = _skip_wrapper_args(tokens, idx, wrapper)
     return idx
 
 
@@ -306,9 +336,7 @@ def extract_command_names(command: str) -> list[str]:
             continue
 
         # Strip transparent wrappers and their arguments
-        while idx < len(tokens) and _resolve_command_token(tokens[idx]) in TRANSPARENT_WRAPPERS:
-            idx += 1
-            idx = _skip_wrapper_args(tokens, idx)
+        idx = _strip_transparent_wrappers(tokens, idx)
 
         if idx >= len(tokens):
             continue
@@ -337,9 +365,7 @@ def _compute_segment_prefix(tokens: list[str]) -> str | None:
     if idx >= len(tokens):
         return None
 
-    while idx < len(tokens) and _resolve_command_token(tokens[idx]) in TRANSPARENT_WRAPPERS:
-        idx += 1
-        idx = _skip_wrapper_args(tokens, idx)
+    idx = _strip_transparent_wrappers(tokens, idx)
 
     if idx >= len(tokens):
         return None
@@ -1135,9 +1161,7 @@ class FilesystemTools:
                 continue
 
             # Strip transparent wrappers and their arguments
-            while idx < len(tokens) and _resolve_command_token(tokens[idx]) in TRANSPARENT_WRAPPERS:
-                idx += 1
-                idx = _skip_wrapper_args(tokens, idx)
+            idx = _strip_transparent_wrappers(tokens, idx)
 
             if idx >= len(tokens):
                 continue
@@ -1209,9 +1233,7 @@ class FilesystemTools:
             if idx >= len(tokens):
                 continue
 
-            while idx < len(tokens) and _resolve_command_token(tokens[idx]) in TRANSPARENT_WRAPPERS:
-                idx += 1
-                idx = _skip_wrapper_args(tokens, idx)
+            idx = _strip_transparent_wrappers(tokens, idx)
             if idx >= len(tokens):
                 continue
 
@@ -1282,8 +1304,7 @@ class FilesystemTools:
         idx = 0
         while idx < len(tokens) and _is_safe_env_assignment(tokens[idx]):
             idx += 1
-        while idx < len(tokens) and _resolve_command_token(tokens[idx]) in TRANSPARENT_WRAPPERS:
-            idx = _skip_wrapper_args(tokens, idx + 1)
+        idx = _strip_transparent_wrappers(tokens, idx)
         if idx >= len(tokens):
             return False
         name = _resolve_command_token(tokens[idx])
