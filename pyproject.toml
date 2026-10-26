@@ -25,7 +25,7 @@ dependencies = [
 [project.optional-dependencies]
 mqtt = ["aiomqtt>=2.5.1"]
 dbus = ["dbus-next>=0.2.3"]
-mlflow = ["mlflow-skinny>=3.17.1", "sqlalchemy>=2.1.6", "alembic>=1.20.1"]
+mlflow = ["mlflow-skinny>=3.17.2", "sqlalchemy>=2.1.6", "alembic>=1.20.1"]
 eval = [
     "agent-eval-harness @ git+https://github.com/opendatahub-io/agent-eval-harness.git",
 ]
