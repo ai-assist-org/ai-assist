@@ -41,7 +41,13 @@ from .plugins_manager import PluginsManager
 from .redaction import Redactor
 from .report_tools import ReportTools
 from .script_execution_tools import ScriptExecutionTools
-from .security import ToolDefinitionRegistry, sanitize_tool_result, validate_tool_description
+from .security import (
+    ToolDefinitionRegistry,
+    detect_injection,
+    sanitize_tool_result,
+    validate_tool_description,
+    wrap_untrusted,
+)
 from .skills_loader import SkillsLoader
 from .skills_manager import SkillsManager
 from .synthesis_engine import SynthesisEngine
@@ -2344,9 +2350,10 @@ class AiAssistAgent:
                 else:
                     content = str(msg.content)
                 content = self.redactor.redact(content)
-                # Sanitize prompt message content for injection
-                content, injection_warnings = sanitize_tool_result(content, f"prompt:{server_name}/{prompt_name}")
+                # Prompts are instructions the user invoked: only mark them when suspicious
+                injection_warnings = detect_injection(content)
                 if injection_warnings:
+                    content = wrap_untrusted(content, injection_warnings)
                     logger.warning(
                         "Suspicious content in MCP prompt %s/%s: %s",
                         server_name,
@@ -2558,10 +2565,12 @@ class AiAssistAgent:
         loop_detected = False
         for block, sig, result in zip(tool_blocks, signatures, results, strict=False):
             is_error = isinstance(result, str) and result.startswith("Error:")
+            # All tool output is data, not instructions: mark it with per-call markers
+            content, _ = sanitize_tool_result(result, block.name) if isinstance(result, str) else (result, [])
             tool_result: dict[str, Any] = {
                 "type": "tool_result",
                 "tool_use_id": block.id,
-                "content": result,
+                "content": content,
             }
             if is_error:
                 tool_result["is_error"] = True
@@ -2788,14 +2797,6 @@ class AiAssistAgent:
                     result_text = await self.filesystem_tools.execute_tool(original_tool_name, arguments)
                 elif original_tool_name in script_tools:
                     result_text = await self.script_execution_tools.execute_tool(original_tool_name, arguments)
-                    # Sanitize script output — scripts come from external skill repos
-                    result_text, injection_warnings = sanitize_tool_result(result_text, tool_name)
-                    if injection_warnings:
-                        logger.warning(
-                            "Suspicious content in script output from %s: %s",
-                            tool_name,
-                            ", ".join(injection_warnings),
-                        )
                 elif original_tool_name in think_tools:
                     result_text = await self.think_tool.execute_tool(original_tool_name, arguments)
                 elif original_tool_name in json_tool_names:
@@ -2905,11 +2906,6 @@ class AiAssistAgent:
             else:
                 result_text = "Tool executed successfully with no output"
             result_text = self.redactor.redact(result_text)
-
-            # Sanitize MCP tool results for prompt injection
-            result_text, injection_warnings = sanitize_tool_result(result_text, tool_name)
-            if injection_warnings:
-                logger.warning("Suspicious content in %s result: %s", tool_name, ", ".join(injection_warnings))
 
             # Apply __jq_filter before recording/logging/KG storage so they reflect
             # what was actually returned to the model, not the pre-filter raw result.

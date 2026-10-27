@@ -10,6 +10,8 @@ import hashlib
 import json
 import logging
 import re
+import secrets
+import unicodedata
 
 logger = logging.getLogger(__name__)
 
@@ -21,9 +23,9 @@ INJECTION_PATTERNS: list[tuple[str, re.Pattern]] = [
     (
         "ignore_instructions",
         re.compile(
-            r"(?i)(ignore|disregard|forget|override)\s+(all\s+)?"
-            r"(previous|prior|above|earlier|system)\s+"
-            r"(instructions?|prompt|rules?|guidelines?|constraints?)"
+            r"(?i)(ignore|disregard|forget|override)\s+((all|the|your|any|of|these)\s+)*"
+            r"(previous|prior|above|earlier|system|preceding)\s+"
+            r"(instructions?|prompts?|rules?|guidelines?|constraints?|directives?|commands?|messages?)"
         ),
     ),
     (
@@ -62,36 +64,50 @@ INJECTION_PATTERNS: list[tuple[str, re.Pattern]] = [
     ),
 ]
 
-SUSPICIOUS_CONTENT_PREFIX = "[UNTRUSTED_TOOL_OUTPUT_START]"
-SUSPICIOUS_CONTENT_SUFFIX = "[UNTRUSTED_TOOL_OUTPUT_END]"
+# Markers around tool output: "[UNTRUSTED_TOOL_OUTPUT_START id=<random>]" ... END.
+# The id is random per call, so content cannot close the block with a fake end marker.
+UNTRUSTED_START = "[UNTRUSTED_TOOL_OUTPUT_START"
+UNTRUSTED_END = "[UNTRUSTED_TOOL_OUTPUT_END"
+_MARKER_TEXT = re.compile(r"UNTRUSTED_TOOL_OUTPUT", re.IGNORECASE)
+# Zero-width and bidi control characters used to split trigger words
+_INVISIBLE_CHARS = re.compile("[\u00ad\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2064\ufeff]")
+
+
+def detect_injection(text: str) -> list[str]:
+    """Names of INJECTION_PATTERNS found in text, after Unicode normalization.
+
+    A heuristic: it catches common phrasings, not homoglyphs or encodings.
+    """
+    normalized = _INVISIBLE_CHARS.sub("", unicodedata.normalize("NFKC", text))
+    return [name for name, pattern in INJECTION_PATTERNS if pattern.search(normalized)]
+
+
+def wrap_untrusted(text: str, matched: list[str] | None = None) -> str:
+    """Wrap text in per-call markers, defusing any marker text inside it."""
+    marker_id = secrets.token_hex(4)
+    body = _MARKER_TEXT.sub("UNTRUSTED-TOOL-OUTPUT", text)
+    warning = f"Warning: possible prompt injection detected ({', '.join(matched)}).\n" if matched else ""
+    return f"{UNTRUSTED_START} id={marker_id}]\n{warning}{body}\n{UNTRUSTED_END} id={marker_id}]"
 
 
 def sanitize_tool_result(result: str, tool_name: str = "") -> tuple[str, list[str]]:
-    """Scan tool result for prompt injection patterns.
+    """Scan tool output for prompt injection and wrap it in untrusted markers.
 
     Args:
         result: Raw tool result text
         tool_name: Name of the tool (for logging)
 
     Returns:
-        Tuple of (possibly-wrapped result, list of matched pattern names).
-        If no patterns matched, returns (result, []).
-        If patterns matched, wraps result in sentinel markers.
+        Tuple of (wrapped result, list of matched pattern names). Output is
+        always wrapped; a warning line is added when patterns matched.
     """
     if not result:
         return result, []
 
-    matched = []
-    for name, pattern in INJECTION_PATTERNS:
-        if pattern.search(result):
-            matched.append(name)
-            logger.warning("Prompt injection pattern '%s' detected in tool '%s' result", name, tool_name)
-
-    if matched:
-        wrapped = f"{SUSPICIOUS_CONTENT_PREFIX}\n{result}\n{SUSPICIOUS_CONTENT_SUFFIX}"
-        return wrapped, matched
-
-    return result, []
+    matched = detect_injection(result)
+    for name in matched:
+        logger.warning("Prompt injection pattern '%s' detected in tool '%s' result", name, tool_name)
+    return wrap_untrusted(result, matched), matched
 
 
 # ---------------------------------------------------------------------------

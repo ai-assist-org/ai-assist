@@ -19,7 +19,7 @@ podman build -t ai-assist-dev -f sandbox/profiles/dev/Dockerfile .
 
 ```bash
 # Create an instance
-ai-assist /sandbox init my-instance                        # all features, base image
+ai-assist /sandbox init my-instance                        # default features (git,dci,vertex), base image
 ai-assist /sandbox init my-instance --features=ssh,git     # only ssh and git
 ai-assist /sandbox init my-instance --image=ai-assist-dev  # use dev image
 
@@ -46,6 +46,22 @@ ai-assist /sandbox service my-instance status
 ai-assist /sandbox service my-instance logs -f
 ai-assist /sandbox service my-instance remove
 ```
+
+### Features
+
+| Feature | Default | What it gives the sandbox |
+|---------|---------|---------------------------|
+| `git` | yes | `~/.gitconfig` (read-only) |
+| `dci` | yes | the DCI MCP server sidecar (holds the DCI credentials) |
+| `vertex` | yes | `~/.config/gcloud/application_default_credentials.json` for Vertex AI |
+| `litellm` | no | a litellm proxy sidecar instead of direct provider access |
+| `ssh` | no | `~/.ssh` and your SSH agent: it can log in wherever your keys can |
+| `gpg` | no | your GnuPG keyring |
+| `gh` | no | your GitHub CLI config and `GITHUB_TOKEN` |
+| `dbus` | no | your desktop session bus: it can start programs on the host |
+
+`/sandbox init` warns when `ssh`, `gpg`, `gh` or `dbus` is enabled. The sandbox
+is the boundary for `autonomous` mode, so keep these off unless needed.
 
 **Note:** Systemd user services only run while you're logged in. To start at boot:
 ```bash

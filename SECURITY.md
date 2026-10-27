@@ -32,17 +32,23 @@ Untrusted content entering the agent can contain adversarial instructions design
 - `delimiter_injection` — `</system>`, `[SYSTEM]`, `[INST]`, `<<SYS>>`
 
 **Behavior:**
-- Suspicious results are wrapped in `[UNTRUSTED_TOOL_OUTPUT_START]` / `[UNTRUSTED_TOOL_OUTPUT_END]` sentinel markers
+- Every tool result sent to the model (MCP, web, files, commands, scripts,
+  internal tools) and every MCP resource is wrapped in
+  `[UNTRUSTED_TOOL_OUTPUT_START id=X]` / `[UNTRUSTED_TOOL_OUTPUT_END id=X]`,
+  where `X` is random per call; marker text inside the content is defused, so
+  content cannot close the block early and add fake instructions
 - The system prompt instructs the model to treat marked content as raw data only
-- All detections are logged as warnings
+- Detection runs on NFKC-normalized text with zero-width characters removed;
+  a match adds a warning line inside the markers and is logged
 - Results are not blocked — the agent sees the data but is warned
+- Wrapping happens when the result is handed to the model, so `__jq_filter`,
+  `__save_to_file`, reports and the knowledge graph see the raw output
 
-**Scope:** All untrusted entry points are scanned:
-- MCP server tool results (`_execute_tool()`)
-- MCP prompt messages (`execute_mcp_prompt()`)
-- Agent Skill script output (`execute_skill_script`)
+**MCP prompts** (`execute_mcp_prompt()`) are instructions the user invoked, so
+they are only wrapped when detection matches.
 
-Internal tools (introspection, filesystem, reports, schedules, knowledge) are trusted and not scanned.
+Detection is a heuristic (homoglyphs or encodings evade it); the always-on
+markers are what tell the model where data starts and ends.
 
 ## 2. Tool & Content Poisoning Detection
 
@@ -188,6 +194,15 @@ the config dir. Every word of a command is checked after expanding `$VARS`,
 `~`, globs and earlier `cd` targets. This is best effort: a path the shell
 builds at run time (`find ~ | xargs cat`, `grep -r x ~`) is not caught, which
 is why tool results are also redacted (section 8b).
+
+### git and ssh options that run programs
+
+Even when `git` or `ssh` is allowlisted, `git -c`, `git --config-env`,
+`git --exec-path`, `git config <key> <value>`, `ssh -F`, and
+`ssh -o ProxyCommand/LocalCommand/PermitLocalCommand/KnownHostsCommand`
+require confirmation (rejected in non-interactive mode). Writes inside a
+`.git` directory (file tools, `__save_to_file`, redirections) also require
+confirmation, since git runs hooks and programs configured there.
 
 ### Assignments that change which program runs
 

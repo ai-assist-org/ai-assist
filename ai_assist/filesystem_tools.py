@@ -845,6 +845,91 @@ def _command_path_candidates(command: str, cwd: str | None = None) -> list[Path]
     return candidates
 
 
+# git options that write files or run configured programs, even for read commands
+_GIT_UNSAFE_READ_OPTIONS = frozenset({"--output", "--ext-diff", "--textconv"})
+# git branch options that only list (and those taking a value)
+_GIT_BRANCH_LIST_OPTIONS = frozenset(
+    {
+        "-a",
+        "--all",
+        "-r",
+        "--remotes",
+        "-v",
+        "-vv",
+        "--verbose",
+        "-l",
+        "--list",
+        "--show-current",
+        "--no-color",
+        "--color",
+        "--column",
+        "--no-column",
+        "--sort",
+        "--format",
+        "--contains",
+        "--no-contains",
+        "--merged",
+        "--no-merged",
+        "--points-at",
+        "--abbrev",
+        "--no-abbrev",
+        "-i",
+        "--ignore-case",
+    }
+)
+_GIT_BRANCH_FILTER_OPTIONS = frozenset({"--contains", "--no-contains", "--merged", "--no-merged", "--points-at"})
+_GH_API_BODY_OPTIONS = frozenset({"-f", "-F", "--field", "--raw-field", "--input"})
+# git global options and ssh options that make the command run another program
+_GIT_PROGRAM_OPTIONS = frozenset({"-c", "--config-env", "--exec-path"})
+_SSH_PROGRAM_OPTIONS = frozenset({"proxycommand", "localcommand", "permitlocalcommand", "knownhostscommand"})
+# git config forms that only read
+_GIT_CONFIG_READ_OPTIONS = frozenset(
+    {"--get", "--get-all", "--get-regexp", "--list", "-l", "--show-origin", "get", "list"}
+)
+
+
+def _program_running_arguments(command: str) -> list[str]:
+    """Describe git/ssh arguments in a command line that make it run other programs."""
+    found: list[str] = []
+    for segment in _split_shell_commands(command):
+        try:
+            tokens = shlex.split(segment)
+        except ValueError:
+            tokens = segment.split()
+        idx = 0
+        while idx < len(tokens) and _ASSIGNMENT.match(tokens[idx]):
+            idx += 1
+        idx = _strip_transparent_wrappers(tokens, idx)
+        if idx >= len(tokens):
+            continue
+        name, args = Path(tokens[idx]).name, tokens[idx + 1 :]
+        if name == "git":
+            i = 0
+            while i < len(args) and args[i].startswith("-"):
+                if args[i].split("=", 1)[0] in _GIT_PROGRAM_OPTIONS:
+                    found.append(f"git {args[i]}")
+                i += 2 if args[i] in ("-c", "-C", "--git-dir", "--work-tree", "--namespace") else 1
+            rest = args[i:]
+            if rest[:1] == ["config"]:
+                values = [arg for arg in rest[1:] if not arg.startswith("-")]
+                if not _GIT_CONFIG_READ_OPTIONS.intersection(rest[1:]) and len(values) >= 2:
+                    found.append("git config (set)")
+        elif name == "ssh":
+            for i, arg in enumerate(args):
+                if arg.startswith("-F"):
+                    found.append("ssh -F")
+                if arg == "-o" and i + 1 < len(args):
+                    option = args[i + 1]
+                elif arg.startswith("-o"):
+                    option = arg[2:]
+                else:
+                    continue
+                key = re.split(r"[=\s]", option, maxsplit=1)[0].lower()
+                if key in _SSH_PROGRAM_OPTIONS:
+                    found.append(f"ssh -o {key}")
+    return found
+
+
 # Pseudo command names under which _extract_command_argument_paths reports written files
 _WRITE_TARGET_SOURCES = frozenset({">", "sort", "yq"})
 # find options that come before the search paths
@@ -1836,8 +1921,7 @@ class FilesystemTools:
             return False
         return index == len(args)
 
-    @staticmethod
-    def _is_auto_sqlite_read_safe(args: list[str]) -> bool:
+    def _is_auto_sqlite_read_safe(self, args: list[str]) -> bool:
         """Allow a single read-only SQLite query with display-only options."""
         display_options = {"-header", "-noheader", "-column", "-csv", "-json", "-line", "-list", "-tabs"}
         index = 0
@@ -1846,11 +1930,17 @@ class FilesystemTools:
         if len(args) - index != 2:
             return False
 
+        database = args[index]
+        if database != ":memory:" and not self._is_workspace_path(database):
+            return False
+
         query = args[index + 1].strip()
         if ";" in query or not re.match(r"(?:select\b|with\b|explain\s+select\b)", query, re.IGNORECASE):
             return False
+        # writefile/readfile/edit are sqlite3 shell functions touching arbitrary files
         return not re.search(
-            r"\b(?:alter|attach|create|delete|detach|drop|insert|load_extension|pragma|replace|update|vacuum)\b",
+            r"\b(?:alter|attach|create|delete|detach|drop|insert|load_extension|pragma|replace|update|vacuum"
+            r"|writefile|readfile|edit|fts3_tokenizer)\b",
             query,
             re.IGNORECASE,
         )
@@ -1863,17 +1953,43 @@ class FilesystemTools:
                 continue
             if flag != "--no-pager":
                 return False
-        return bool(args) and args[0] in {"status", "diff", "log", "show", "branch", "rev-parse", "ls-files"}
+        if not args or args[0] not in {"status", "diff", "log", "show", "branch", "rev-parse", "ls-files"}:
+            return False
+        # --output writes a file; --ext-diff/--textconv run configured programs
+        if any(arg.split("=", 1)[0] in _GIT_UNSAFE_READ_OPTIONS for arg in args[1:]):
+            return False
+        return args[0] != "branch" or self._is_git_branch_listing(args[1:])
+
+    @staticmethod
+    def _is_git_branch_listing(args: list[str]) -> bool:
+        """`git branch` only lists branches: no names to create, delete, or move."""
+        index = 0
+        while index < len(args):
+            arg = args[index]
+            if arg in _GIT_BRANCH_FILTER_OPTIONS:
+                index += 2
+                continue
+            if not arg.startswith("-") or arg.split("=", 1)[0] not in _GIT_BRANCH_LIST_OPTIONS:
+                return False
+            index += 1
+        return True
 
     @staticmethod
     def _is_auto_gh_safe(args: list[str]) -> bool:
         if not args:
             return False
         if args[0] == "api":
-            if "--method" not in args:
-                return True
-            index = args.index("--method")
-            return index + 1 < len(args) and args[index + 1].upper() == "GET"
+            for index, arg in enumerate(args):
+                if arg in ("-X", "--method"):
+                    if index + 1 >= len(args) or args[index + 1].upper() != "GET":
+                        return False
+                elif arg.startswith(("-X", "--method=")):
+                    if arg.removeprefix("-X").removeprefix("--method=").upper() != "GET":
+                        return False
+                elif arg.split("=", 1)[0] in _GH_API_BODY_OPTIONS or arg.startswith(("-f", "-F")):
+                    # Fields and request bodies make gh send a POST
+                    return False
+            return True
         return args[:2] in (["pr", "view"], ["pr", "list"], ["pr", "status"], ["run", "view"], ["run", "list"])
 
     def _has_outside_workspace_path(self, args: list[str]) -> bool:
@@ -1913,6 +2029,13 @@ class FilesystemTools:
             if is_sensitive_path(path):
                 return f"Error: {path} is a sensitive location (keys/credentials) the agent cannot access."
 
+        program_args = ", ".join(sorted(set(_program_running_arguments(command))))
+        if program_args:
+            if self.confirmation_callback is None:
+                return f"Error: {program_args} can run arbitrary programs; not allowed in non-interactive mode."
+            if not await self.confirmation_callback(f"Allow {program_args} (can run arbitrary programs): {command}"):
+                return f"Error: {program_args} rejected by user."
+
         hijacked = ", ".join(sorted(_program_hijacking_assignments(command)))
         if hijacked:
             if self.confirmation_callback is None:
@@ -1925,6 +2048,10 @@ class FilesystemTools:
         for cmd_name, path_or_marker in pairs:
             if cmd_name == "cd":
                 continue
+            if cmd_name in _WRITE_TARGET_SOURCES and (
+                git_error := await self._check_git_internals_write(path_or_marker)
+            ):
+                return git_error
             if cmd_name in _WRITE_TARGET_SOURCES and _DYNAMIC_PATH_CHARS.intersection(path_or_marker):
                 desc = f"Write to a path computed at run time ({path_or_marker}): {command}"
                 if self.confirmation_callback is None:
@@ -1969,6 +2096,14 @@ class FilesystemTools:
             logger.exception("Ignoring unreadable %s", path)
             return set()
 
+    async def _check_git_internals_write(self, path: str) -> str | None:
+        """Writes inside a .git directory need confirmation: git runs programs configured there."""
+        if self.permission_mode == "autonomous" or ".git" not in Path(path).expanduser().resolve().parts:
+            return None
+        if await self.confirm(f"Modify git internals: {path} (git runs hooks and programs configured there)"):
+            return None
+        return f"Error: Writing inside .git ({path}) requires user confirmation."
+
     async def validate_write_target(self, path: str) -> str | None:
         """Run the internal__write_file checks on a path the agent wants to write.
 
@@ -1980,6 +2115,10 @@ class FilesystemTools:
         path_error = await self._validate_path(path)
         if path_error:
             return path_error
+
+        git_error = await self._check_git_internals_write(path)
+        if git_error:
+            return git_error
 
         return await self._check_confirmation("internal__write_file", f"Write file: {path}")
 
@@ -2023,6 +2162,7 @@ class FilesystemTools:
 
         for check in (
             await self._validate_path(path),
+            await self._check_git_internals_write(path),
             await self._check_confirmation("internal__edit_file", f"Edit file: {path}"),
         ):
             if check:

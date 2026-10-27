@@ -16,7 +16,15 @@ logger = logging.getLogger(__name__)
 
 TEMPLATES_DIR = Path(__file__).parent / "sandbox_templates"
 
-ALL_FEATURES = {"ssh", "gpg", "git", "gh", "dci", "dbus", "litellm"}
+ALL_FEATURES = {"ssh", "gpg", "git", "gh", "dci", "dbus", "litellm", "vertex"}
+DEFAULT_FEATURES = {"git", "dci", "vertex"}
+# Features that hand the sandbox host credentials or host control
+HOST_ACCESS_WARNINGS = {
+    "ssh": "the SSH agent lets the sandbox log in to every host your keys can reach",
+    "dbus": "the session bus lets the sandbox start programs on the host (e.g. via systemd --user)",
+    "gpg": "your GnuPG keyring is readable inside the sandbox",
+    "gh": "your GitHub CLI credentials and GITHUB_TOKEN are usable inside the sandbox",
+}
 
 SANDBOX_SUBDIRS = [
     ".ai-assist/state",
@@ -68,13 +76,11 @@ def _build_compose(features: set[str], image: str = DEFAULT_IMAGE) -> dict:
     """Build compose dict with only the requested features."""
     volumes = [
         "./sandbox:/workspace:rw,z",
-        "${HOME}/.config/gcloud:/host-config/gcloud:ro,z",
     ]
     environment: dict[str, str] = {
         "HOME": "/workspace",
         "AI_ASSIST_CONFIG_DIR": "/workspace/.ai-assist",
         "AI_ASSIST_REPORTS_DIR": "/workspace/reports",
-        "CLOUDSDK_CONFIG": "/host-config/gcloud",
         "FASTEMBED_CACHE_PATH": "/workspace/.ai-assist/fastembed-cache",
         "AI_ASSIST_SANDBOX": "true",
         "AI_ASSIST_PERMISSION_MODE": "${AI_ASSIST_PERMISSION_MODE:-manual}",
@@ -91,6 +97,15 @@ def _build_compose(features: set[str], image: str = DEFAULT_IMAGE) -> dict:
         "AI_ASSIST_MODEL_CONTEXT_WINDOW": "${AI_ASSIST_MODEL_CONTEXT_WINDOW:-}",
     }
     security_opt = []
+
+    if "vertex" in features:
+        # Only the application default credentials, not the whole gcloud config
+        # (other accounts, CLI tokens): google-auth reads it from CLOUDSDK_CONFIG.
+        volumes.append(
+            "${HOME}/.config/gcloud/application_default_credentials.json"
+            ":/host-config/gcloud/application_default_credentials.json:ro,z"
+        )
+        environment["CLOUDSDK_CONFIG"] = "/host-config/gcloud"
 
     if "ssh" in features:
         volumes.append("${HOME}/.ssh:/host-config/ssh:ro,z")
@@ -254,9 +269,9 @@ def _write_litellm_config(path: Path, features: set[str]) -> None:
 
 
 def _parse_features(feature_str: str | None) -> set[str]:
-    """Parse comma-separated feature string, defaulting to all features."""
+    """Parse comma-separated feature string, defaulting to DEFAULT_FEATURES."""
     if not feature_str:
-        return set(ALL_FEATURES)
+        return set(DEFAULT_FEATURES)
     features = {f.strip() for f in feature_str.split(",")}
     unknown = features - ALL_FEATURES
     if unknown:
@@ -269,7 +284,9 @@ def _parse_features(feature_str: str | None) -> set[str]:
 def sandbox_init(name: str, features: set[str] | None = None, image: str = DEFAULT_IMAGE) -> None:
     """Scaffold a new sandbox instance directory."""
     if features is None:
-        features = set(ALL_FEATURES)
+        features = set(DEFAULT_FEATURES)
+    for feature in sorted(features & HOST_ACCESS_WARNINGS.keys()):
+        console_print(f"Warning: feature '{feature}': {HOST_ACCESS_WARNINGS[feature]}.")
 
     instance = _instance_dir(name)
     if instance.exists():
@@ -611,11 +628,11 @@ async def handle_sandbox_command(args: list[str]) -> None:
 
 
 def _print_init_usage():
-    console_print("Usage: ai-assist /sandbox init <name> [--features=ssh,gpg,git,gh,dci,dbus] [--image=NAME]")
+    console_print("Usage: ai-assist /sandbox init <name> [--features=git,dci,vertex,...] [--image=NAME]")
     console_print()
     console_print(f"Available features: {', '.join(sorted(ALL_FEATURES))}")
-    console_print("Default: all features enabled")
-    console_print("Vertex AI (gcloud) is always included.")
+    console_print(f"Default: {','.join(sorted(DEFAULT_FEATURES))}")
+    console_print("ssh, gpg, gh and dbus give the sandbox host credentials or host control: enable them explicitly.")
     console_print()
     console_print(f"Default image: {DEFAULT_IMAGE}")
     console_print("Build custom images from sandbox/profiles/ (e.g. ai-assist-dev)")
