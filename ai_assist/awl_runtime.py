@@ -168,6 +168,15 @@ def _validate_workflow_efforts(workflow: WorkflowNode) -> list[str]:
     return errors
 
 
+def _extract_commands_from_text(text: str) -> set[str]:
+    """Extract command names from backtick-enclosed commands in ``text``."""
+    commands: set[str] = set()
+    for match in re.findall(r"`([^`]+)`", text):
+        commands.update(extract_command_names(match))
+    # Filter out markers like <shell-expansion>
+    return {cmd for cmd in commands if not cmd.startswith("<")}
+
+
 def _extract_commands_from_workflow(workflow: WorkflowNode) -> set[str]:
     """Extract command names from commands in AWL task/goal text.
 
@@ -181,8 +190,7 @@ def _extract_commands_from_workflow(workflow: WorkflowNode) -> set[str]:
     commands: set[str] = set()
 
     def _extract_from_text(text: str):
-        for match in re.findall(r"`([^`]+)`", text):
-            commands.update(extract_command_names(match))
+        commands.update(_extract_commands_from_text(text))
 
     def _visit(nodes: list[ASTNode]):
         for node in nodes:
@@ -202,8 +210,9 @@ def _extract_commands_from_workflow(workflow: WorkflowNode) -> set[str]:
                 _visit(node.body)
 
     _visit(workflow.body)
-    # Filter out markers like <shell-expansion>
-    return {cmd for cmd in commands if not cmd.startswith("<")}
+    # Commands containing ${var} can only be resolved once the variable is
+    # known; they are authorized per task, after interpolation.
+    return {cmd for cmd in commands if "${" not in cmd}
 
 
 def _compute_input_variables(workflow: WorkflowNode) -> set[str]:
@@ -482,6 +491,39 @@ class AWLRuntime:
             message = self._expr.interpolate(node.message, self._variables)
             raise _BreakSignal(message)
 
+    def _authorize_task_commands(self, task: TaskNode) -> tuple[list[str], set[str]]:
+        """Authorize the commands written in this task, after variable interpolation.
+
+        The workflow-level pass cannot authorize `${var}/cmd` because the variable
+        is only known at run time (input or exposed by an earlier task). Returns
+        what was added so it can be revoked when the task ends.
+        """
+        fs_tools = getattr(self._agent, "filesystem_tools", None)
+        if not fs_tools:
+            return [], set()
+        text = self._expr.interpolate(task.goal, self._variables)
+        if task.context:
+            text += "\n" + self._expr.interpolate(task.context, self._variables)
+        commands = {cmd for cmd in _extract_commands_from_text(text) if "${" not in cmd}
+        added = [cmd for cmd in sorted(commands) if cmd not in fs_tools.allowed_commands]
+        newly_authorized = commands - fs_tools.awl_authorized_commands
+        fs_tools.allowed_commands.extend(added)
+        fs_tools.awl_authorized_commands |= newly_authorized
+        if added:
+            logger.info("AWL task '%s' auto-authorized commands: %s", task.task_id, added)
+        return added, newly_authorized
+
+    def _revoke_task_commands(self, added: list[str], newly_authorized: set[str]) -> None:
+        fs_tools = getattr(self._agent, "filesystem_tools", None)
+        if not fs_tools:
+            return
+        for cmd in added:
+            try:
+                fs_tools.allowed_commands.remove(cmd)
+            except ValueError:
+                pass
+        fs_tools.awl_authorized_commands -= newly_authorized
+
     async def _execute_task(self, task: TaskNode):
         prompt = self._build_task_prompt(task)
 
@@ -533,6 +575,7 @@ class AWLRuntime:
                         task.model or "default",
                         resolved_model,
                     )
+                task_commands = self._authorize_task_commands(task)
                 try:
                     response = await self._agent.query(
                         prompt,
@@ -541,6 +584,7 @@ class AWLRuntime:
                         max_time_seconds=task.max_time,
                     )
                 finally:
+                    self._revoke_task_commands(*task_commands)
                     self._agent.config.model = saved_model
                     self._agent.config.effort = saved_effort
             finally:

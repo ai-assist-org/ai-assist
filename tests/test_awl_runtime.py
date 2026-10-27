@@ -976,6 +976,68 @@ async def test_awl_auto_authorize_cleanup_on_failure(mock_agent):
     assert len(fs_tools.awl_authorized_commands) == 0
 
 
+@pytest.mark.asyncio
+async def test_awl_auto_authorizes_interpolated_command_paths(mock_agent):
+    """`${var}/cmd` must be authorized with the interpolated path while the task runs."""
+    fs_tools = MagicMock()
+    fs_tools.allowed_commands = ["grep"]
+    fs_tools.awl_authorized_commands = set()
+    mock_agent.filesystem_tools = fs_tools
+    seen: list[tuple[list[str], set[str]]] = []
+
+    async def capture(*args, **kwargs):
+        seen.append((list(fs_tools.allowed_commands), set(fs_tools.awl_authorized_commands)))
+        return '{"result": "ok"}'
+
+    mock_agent.query.side_effect = capture
+
+    runtime = AWLRuntime(mock_agent)
+    workflow = WorkflowNode(
+        body=[
+            TaskNode(task_id="t1", goal="Run `${analyze_job}/get_status_reason dir`.", expose=["result"]),
+        ]
+    )
+    await runtime.execute(workflow, variables={"analyze_job": "/opt/aj"})
+
+    allowed, authorized = seen[0]
+    assert "/opt/aj/get_status_reason" in allowed
+    assert "/opt/aj/get_status_reason" in authorized
+    assert not any("${" in c for c in allowed + list(authorized))
+    # cleaned up afterwards, pre-existing entries kept
+    assert fs_tools.allowed_commands == ["grep"]
+    assert len(fs_tools.awl_authorized_commands) == 0
+
+
+@pytest.mark.asyncio
+async def test_awl_auto_authorizes_commands_from_exposed_variables(mock_agent):
+    """A command built from a variable exposed by an earlier task is authorized in a later task."""
+    fs_tools = MagicMock()
+    fs_tools.allowed_commands = []
+    fs_tools.awl_authorized_commands = set()
+    mock_agent.filesystem_tools = fs_tools
+    seen: list[list[str]] = []
+
+    async def answer(*args, **kwargs):
+        seen.append(list(fs_tools.allowed_commands))
+        return '{"store": "/srv/store"}' if len(seen) == 1 else '{"done": "yes"}'
+
+    mock_agent.query.side_effect = answer
+
+    runtime = AWLRuntime(mock_agent)
+    workflow = WorkflowNode(
+        body=[
+            TaskNode(task_id="t1", goal="Find the store.", expose=["store"]),
+            TaskNode(task_id="t2", goal="Run `${store}/scripts/add.sh x`.", expose=["done"]),
+        ]
+    )
+    await runtime.execute(workflow)
+
+    assert "/srv/store/scripts/add.sh" not in seen[0]
+    assert "/srv/store/scripts/add.sh" in seen[1]
+    assert fs_tools.allowed_commands == []
+    assert len(fs_tools.awl_authorized_commands) == 0
+
+
 # ── Static variable validation tests ─────────────────────────────
 
 
