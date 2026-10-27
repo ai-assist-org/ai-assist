@@ -2,33 +2,40 @@
 
 from dataclasses import dataclass
 
-# MCP tool prefixes that indicate write operations (heuristic fallback)
-_WRITE_PREFIXES = ("create_", "update_", "delete_", "add_", "write_")
+# Tool name prefixes that indicate read operations (heuristic fallback for
+# MCP tools without a _readonly annotation; anything else counts as a write)
+_READ_PREFIXES = (
+    "get_",
+    "list_",
+    "search_",
+    "query_",
+    "find_",
+    "count_",
+    "read_",
+    "describe_",
+    "show_",
+    "fetch_",
+    "lookup_",
+    "inspect_",
+    "view_",
+)
+
+
+def is_planning_tool(tool: dict) -> bool:
+    """Whether a tool is read-only and so usable in plan mode.
+
+    Uses the ``_readonly`` annotation when present on a tool dict. Falls back
+    to read-style name prefixes for MCP tools without it (configure
+    ``readonly_tools`` to allow others).
+    """
+    if "_readonly" in tool:
+        return bool(tool["_readonly"])
+    return tool["name"].split("__", 1)[-1].startswith(_READ_PREFIXES)
 
 
 def get_planning_tools(available_tools: list[dict]) -> list[dict]:
-    """Filter tools to read-only for plan mode.
-
-    Uses the ``_readonly`` annotation when present on a tool dict.
-    Falls back to a name-prefix heuristic for MCP tools without it.
-    """
-    result = []
-    for tool in available_tools:
-        if "_readonly" in tool:
-            if tool["_readonly"]:
-                result.append(tool)
-            continue
-
-        # Heuristic fallback for MCP tools without _readonly annotation
-        name = tool["name"]
-        if "__" in name:
-            _, tool_part = name.split("__", 1)
-            if tool_part.startswith(_WRITE_PREFIXES):
-                continue
-
-        result.append(tool)
-
-    return result
+    """Filter tools to read-only for plan mode."""
+    return [tool for tool in available_tools if is_planning_tool(tool)]
 
 
 @dataclass

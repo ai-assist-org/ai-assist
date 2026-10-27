@@ -74,10 +74,14 @@ class TestGetPlanningToolsHeuristic:
             _make_tool("dci__list_jira_boards", "dci"),
             _make_tool("dci__query_dci_components", "dci"),
             _make_tool("dci__count_jira_tickets", "dci"),
-            _make_tool("dci__now", "dci"),
-            _make_tool("dci__today", "dci"),
         ]
         assert len(get_planning_tools(tools)) == len(tools)
+
+    def test_unrecognized_names_need_annotation(self):
+        """Names without a read-style verb are denied unless annotated readonly."""
+        tools = [_make_tool("dci__now", "dci"), _make_tool("dci__today", "dci")]
+        assert get_planning_tools(tools) == []
+        assert len(get_planning_tools([_make_tool("dci__now", "dci", readonly=True)])) == 1
 
     def test_removes_mcp_write_tools(self):
         tools = [
@@ -88,13 +92,10 @@ class TestGetPlanningToolsHeuristic:
         ]
         assert len(get_planning_tools(tools)) == 0
 
-    def test_convert_tool_caught_by_annotation_not_heuristic(self):
-        """convert_* tools slip through the heuristic — shows why annotation matters."""
+    def test_convert_tool_denied_by_heuristic(self):
+        """convert_* is not a read-style verb, so the heuristic denies it."""
         tool = _make_tool("dci__convert_dci_report_to_google_doc", "dci")
-        assert len(get_planning_tools([tool])) == 1  # heuristic misses it
-
-        annotated = _make_tool("dci__convert_dci_report_to_google_doc", "dci", readonly=False)
-        assert len(get_planning_tools([annotated])) == 0  # annotation catches it
+        assert len(get_planning_tools([tool])) == 0
 
 
 # --- mixed annotated + unannotated ---

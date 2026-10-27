@@ -244,6 +244,25 @@ Creating or changing an action (`internal__create_action` /
 confirmation, and is refused when nobody can be asked. `event-schedules.json`
 is a protected config file, so the agent cannot add actions behind this check.
 
+### Plan mode
+
+`/plan` restricts the agent to read-only tools both in the tool list it sees
+and when a tool is called (`_execute_tool_impl`), so a hijacked model cannot
+call a hidden write tool. Saving results with `__save_to_file` or report
+redirection is refused too. A tool counts as read-only when its `_readonly`
+annotation says so; MCP tools without one are allowed only when their name
+starts with a read-style verb (`get_`, `list_`, `search_`, `query_`, `find_`,
+`count_`, `read_`, ...). Set `readonly_tools` (fnmatch patterns) on a server in
+`mcp_servers.yaml` to classify its tools explicitly.
+
+### Saved user preferences
+
+Knowledge saved as `user_preference` is injected into every future system
+prompt. When the model saves one (`internal__save_knowledge`), the user must
+confirm the key and content; it is refused when nobody can be asked. Other
+knowledge types, and facts extracted from the conversation at compaction, are
+saved without confirmation.
+
 ## 8b. Secret Redaction
 
 **Module:** `ai_assist/redaction.py` — `Redactor`

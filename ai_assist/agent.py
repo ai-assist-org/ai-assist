@@ -508,7 +508,7 @@ class AiAssistAgent:
             # configured and config.jev_rerank is on); covers every caller sharing
             # this graph instance (knowledge tools, hybrid_search, synthesis).
             self.knowledge_graph.set_jev_config(config)
-            self.knowledge_tools = KnowledgeTools(self.knowledge_graph)
+            self.knowledge_tools = KnowledgeTools(self.knowledge_graph, confirm=self.filesystem_tools.confirm)
             self.knowledge_tools.agent = self
             self.kg_query_tools = KGQueryTools(self.knowledge_graph)
             EmbeddingModel.preload()
@@ -2620,6 +2620,14 @@ class AiAssistAgent:
         append_to_report = arguments.pop("__append_to_report", None)
         collect_to_report = arguments.pop("__collect_to_report", None)
         jq_filter = arguments.pop("__jq_filter", None)
+        if self.plan_mode:
+            from .plan_mode import is_planning_tool
+
+            tool_def = next((t for t in self.available_tools if t["name"] == tool_name), None)
+            if tool_def is None or not is_planning_tool(tool_def):
+                return f"Error: {tool_name} is not available in plan mode (read-only tools only)."
+            if save_to_file or write_to_report or append_to_report or collect_to_report:
+                return "Error: Saving results to files or reports is not available in plan mode."
         if save_to_file and tool_name.startswith("internal__") and tool_name not in _SAVE_TO_FILE_ALLOWED_INTERNAL:
             logger.warning("Ignoring __save_to_file on %s", tool_name)
             save_to_file = None

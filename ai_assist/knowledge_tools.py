@@ -1,6 +1,7 @@
 """Internal tools for agent knowledge management"""
 
 import json
+from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import TYPE_CHECKING, Literal
 
@@ -12,9 +13,16 @@ if TYPE_CHECKING:
 class KnowledgeTools:
     """Tools for agent to manage its own knowledge"""
 
-    def __init__(self, knowledge_graph: KnowledgeGraph):
+    def __init__(self, knowledge_graph: KnowledgeGraph, confirm: Callable[[str], Awaitable[bool]] | None = None):
+        """
+        Args:
+            confirm: asks the user to approve a user_preference the model wants
+                to save (preferences are injected into every system prompt).
+                Without it, such saves are refused.
+        """
         self.kg = knowledge_graph
         self.agent: AiAssistAgent | None = None
+        self.confirm = confirm
 
     def get_tool_definitions(self) -> list[dict]:
         """Get MCP-style tool definitions for knowledge management"""
@@ -280,6 +288,10 @@ Returns:
     async def execute_tool(self, tool_name: str, arguments: dict) -> str:
         """Execute a knowledge management tool"""
         if tool_name == "save_knowledge":
+            if arguments["entity_type"] == "user_preference":
+                confirm_error = await self._confirm_preference(arguments["key"], arguments["content"])
+                if confirm_error:
+                    return confirm_error
             return await self.save_knowledge(
                 entity_type=arguments["entity_type"],
                 key=arguments["key"],
@@ -309,6 +321,14 @@ Returns:
             )
         else:
             raise ValueError(f"Unknown knowledge tool: {tool_name}")
+
+    async def _confirm_preference(self, key: str, content: str) -> str | None:
+        """Return an error unless the user approves saving this preference."""
+        if self.confirm is None:
+            return "Error: Saving a user_preference requires user confirmation, which is not available."
+        if not await self.confirm(f"Remember as a user preference (added to every future prompt): {key}: {content}"):
+            return f"Error: Saving user preference '{key}' was rejected by the user."
+        return None
 
     async def save_knowledge(
         self,
