@@ -1,5 +1,6 @@
 """Filesystem tools for ai-assist agent"""
 
+import glob
 import json
 import logging
 import os
@@ -726,6 +727,123 @@ _WRITE_REDIRECTS = frozenset({">", ">>", ">|", "&>", "&>>", "<>", ">&"})
 _HARMLESS_REDIRECT_TARGETS = frozenset({"/dev/null", "/dev/stdout", "/dev/stderr", "/dev/tty"})
 # Marks a path the shell computes at run time ($VAR, globs, substitutions)
 _DYNAMIC_PATH_CHARS = frozenset("$`*?[")
+# Env vars whose value changes which program (or code) a command runs
+PROGRAM_HIJACKING_ENV_VARS = frozenset(
+    {
+        "PATH",
+        "BASH_ENV",
+        "ENV",
+        "IFS",
+        "PROMPT_COMMAND",
+        "SHELLOPTS",
+        "BASHOPTS",
+        "PS4",
+        "GIT_SSH",
+        "GIT_SSH_COMMAND",
+        "GIT_EXTERNAL_DIFF",
+        "GIT_PAGER",
+        "GIT_EDITOR",
+        "GIT_ASKPASS",
+        "SSH_ASKPASS",
+        "PAGER",
+        "EDITOR",
+        "VISUAL",
+        "PYTHONPATH",
+        "PYTHONSTARTUP",
+        "PYTHONHOME",
+        "NODE_OPTIONS",
+        "PERL5OPT",
+        "PERL5LIB",
+        "RUBYOPT",
+    }
+)
+_PROGRAM_HIJACKING_ENV_PREFIXES = ("LD_", "DYLD_", "GIT_CONFIG")
+_ASSIGNMENT = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\+?=")
+_ASSIGNING_BUILTINS = frozenset({"export", "declare", "typeset", "readonly", "local"})
+
+
+def _program_hijacking_assignments(command: str) -> set[str]:
+    """Names of PROGRAM_HIJACKING_ENV_VARS a command line assigns."""
+    names: set[str] = set()
+    for segment in _split_shell_commands(command):
+        try:
+            tokens = shlex.split(segment)
+        except ValueError:
+            tokens = segment.split()
+        idx = 0
+        while idx < len(tokens) and _ASSIGNMENT.match(tokens[idx]):
+            idx += 1
+        idx = _strip_transparent_wrappers(tokens, idx)
+        candidates = tokens[:idx]
+        if idx < len(tokens) and tokens[idx] in _ASSIGNING_BUILTINS:
+            candidates += tokens[idx + 1 :]
+        for token in candidates:
+            match = _ASSIGNMENT.match(token)
+            if match and (
+                match.group(1) in PROGRAM_HIJACKING_ENV_VARS
+                or match.group(1).startswith(_PROGRAM_HIJACKING_ENV_PREFIXES)
+            ):
+                names.add(match.group(1))
+    return names
+
+
+def sensitive_locations() -> list[Path]:
+    """Credential and key locations the agent may never read or write."""
+    home = Path.home()
+    config_dir = get_config_dir()
+    return [
+        home / ".ssh",
+        home / ".gnupg",
+        home / ".aws",
+        home / ".azure",
+        home / ".config" / "gcloud",
+        home / ".config" / "gh",
+        home / ".kube",
+        home / ".docker" / "config.json",
+        home / ".netrc",
+        home / ".git-credentials",
+        home / ".pgpass",
+        home / ".password-store",
+        home / ".local" / "share" / "keyrings",
+        config_dir / ".env",
+        config_dir / "mcp-oauth",
+    ]
+
+
+def is_sensitive_path(path: Path) -> bool:
+    resolved = path.expanduser().resolve()
+    return any(_is_relative_to(resolved, location.resolve()) for location in sensitive_locations())
+
+
+def _command_path_candidates(command: str, cwd: str | None = None) -> list[Path]:
+    """Every word of a command line interpreted as a path (also NAME=value values).
+
+    $VARS, ~ and globs are expanded as the shell would, and relative paths are
+    resolved against cwd and earlier cd targets.
+    """
+    candidates: list[Path] = []
+    effective_cwd = Path(cwd).expanduser() if cwd else Path.cwd()
+    for segment in _split_shell_commands(command):
+        lexer = shlex.shlex(segment, posix=True, punctuation_chars=True)
+        lexer.whitespace_split = True
+        try:
+            tokens = list(lexer)
+        except ValueError:
+            tokens = segment.split()
+        for token in tokens:
+            for value in (token, token.split("=", 1)[1] if "=" in token else ""):
+                if not value:
+                    continue
+                expanded = os.path.expanduser(os.path.expandvars(value))
+                if any(c in expanded for c in "*?["):
+                    candidates.extend(effective_cwd / match for match in glob.glob(expanded, root_dir=effective_cwd))
+                else:
+                    candidates.append(effective_cwd / expanded)
+        if len(tokens) > 1 and tokens[0] == "cd":
+            effective_cwd = effective_cwd / os.path.expanduser(os.path.expandvars(tokens[1]))
+    return candidates
+
+
 # Pseudo command names under which _extract_command_argument_paths reports written files
 _WRITE_TARGET_SOURCES = frozenset({">", "sort", "yq"})
 # find options that come before the search paths
@@ -1021,7 +1139,13 @@ class FilesystemTools:
         Returns:
             Error message if path is not allowed, None if validation passes
         """
-        if self.permission_mode == "autonomous" or not self._path_restrictions_enabled:
+        if self.permission_mode == "autonomous":
+            return None
+
+        if is_sensitive_path(Path(path_str)):
+            return f"Error: {path_str} is a sensitive location (keys/credentials) the agent cannot access."
+
+        if not self._path_restrictions_enabled:
             return None
 
         if self.permission_mode == "auto" and self._is_workspace_path(path_str):
@@ -1776,6 +1900,17 @@ class FilesystemTools:
         Returns:
             Error message if blocked, None if allowed
         """
+        for path in _command_path_candidates(command, working_dir):
+            if is_sensitive_path(path):
+                return f"Error: {path} is a sensitive location (keys/credentials) the agent cannot access."
+
+        hijacked = ", ".join(sorted(_program_hijacking_assignments(command)))
+        if hijacked:
+            if self.confirmation_callback is None:
+                return f"Error: Setting {hijacked} changes which program runs; not allowed in non-interactive mode."
+            if not await self.confirmation_callback(f"Set {hijacked} (changes which program runs): {command}"):
+                return f"Error: Setting {hijacked} rejected by user."
+
         pairs = _extract_command_argument_paths(command, working_dir)
 
         for cmd_name, path_or_marker in pairs:

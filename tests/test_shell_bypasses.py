@@ -161,3 +161,120 @@ async def test_code_running_builtin_allowed_when_allowlisted(workdir):
     result = await tools.execute_tool("execute_command", {"command": "source ./env.sh"})
 
     assert "sourced" in result
+
+
+# --- Environment assignments that change which program runs ---
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "command",
+    [
+        "PATH=.:$PATH grep x f",
+        "export PATH=.:$PATH; grep x f",
+        "PATH=. ; grep x f",
+        "env PATH=. grep x f",
+        "declare -x PATH=.",
+        "LD_PRELOAD=./evil.so grep x f",
+        "BASH_ENV=./evil.sh grep x f",
+        "GIT_SSH_COMMAND='touch pwned' grep x f",
+    ],
+)
+async def test_program_hijacking_assignment_is_rejected(workdir, command):
+    tools = _tools(workdir)
+
+    result = await tools.execute_tool("execute_command", {"command": command})
+
+    assert result.startswith("Error"), result
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("command", ["FOO=bar grep x f", "export FOO=1; grep x f", "LC_ALL=C sort f"])
+async def test_ordinary_assignments_still_run(workdir, command):
+    result = await _tools(workdir).execute_tool("execute_command", {"command": command})
+
+    assert "Exit code: 0" in result, result
+
+
+@pytest.mark.asyncio
+async def test_program_hijacking_assignment_runs_after_confirmation(workdir):
+    tools = _tools(workdir)
+    prompts = []
+
+    async def approve(description):
+        prompts.append(description)
+        return True
+
+    tools.confirmation_callback = approve
+
+    result = await tools.execute_tool("execute_command", {"command": "PATH=/usr/bin:/bin grep x f"})
+
+    assert any("PATH" in p for p in prompts)
+    assert "Exit code: 0" in result
+
+
+# --- Sensitive locations ---
+
+
+@pytest.fixture
+def home(tmp_path_factory, monkeypatch):
+    home = tmp_path_factory.mktemp("home")
+    (home / ".ssh").mkdir()
+    (home / ".ssh" / "id_rsa").write_text("PRIVATE\n")
+    (home / ".aws").mkdir()
+    (home / ".aws" / "credentials").write_text("PRIVATE\n")
+    monkeypatch.setenv("HOME", str(home))
+    return home
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cat ~/.ssh/id_rsa",
+        "cat $HOME/.ssh/id_rsa",
+        "cat ${{HOME}}/.aws/credentials",
+        "cat ~/.s*/id_rsa",
+        "cat {home}/.ssh/id_rsa",
+        "cd ~ && cat .ssh/id_rsa",
+        "cat < ~/.ssh/id_rsa",
+        "grep -f ~/.aws/credentials f",
+        "grep --file={home}/.aws/credentials f",
+        "cat {config}/.env",
+    ],
+)
+async def test_sensitive_locations_blocked_for_commands(workdir, home, isolate_config_dir, command):
+    (isolate_config_dir / ".env").write_text("PRIVATE\n")
+    config = AiAssistConfig(
+        anthropic_api_key="test", allowed_commands=["cat", "grep"], allowed_paths=[str(workdir), str(home)]
+    )
+    tools = FilesystemTools(config, load_user_config=False)
+
+    result = await tools.execute_tool(
+        "execute_command", {"command": command.format(home=home, config=isolate_config_dir)}
+    )
+
+    assert result.startswith("Error"), result
+    assert "PRIVATE" not in result
+
+
+@pytest.mark.asyncio
+async def test_sensitive_locations_blocked_for_file_tools(home):
+    config = AiAssistConfig(anthropic_api_key="test", allowed_paths=[str(home)])
+    tools = FilesystemTools(config, load_user_config=False)
+
+    result = await tools.execute_tool("read_file", {"path": "~/.ssh/id_rsa"})
+
+    assert result.startswith("Error"), result
+    assert "PRIVATE" not in result
+
+
+@pytest.mark.asyncio
+async def test_other_home_files_still_readable(workdir, home):
+    (home / "notes.txt").write_text("hello\n")
+    config = AiAssistConfig(anthropic_api_key="test", allowed_commands=["cat"], allowed_paths=[str(home)])
+    tools = FilesystemTools(config, load_user_config=False)
+
+    result = await tools.execute_tool("execute_command", {"command": "cat ~/notes.txt"})
+
+    assert "hello" in result

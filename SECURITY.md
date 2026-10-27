@@ -177,6 +177,26 @@ targets in every permission mode. `/dev/null`, `/dev/stdout`, `/dev/stderr`,
 
 `cd -` (previous directory) and `cd` with no arguments are not checked since they cannot be resolved statically.
 
+### Sensitive locations
+
+Commands and the built-in file tools can never touch credential and key
+locations, even inside allowed paths: `~/.ssh`, `~/.gnupg`, `~/.aws`,
+`~/.azure`, `~/.config/gcloud`, `~/.config/gh`, `~/.kube`,
+`~/.docker/config.json`, `~/.netrc`, `~/.git-credentials`, `~/.pgpass`,
+`~/.password-store`, `~/.local/share/keyrings`, and `.env` / `mcp-oauth/` in
+the config dir. Every word of a command is checked after expanding `$VARS`,
+`~`, globs and earlier `cd` targets. This is best effort: a path the shell
+builds at run time (`find ~ | xargs cat`, `grep -r x ~`) is not caught, which
+is why tool results are also redacted (section 8b).
+
+### Assignments that change which program runs
+
+Setting `PATH`, `LD_*`, `BASH_ENV`, `GIT_SSH_COMMAND`, `PYTHONPATH`,
+`NODE_OPTIONS` and similar variables (as a `VAR=value cmd` prefix, a bare
+assignment, via `env`, or with `export`/`declare`) would let an allowlisted
+name run another program. Such commands require confirmation and are rejected
+in non-interactive mode.
+
 ### Parameter validation for `python` / `python3`
 
 Python commands receive additional scrutiny beyond the command allowlist:
