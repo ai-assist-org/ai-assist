@@ -119,7 +119,8 @@ class ActionEngine:
     async def _run_awl_script(self, action: ActionDefinition, prompt: str) -> str:
         from .awl_executor import run_awl_script
 
-        return await run_awl_script(prompt, self.agent, variables=action.prompt_arguments)
+        # Actions running AWL are user-approved (see ActionTools): commands are trusted
+        return await run_awl_script(prompt, self.agent, variables=action.prompt_arguments, authorize_commands=True)
 
     @staticmethod
     def _build_prompt_with_event(prompt: str, event: EventContext) -> str:

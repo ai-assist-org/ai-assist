@@ -375,9 +375,37 @@ def validate_workflow_variables(workflow: WorkflowNode, initial_variables: set[s
     return warnings
 
 
+# What a ${var} may expand to inside a command path: no spaces or shell syntax
+_SAFE_INTERPOLATED_PATH = re.compile(r"^[\w./~+-]+$")
+
+
+def _interpolated_command(template: str, value: str) -> str | None:
+    """Return the command a `${var}/script` template resolves to, if it is safe.
+
+    The variable may only choose a directory: the script name must be written
+    literally in the AWL text, and the value must be a plain path.
+    """
+    if "${" in template.rsplit("/", 1)[-1] or not _SAFE_INTERPOLATED_PATH.match(value):
+        return None
+    return value
+
+
 class AWLRuntime:
-    def __init__(self, agent: Any, limits: RuntimeLimits | None = None, verbose: bool = False):
+    def __init__(
+        self,
+        agent: Any,
+        limits: RuntimeLimits | None = None,
+        verbose: bool = False,
+        authorize_commands: bool = False,
+    ):
+        """
+        Args:
+            authorize_commands: auto-authorize the commands written in the script.
+                Only for scripts the user started (CLI, user-approved actions),
+                never for scripts the model chose to run.
+        """
         self._agent = agent
+        self._authorize_commands = authorize_commands
         self._limits = limits or RuntimeLimits()
         self._variables: dict[str, Any] = {}
         self._expr = AWLExpressionEvaluator()
@@ -414,7 +442,7 @@ class AWLRuntime:
         awl_commands = _extract_commands_from_workflow(workflow)
         added_commands: list[str] = []
         fs_tools = getattr(self._agent, "filesystem_tools", None)
-        if fs_tools and awl_commands:
+        if fs_tools and awl_commands and self._authorize_commands:
             for cmd in awl_commands:
                 if cmd not in fs_tools.allowed_commands:
                     fs_tools.allowed_commands.append(cmd)
@@ -431,7 +459,7 @@ class AWLRuntime:
             pass  # outcome already recorded; fall through to result
         finally:
             # Remove temporarily added commands
-            if fs_tools and added_commands:
+            if fs_tools and self._authorize_commands:
                 for cmd in added_commands:
                     try:
                         fs_tools.allowed_commands.remove(cmd)
@@ -492,19 +520,26 @@ class AWLRuntime:
             raise _BreakSignal(message)
 
     def _authorize_task_commands(self, task: TaskNode) -> tuple[list[str], set[str]]:
-        """Authorize the commands written in this task, after variable interpolation.
+        """Authorize this task's `${var}/script` commands once the variable is known.
 
-        The workflow-level pass cannot authorize `${var}/cmd` because the variable
-        is only known at run time (input or exposed by an earlier task). Returns
-        what was added so it can be revoked when the task ends.
+        The workflow-level pass cannot authorize them because the variable is
+        only known at run time (input or exposed by an earlier task). Commands
+        come from the raw AWL text, never from interpolated values, so data in
+        a variable cannot authorize anything. Returns what was added so it can
+        be revoked when the task ends.
         """
         fs_tools = getattr(self._agent, "filesystem_tools", None)
-        if not fs_tools:
+        if not fs_tools or not self._authorize_commands:
             return [], set()
-        text = self._expr.interpolate(task.goal, self._variables)
-        if task.context:
-            text += "\n" + self._expr.interpolate(task.context, self._variables)
-        commands = {cmd for cmd in _extract_commands_from_text(text) if "${" not in cmd}
+        text = task.goal + ("\n" + task.context if task.context else "")
+        commands: set[str] = set()
+        for template in _extract_commands_from_text(text):
+            if "${" not in template:
+                continue
+            value = self._expr.interpolate(template, self._variables)
+            command = _interpolated_command(template, value)
+            if command:
+                commands.add(command)
         added = [cmd for cmd in sorted(commands) if cmd not in fs_tools.allowed_commands]
         newly_authorized = commands - fs_tools.awl_authorized_commands
         fs_tools.allowed_commands.extend(added)

@@ -179,6 +179,7 @@ PROTECTED_CONFIG_FILES = frozenset(
         "mcp_servers.yaml",
         ".env",
         "schedules.json",
+        "event-schedules.json",
         "installed-plugins.json",
         "installed-skills.json",
         "plugin-marketplaces.json",
@@ -1380,6 +1381,14 @@ class FilesystemTools:
             return await self._execute_command(arguments)
         else:
             return f"Error: Unknown filesystem tool: {tool_name}"
+
+    async def confirm(self, description: str) -> bool:
+        """Ask the user to approve an action; refused when nobody can be asked."""
+        if self.permission_mode == "autonomous":
+            return True
+        if self.confirmation_callback is None:
+            return False
+        return await self.confirmation_callback(description)
 
     async def _check_confirmation(self, tool_full_name: str, description: str) -> str | None:
         """Check if a tool requires confirmation and prompt the user.

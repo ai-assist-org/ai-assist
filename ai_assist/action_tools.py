@@ -2,6 +2,7 @@
 
 import json
 import logging
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
@@ -15,12 +16,38 @@ logger = logging.getLogger(__name__)
 class ActionTools:
     """Agent tools for CRUD operations on actions"""
 
-    def __init__(self, schedules_file: Path | None = None, known_mcp_servers: set[str] | None = None) -> None:
+    def __init__(
+        self,
+        schedules_file: Path | None = None,
+        known_mcp_servers: set[str] | None = None,
+        confirm: Callable[[str], Awaitable[bool]] | None = None,
+    ) -> None:
+        """
+        Args:
+            confirm: asks the user to approve an action that runs an AWL script
+                (its commands run without further confirmation). Without it,
+                such actions are refused.
+        """
         if schedules_file is None:
             schedules_file = get_config_dir() / "event-schedules.json"
         self.schedules_file = Path(schedules_file)
         self.schedules_file.parent.mkdir(parents=True, exist_ok=True)
         self.known_mcp_servers = known_mcp_servers
+        self.confirm = confirm
+
+    async def _confirm_awl_prompt(self, name: str, prompt: str) -> str | None:
+        """Return an error unless the user approves an action running an AWL script."""
+        if not prompt.endswith(".awl"):
+            return None
+        if self.confirm is None:
+            return f"Error: Action '{name}' runs an AWL script and requires user confirmation, which is not available."
+        description = (
+            f"Schedule action '{name}' running AWL script {prompt} "
+            "(commands written in the script will run without further confirmation)"
+        )
+        if not await self.confirm(description):
+            return f"Error: Action '{name}' running {prompt} was rejected by the user."
+        return None
 
     def get_tool_definitions(self) -> list[dict]:
         return [
@@ -173,6 +200,10 @@ class ActionTools:
         if any(a.name == action.name for a in actions):
             return f"Action '{action.name}' already exists. Use update_action to modify it."
 
+        confirm_error = await self._confirm_awl_prompt(action.name, action.prompt)
+        if confirm_error:
+            return confirm_error
+
         actions.append(action)
         loader.save_actions(actions)
         return f"Created action '{action.name}' with trigger type '{action.trigger_type}'"
@@ -209,6 +240,11 @@ class ActionTools:
 
         if target is None:
             return f"Action '{name}' not found."
+
+        if "prompt" in args and args["prompt"] != target.prompt:
+            confirm_error = await self._confirm_awl_prompt(name, args["prompt"])
+            if confirm_error:
+                return confirm_error
 
         if "trigger" in args:
             target.trigger = args["trigger"]

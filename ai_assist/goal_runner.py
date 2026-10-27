@@ -22,8 +22,10 @@ class GoalRunner:
         agent,
         state_manager: GoalStateManager,
         initial_variables: dict | None = None,
+        authorize_commands: bool = False,
     ):
         self.awl_path = awl_path
+        self._authorize_commands = authorize_commands
         self.agent = agent
         self.state_manager = state_manager
         self._initial_variables = initial_variables or {}
@@ -65,6 +67,7 @@ class GoalRunner:
         runtime = AWLRuntime(
             self.agent,
             limits=RuntimeLimits(max_tool_calls=self._goal_node.max_actions),
+            authorize_commands=self._authorize_commands,
         )
         result = await runtime.execute(self._workflow, variables=variables)
 

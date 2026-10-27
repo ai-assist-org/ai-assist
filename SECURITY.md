@@ -230,6 +230,20 @@ environment, so `$ENV` / `env` cannot read API keys.
 
 Sandboxes created with the `gh` feature get this file automatically.
 
+### AWL scripts and scheduled actions
+
+Commands written in backticks in an AWL script are auto-authorized only when
+the user started the script (`ai-assist /run`, or an action whose AWL prompt
+the user confirmed). Scripts the agent runs via
+`introspection__execute_awl_script` get no auto-authorization. Commands come
+from the script text, never from interpolated variable values (see
+`docs/AWL_SPECIFICATIONS.md`).
+
+Creating or changing an action (`internal__create_action` /
+`internal__update_action`) so that it runs an AWL script requires user
+confirmation, and is refused when nobody can be asked. `event-schedules.json`
+is a protected config file, so the agent cannot add actions behind this check.
+
 ## 8b. Secret Redaction
 
 **Module:** `ai_assist/redaction.py` — `Redactor`

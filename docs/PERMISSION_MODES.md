@@ -17,7 +17,7 @@ switch between modes for the current session.
 mount, credential, MCP server, and network capability enabled for its sandbox.
 Keep sandbox features minimal. Security configuration files
 (`allowed_commands.json`, `allowed_paths.json`, `skill_env.json`,
-`mcp_servers.yaml`, `.env`, `schedules.json`, `installed-plugins.json`,
+`mcp_servers.yaml`, `.env`, `schedules.json`, `event-schedules.json`, `installed-plugins.json`,
 `installed-skills.json`, `plugin-marketplaces.json`, `redact.json`, and
 `command_env.json`) remain protected in every mode.
 

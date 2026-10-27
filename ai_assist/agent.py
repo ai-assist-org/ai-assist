@@ -349,14 +349,15 @@ class AiAssistAgent:
         # Initialize internal report tools
         self.report_tools = ReportTools()
 
-        # Initialize action tools (event-schedules.json)
-        self.action_tools = ActionTools(
-            known_mcp_servers=set(config.mcp_servers.keys()) if config.mcp_servers else None
-        )
-
         # Initialize internal filesystem tools
         self.filesystem_tools = FilesystemTools(config)
         self.redactor = Redactor.from_environment()
+
+        # Initialize action tools (event-schedules.json)
+        self.action_tools = ActionTools(
+            known_mcp_servers=set(config.mcp_servers.keys()) if config.mcp_servers else None,
+            confirm=self.filesystem_tools.confirm,
+        )
 
         # Initialize audit logger
         self.audit_logger = AuditLogger()

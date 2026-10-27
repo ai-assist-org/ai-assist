@@ -150,7 +150,11 @@ def get_missing_variables(workflow, variables: dict[str, Any] | None = None) -> 
 
 
 async def run_awl_script(
-    prompt: str, agent: object, variables: dict[str, Any] | None = None, verbose: bool = False
+    prompt: str,
+    agent: object,
+    variables: dict[str, Any] | None = None,
+    verbose: bool = False,
+    authorize_commands: bool = False,
 ) -> str:
     """Execute an AWL script, handling both @goal and @start workflows.
 
@@ -164,6 +168,9 @@ async def run_awl_script(
     1. Caller-provided variables (CLI key=value, agent tool)
     2. User-defined variables from ~/.ai-assist/variables.yaml
     3. Built-in variables (date/time, paths)
+
+    authorize_commands auto-authorizes the commands written in the script: pass
+    True only for scripts the user started, never for the agent tool.
     """
     from .awl_ast import GoalNode
 
@@ -211,7 +218,9 @@ async def run_awl_script(
             from .goal_state import GoalStateManager
 
             state_manager = GoalStateManager(get_config_dir() / "state")
-            runner = GoalRunner(_awl_path, agent, state_manager, initial_variables=merged)
+            runner = GoalRunner(
+                _awl_path, agent, state_manager, initial_variables=merged, authorize_commands=authorize_commands
+            )
             runner.load()
             await runner.run_cycle()
 
@@ -224,7 +233,7 @@ async def run_awl_script(
 
         from .awl_runtime import AWLRuntime, AWLRuntimeError
 
-        runtime = AWLRuntime(agent, verbose=verbose)
+        runtime = AWLRuntime(agent, verbose=verbose, authorize_commands=authorize_commands)
         try:
             result = await runtime.execute(workflow, variables=merged)
         except AWLRuntimeError as e:

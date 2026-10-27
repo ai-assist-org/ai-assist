@@ -942,7 +942,7 @@ async def test_awl_auto_authorizes_commands(mock_agent):
     mock_agent.filesystem_tools = fs_tools
     mock_agent.query.return_value = '{"result": "ok"}'
 
-    runtime = AWLRuntime(mock_agent)
+    runtime = AWLRuntime(mock_agent, authorize_commands=True)
     workflow = WorkflowNode(
         body=[
             TaskNode(task_id="t1", goal="Run `python3 -c 'print(1)'`.", expose=["result"]),
@@ -964,7 +964,7 @@ async def test_awl_auto_authorize_cleanup_on_failure(mock_agent):
     mock_agent.filesystem_tools = fs_tools
     mock_agent.query.side_effect = Exception("fail")
 
-    runtime = AWLRuntime(mock_agent)
+    runtime = AWLRuntime(mock_agent, authorize_commands=True)
     workflow = WorkflowNode(
         body=[
             TaskNode(task_id="t1", goal="Run `custom_tool arg`."),
@@ -991,7 +991,7 @@ async def test_awl_auto_authorizes_interpolated_command_paths(mock_agent):
 
     mock_agent.query.side_effect = capture
 
-    runtime = AWLRuntime(mock_agent)
+    runtime = AWLRuntime(mock_agent, authorize_commands=True)
     workflow = WorkflowNode(
         body=[
             TaskNode(task_id="t1", goal="Run `${analyze_job}/get_status_reason dir`.", expose=["result"]),
@@ -1023,7 +1023,7 @@ async def test_awl_auto_authorizes_commands_from_exposed_variables(mock_agent):
 
     mock_agent.query.side_effect = answer
 
-    runtime = AWLRuntime(mock_agent)
+    runtime = AWLRuntime(mock_agent, authorize_commands=True)
     workflow = WorkflowNode(
         body=[
             TaskNode(task_id="t1", goal="Find the store.", expose=["store"]),
