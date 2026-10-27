@@ -110,6 +110,15 @@ FIND_DANGEROUS_PRIMARIES = frozenset(
 
 TRANSPARENT_WRAPPERS = frozenset({"env", "nohup", "nice", "ionice", "timeout", "stdbuf", "script"})
 
+# Shells whose real work is in their arguments: `bash -c "<payload>"` runs the
+# payload and `bash <script>` runs the script, so validation must look at those.
+SHELL_INTERPRETERS = frozenset({"bash", "sh", "zsh", "dash", "ksh"})
+# Shell options taking a separate value (`bash -o pipefail -c ...`)
+_SHELL_VALUE_FLAGS = frozenset({"-o", "+o", "-O", "+O", "--rcfile", "--init-file"})
+# Marker for a shell reading its commands from stdin: never allowlisted
+SHELL_STDIN_MARKER = "<shell-stdin>"
+_MAX_SHELL_NESTING = 5
+
 PRIVILEGE_WRAPPERS = frozenset({"sudo", "su", "doas"})
 
 PROTECTED_CONFIG_FILES = frozenset(
@@ -272,13 +281,67 @@ def _is_safe_env_assignment(token: str) -> bool:
     return True
 
 
+def _expand_shell_invocations(command: str, depth: int = 0) -> str:
+    """Rewrite shell invocations into the commands they actually run, for validation.
+
+    - `bash -c "<payload>"` (also `-lc`, `-ec`, `-o pipefail -c`) becomes the payload,
+      expanded recursively
+    - `bash <script> args` becomes `<script> args`, so the script must be allowed
+    - a shell reading commands from stdin (`... | bash`) becomes SHELL_STDIN_MARKER
+
+    Execution is unaffected; only allowlist and builtin checks see the rewrite.
+    """
+    if depth > _MAX_SHELL_NESTING:
+        return SHELL_STDIN_MARKER
+    segments = _split_shell_commands(_strip_shell_comments(command))
+    expanded: list[str] = []
+    changed = False
+    for segment in segments:
+        try:
+            tokens = shlex.split(segment)
+        except ValueError:
+            expanded.append(segment)
+            continue
+        idx = 0
+        while idx < len(tokens) and ENV_VAR_PATTERN.match(tokens[idx]):
+            idx += 1
+        while idx < len(tokens) and _resolve_command_token(tokens[idx]) in TRANSPARENT_WRAPPERS:
+            idx += 1
+            idx = _skip_wrapper_args(tokens, idx)
+        if idx >= len(tokens) or Path(tokens[idx]).name not in SHELL_INTERPRETERS:
+            expanded.append(segment)
+            continue
+        changed = True
+        args = tokens[idx + 1 :]
+        replacement = SHELL_STDIN_MARKER
+        i = 0
+        while i < len(args):
+            arg = args[i]
+            if arg in _SHELL_VALUE_FLAGS:
+                i += 2
+                continue
+            if arg.startswith("-") and not arg.startswith("--") and "c" in arg[1:]:
+                if i + 1 < len(args):
+                    replacement = _expand_shell_invocations(args[i + 1], depth + 1)
+                break
+            if arg.startswith(("-", "+")):
+                i += 1
+                continue
+            replacement = shlex.join(args[i:])
+            break
+        expanded.append(replacement)
+    return " ; ".join(expanded) if changed else command
+
+
 def extract_command_names(command: str) -> list[str]:
     """Extract all command names from a shell command string.
 
     Handles comments, env var prefixes, compound commands, pipes,
     and full paths. Detects unsafe env var assignments containing
-    command substitution.
+    command substitution. Looks inside `bash -c` payloads and
+    `bash <script>` invocations (see _expand_shell_invocations).
     """
+    command = _expand_shell_invocations(command)
     stripped = _strip_shell_comments(command)
     if not stripped.strip():
         return []
@@ -430,8 +493,10 @@ def _extract_command_argument_paths(command: str) -> list[tuple[str, str]]:
     - ("<inline-code>") for python -c
     - ("<stdin>") for python -
     - ("<interactive>") for python with no arguments
+
+    Shell invocations are expanded first (see _expand_shell_invocations).
     """
-    stripped = _strip_shell_comments(command)
+    stripped = _strip_shell_comments(_expand_shell_invocations(command))
     if not stripped.strip():
         return []
 
@@ -1113,7 +1178,7 @@ class FilesystemTools:
         Returns an empty list if all commands are allowed, or a list of
         rejected command names.
         """
-        stripped = _strip_shell_comments(full_command)
+        stripped = _strip_shell_comments(_expand_shell_invocations(full_command))
         segments = _split_shell_commands(stripped)
         rejected: list[str] = []
 
@@ -1191,7 +1256,7 @@ class FilesystemTools:
             return None
 
         # Per-segment validation
-        stripped = _strip_shell_comments(full_command)
+        stripped = _strip_shell_comments(_expand_shell_invocations(full_command))
         segments = _split_shell_commands(stripped)
 
         for segment in segments:
