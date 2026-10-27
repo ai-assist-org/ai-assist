@@ -7,7 +7,7 @@ logger = logging.getLogger(__name__)
 
 # Per-million-token pricing: (input, output, cache_write, cache_read)
 # Cache write = 1.25× input, cache read = 0.1× input (0.05× on Opus 5.5 / Sonnet 5.5)
-# Source: https://platform.claude.com/docs/en/about-claude/pricing (2026-10-09)
+# Source: https://platform.claude.com/docs/en/about-claude/pricing (2026-10-27)
 MODEL_PRICING: dict[str, tuple[float, float, float, float]] = {
     "claude-fable-5": (10.00, 50.00, 12.50, 1.00),
     "claude-mythos-5": (10.00, 50.00, 12.50, 1.00),
@@ -20,6 +20,8 @@ MODEL_PRICING: dict[str, tuple[float, float, float, float]] = {
     "claude-sonnet-5": (2.00, 10.00, 2.50, 0.20),  # introductory $2/$10 made permanent, Sep 2026
     "claude-sonnet-4-6": (3.00, 15.00, 3.75, 0.30),
     "claude-sonnet-4-5": (3.00, 15.00, 3.75, 0.30),
+    # Haiku 5.5: rates for prompts up to 100K tokens; longer prompts bill 5x (not modeled)
+    "claude-haiku-5-5": (0.10, 0.50, 0.125, 0.01),
     "claude-haiku-4-5": (1.00, 5.00, 1.25, 0.10),
     "claude-3-5-haiku": (0.80, 4.00, 1.00, 0.08),
     "claude-3-5-sonnet": (3.00, 15.00, 3.75, 0.30),

@@ -252,9 +252,10 @@ class AiAssistAgent:
     # Model-specific max output tokens
     # Source: https://docs.anthropic.com/en/docs/about-claude/models
     MODEL_MAX_TOKENS = {
-        # Claude Opus 5.5 / Sonnet 5.5 (no dated variants — alias only)
+        # Claude Opus 5.5 / Sonnet 5.5 / Haiku 5.5 (no dated variants — alias only)
         "claude-opus-5-5": 128000,
         "claude-sonnet-5-5": 128000,
+        "claude-haiku-5-5": 128000,
         # Claude Sonnet 5 (no dated variants — alias only)
         "claude-sonnet-5": 128000,
         # Claude Fable 5 (no dated variants — alias only)
@@ -300,6 +301,7 @@ class AiAssistAgent:
     MODEL_CONTEXT_WINDOWS = {
         "claude-opus-5-5": 1000000,
         "claude-sonnet-5-5": 1000000,
+        "claude-haiku-5-5": 1000000,
         "claude-sonnet-5": 1000000,
         "claude-fable-5": 1000000,
         "claude-opus-4-8": 1000000,
