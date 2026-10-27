@@ -5,7 +5,6 @@ from ai_assist.config import AiAssistConfig
 from ai_assist.security import (
     UNTRUSTED_END,
     UNTRUSTED_START,
-    ToolDefinitionRegistry,
     compute_tool_fingerprint,
     sanitize_tool_result,
     validate_tool_description,
@@ -235,117 +234,6 @@ class TestComputeToolFingerprint:
         tool = {"name": "t", "description": "d", "input_schema": {"a": 1, "b": 2}}
         results = {compute_tool_fingerprint(tool) for _ in range(10)}
         assert len(results) == 1
-
-
-class TestToolDefinitionRegistry:
-    """Tests for rug-pull detection registry"""
-
-    def test_register_tools_stores_fingerprints(self):
-        """Registration stores fingerprint for each tool"""
-        registry = ToolDefinitionRegistry()
-        tools = [
-            {"name": "tool_a", "description": "A", "input_schema": {}},
-            {"name": "tool_b", "description": "B", "input_schema": {}},
-        ]
-        registry.register_tools(tools)
-        assert registry.get_fingerprint("tool_a") is not None
-        assert registry.get_fingerprint("tool_b") is not None
-
-    def test_check_no_changes(self):
-        """Identical tools return empty changes list"""
-        registry = ToolDefinitionRegistry()
-        tools = [{"name": "tool_a", "description": "A", "input_schema": {}}]
-        registry.register_tools(tools)
-        changes = registry.check_for_changes(tools)
-        assert changes == []
-
-    def test_check_modified_tool(self):
-        """Modified description detected as 'modified'"""
-        registry = ToolDefinitionRegistry()
-        tools = [{"name": "tool_a", "description": "A", "input_schema": {}}]
-        registry.register_tools(tools)
-
-        modified_tools = [{"name": "tool_a", "description": "A (now with malware)", "input_schema": {}}]
-        changes = registry.check_for_changes(modified_tools)
-        assert len(changes) == 1
-        assert changes[0]["tool_name"] == "tool_a"
-        assert changes[0]["change_type"] == "modified"
-
-    def test_check_added_tool(self):
-        """New tool detected as 'added'"""
-        registry = ToolDefinitionRegistry()
-        registry.register_tools([{"name": "tool_a", "description": "A", "input_schema": {}}])
-
-        new_tools = [
-            {"name": "tool_a", "description": "A", "input_schema": {}},
-            {"name": "tool_b", "description": "B", "input_schema": {}},
-        ]
-        changes = registry.check_for_changes(new_tools)
-        assert len(changes) == 1
-        assert changes[0]["tool_name"] == "tool_b"
-        assert changes[0]["change_type"] == "added"
-
-    def test_check_removed_tool(self):
-        """Missing tool detected as 'removed'"""
-        registry = ToolDefinitionRegistry()
-        registry.register_tools(
-            [
-                {"name": "tool_a", "description": "A", "input_schema": {}},
-                {"name": "tool_b", "description": "B", "input_schema": {}},
-            ]
-        )
-
-        remaining = [{"name": "tool_a", "description": "A", "input_schema": {}}]
-        changes = registry.check_for_changes(remaining)
-        assert len(changes) == 1
-        assert changes[0]["tool_name"] == "tool_b"
-        assert changes[0]["change_type"] == "removed"
-
-    def test_check_multiple_changes(self):
-        """Multiple simultaneous changes all detected"""
-        registry = ToolDefinitionRegistry()
-        registry.register_tools(
-            [
-                {"name": "tool_a", "description": "A", "input_schema": {}},
-                {"name": "tool_b", "description": "B", "input_schema": {}},
-            ]
-        )
-
-        new_tools = [
-            {"name": "tool_a", "description": "A modified", "input_schema": {}},
-            {"name": "tool_c", "description": "C", "input_schema": {}},
-        ]
-        changes = registry.check_for_changes(new_tools)
-        types = {c["change_type"] for c in changes}
-        assert "modified" in types
-        assert "added" in types
-        assert "removed" in types
-
-    def test_register_updates_fingerprints(self):
-        """Re-registration updates stored fingerprints"""
-        registry = ToolDefinitionRegistry()
-        tools_v1 = [{"name": "tool_a", "description": "A", "input_schema": {}}]
-        registry.register_tools(tools_v1)
-        fp1 = registry.get_fingerprint("tool_a")
-
-        tools_v2 = [{"name": "tool_a", "description": "A updated", "input_schema": {}}]
-        registry.register_tools(tools_v2)
-        fp2 = registry.get_fingerprint("tool_a")
-
-        assert fp1 != fp2
-
-    def test_get_fingerprint_exists(self):
-        """get_fingerprint returns hash for registered tool"""
-        registry = ToolDefinitionRegistry()
-        registry.register_tools([{"name": "tool_a", "description": "A", "input_schema": {}}])
-        fp = registry.get_fingerprint("tool_a")
-        assert isinstance(fp, str)
-        assert len(fp) == 64  # SHA-256 hex digest
-
-    def test_get_fingerprint_missing(self):
-        """get_fingerprint returns None for unregistered tool"""
-        registry = ToolDefinitionRegistry()
-        assert registry.get_fingerprint("nonexistent") is None
 
 
 class TestSystemPromptSecurity:

@@ -13,6 +13,7 @@ from typing import Any
 
 from .config import AiAssistConfig, get_config_dir
 from .redaction import REDACT_CONFIG_FILE, filter_sensitive_env
+from .security import MCP_TOOL_DEFINITIONS_FILE
 
 logger = logging.getLogger(__name__)
 
@@ -180,6 +181,7 @@ PROTECTED_CONFIG_FILES = frozenset(
         ".env",
         "schedules.json",
         "event-schedules.json",
+        MCP_TOOL_DEFINITIONS_FILE,
         "installed-plugins.json",
         "installed-skills.json",
         "plugin-marketplaces.json",

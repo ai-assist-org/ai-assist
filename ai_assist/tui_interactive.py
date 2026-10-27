@@ -510,6 +510,33 @@ async def _handle_plugin_install(parts: list[str], agent: AiAssistAgent, console
     await _confirm_and_connect_plugin_servers(agent, console, server_names)
 
 
+async def _review_tool_changes(agent: AiAssistAgent, console: Console, server: str | None):
+    """Show changed MCP tool definitions and let the user approve them one by one."""
+    from rich.text import Text
+
+    from .security import describe_tool_change
+
+    names = [server] if server else list(agent.pending_tool_changes)
+    names = [name for name in names if agent.pending_tool_changes.get(name)]
+    if not names:
+        console.print("[dim]No MCP tool changes to review[/dim]")
+        return
+    for name in names:
+        for change in list(agent.pending_tool_changes[name]):
+            tool_name = change["tool"]["name"]
+            # Server-provided text: print literally so it cannot hide parts of itself with markup
+            console.print(Text(describe_tool_change(change)))
+            try:
+                answer = await asyncio.to_thread(input, f"Approve {tool_name}? [y/N]: ")
+            except EOFError, KeyboardInterrupt:
+                answer = "n"
+            if answer.strip().lower() in ("y", "yes"):
+                agent.approve_tool_changes(name, {tool_name})
+                console.print(f"[green]✓ {tool_name} approved[/green]")
+            else:
+                console.print(f"[dim]{tool_name} stays hidden[/dim]")
+
+
 async def _confirm_and_connect_plugin_servers(agent: AiAssistAgent, console: Console, server_names: list[str]):
     """Confirm and connect a plugin's bundled MCP servers (they launch processes)."""
     if not server_names:
@@ -1236,6 +1263,11 @@ async def tui_interactive_mode(agent: AiAssistAgent, state_manager: StateManager
 
                     # Try plugin management commands: /plugin/install, /plugin/list, ...
                     if await handle_plugin_management_command(user_input, agent, console):
+                        continue
+
+                    if user_input.lower().startswith("/mcp/review"):
+                        parts = user_input.split(maxsplit=1)
+                        await _review_tool_changes(agent, console, parts[1].strip() if len(parts) > 1 else None)
                         continue
 
                     # Handle /mcp/restart before prompt command (which would parse it as /mcp/restart)

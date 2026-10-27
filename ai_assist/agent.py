@@ -21,7 +21,7 @@ from mcp.client.extension import NotificationBinding
 
 from .action_tools import ActionTools
 from .audit import AuditLogger
-from .config import AiAssistConfig, MCPChannelConfig, MCPServerConfig
+from .config import AiAssistConfig, MCPChannelConfig, MCPServerConfig, get_config_dir
 from .effort import effort_output_config
 from .event_source_mcp import EVENT_NOTIFICATION_METHOD, MCPEventEnvelope
 from .filesystem_tools import FilesystemTools
@@ -42,6 +42,7 @@ from .redaction import Redactor
 from .report_tools import ReportTools
 from .script_execution_tools import ScriptExecutionTools
 from .security import (
+    MCP_TOOL_DEFINITIONS_FILE,
     ToolDefinitionRegistry,
     detect_injection,
     sanitize_tool_result,
@@ -465,7 +466,9 @@ class AiAssistAgent:
         self._mcp_connection_status: dict[str, str] = {}
 
         # Security: tool definition registry for rug-pull detection
-        self._tool_registry = ToolDefinitionRegistry()
+        self._tool_registry = ToolDefinitionRegistry(get_config_dir() / MCP_TOOL_DEFINITIONS_FILE)
+        # Changed MCP tools held back until the user approves them: server -> changes
+        self.pending_tool_changes: dict[str, list[dict]] = {}
 
         # Track tool calls for KG storage
         self.last_tool_calls: list[dict] = []
@@ -850,6 +853,35 @@ class AiAssistAgent:
     def remove_mcp_server_listener(self, listener) -> None:
         self._mcp_server_listeners.discard(listener)
 
+    def _register_server_tools(self, name: str, server_tools: list[dict]) -> None:
+        """Expose a server's tools, holding back changed ones until approved (rug-pull detection)."""
+        approved, pending = self._tool_registry.review(name, server_tools)
+        self.available_tools = [t for t in self.available_tools if t.get("_server") != name] + approved
+        if not pending:
+            self.pending_tool_changes.pop(name, None)
+            return
+        self.pending_tool_changes[name] = pending
+        changed = ", ".join(c["tool"]["name"] for c in pending)
+        logger.warning("Rug-pull detection: MCP server %s changed tool definitions: %s", name, changed)
+        console_print(
+            f"⚠ MCP server '{name}' changed {len(pending)} tool definition(s): {changed}. "
+            f"They are hidden until you review them with /mcp/review {name}"
+        )
+
+    def approve_tool_changes(self, name: str, tool_names: set[str] | None = None) -> int:
+        """Approve a server's pending tool changes (all, or those named) and expose the tools."""
+        pending = self.pending_tool_changes.get(name, [])
+        accepted = [c["tool"] for c in pending if tool_names is None or c["tool"]["name"] in tool_names]
+        self._tool_registry.approve(name, accepted)
+        accepted_names = {t["name"] for t in accepted}
+        self.available_tools = [t for t in self.available_tools if t["name"] not in accepted_names] + accepted
+        remaining = [c for c in pending if c["tool"]["name"] not in accepted_names]
+        if remaining:
+            self.pending_tool_changes[name] = remaining
+        else:
+            self.pending_tool_changes.pop(name, None)
+        return len(accepted)
+
     async def _run_server(self, name: str, config: MCPServerConfig):
         """Run an MCP server connection with automatic retry on failure"""
         backoff = 5
@@ -910,6 +942,7 @@ class AiAssistAgent:
                             await listener(name)
 
                         tools_list = await session.list_tools()
+                        server_tools: list[dict] = []
                         for tool in tools_list.tools:
                             desc = tool.description or ""
                             full_name = f"{name}__{tool.name}"
@@ -932,11 +965,9 @@ class AiAssistAgent:
                             if desc_warnings:
                                 for w in desc_warnings:
                                     logger.warning("Tool description warning for %s: %s", full_name, w)
-                            self.available_tools.append(tool_def)
+                            server_tools.append(tool_def)
 
-                        # Register tool fingerprints for rug-pull detection
-                        server_tools = [t for t in self.available_tools if t.get("_server") == name]
-                        self._tool_registry.register_tools(server_tools)
+                        self._register_server_tools(name, server_tools)
 
                         # Discover prompts from this server
                         try:
@@ -1076,8 +1107,6 @@ class AiAssistAgent:
         """Restart a single MCP server to pick up binary updates"""
         if name not in self.config.mcp_servers:
             raise ValueError(f"Unknown MCP server: {name}. Available: {', '.join(self.config.mcp_servers.keys())}")
-        # Capture old tool names for this server before disconnecting
-        old_server_tool_names = {t["name"] for t in self.available_tools if t.get("_server") == name}
         self._disconnect_server(name)
         connected = await self._connect_server(name, self.config.mcp_servers[name])
         if connected:
@@ -1090,19 +1119,6 @@ class AiAssistAgent:
             if resource_count:
                 parts.append(f"{resource_count} resources")
             console_print(f"  {', '.join(parts)}")
-            # Rug-pull detection: check for tool definition changes after reconnect
-            # Scope to this server's tools only to avoid false positives from other servers
-            server_tools = [t for t in self.available_tools if t.get("_server") == name]
-            changes = self._tool_registry.check_for_changes(server_tools, scope=old_server_tool_names)
-            if changes:
-                for change in changes:
-                    logger.warning(
-                        "Rug-pull detection: Tool '%s' %s after reconnect",
-                        change["tool_name"],
-                        change["change_type"],
-                    )
-                logger.warning("%d tool definition(s) changed after reconnect", len(changes))
-            self._tool_registry.register_tools(server_tools)
         else:
             logger.warning("%s did not initialize within timeout", name)
 
@@ -1158,7 +1174,6 @@ class AiAssistAgent:
 
             if old_config != new_config:
                 console_print(f"  Reconnecting {name} (config changed)...")
-                old_server_tool_names = {t["name"] for t in self.available_tools if t.get("_server") == name}
                 self._disconnect_server(name)
                 connected = await self._connect_server(name, new_servers[name])
                 if connected:
@@ -1171,18 +1186,6 @@ class AiAssistAgent:
                     if resource_count:
                         parts.append(f"{resource_count} resources")
                     console_print(f"    {', '.join(parts)}")
-                    # Rug-pull detection after reconnect (scoped to this server)
-                    server_tools = [t for t in self.available_tools if t.get("_server") == name]
-                    changes = self._tool_registry.check_for_changes(server_tools, scope=old_server_tool_names)
-                    if changes:
-                        for change in changes:
-                            logger.warning(
-                                "Rug-pull detection: Tool '%s' %s after reload",
-                                change["tool_name"],
-                                change["change_type"],
-                            )
-                        logger.warning("%d tool definition(s) changed after reload", len(changes))
-                    self._tool_registry.register_tools(server_tools)
 
         # Update config
         self.config.mcp_servers = new_servers

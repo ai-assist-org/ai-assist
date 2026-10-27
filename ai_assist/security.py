@@ -6,12 +6,14 @@ Provides three defense layers against MCP-related attacks:
 3. Rug-pull detection — detects tool definition changes after connection
 """
 
+import difflib
 import hashlib
 import json
 import logging
 import re
 import secrets
 import unicodedata
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -204,65 +206,92 @@ def compute_tool_fingerprint(tool_def: dict) -> str:
     return hashlib.sha256(serialized).hexdigest()
 
 
-class ToolDefinitionRegistry:
-    """Registry that tracks tool definition fingerprints for rug-pull detection.
+# Approved MCP tool definitions, in the config dir
+MCP_TOOL_DEFINITIONS_FILE = "mcp-tool-definitions.json"
 
-    Stores the hash of each tool's definition at first registration.
-    On subsequent checks, compares against stored hashes to detect changes.
+
+class ToolDefinitionRegistry:
+    """Approved MCP tool definitions per server, for rug-pull detection.
+
+    The first time a server connects, its tools are trusted and recorded
+    (trust on first use). Afterwards, tools whose name, description, or input
+    schema differ from the recorded ones, and new tools, are held back until
+    approved. Definitions are persisted so changes between runs (e.g. an MCP
+    server update) are caught too; without a path the registry is in-memory.
     """
 
-    def __init__(self):
-        self._fingerprints: dict[str, str] = {}
+    def __init__(self, path: Path | None = None):
+        self._path = path
+        self._servers: dict[str, dict[str, dict]] = self._load()
 
-    def register_tools(self, tools: list[dict]) -> None:
-        """Register tool definitions (stores fingerprints).
+    def _load(self) -> dict[str, dict[str, dict]]:
+        if self._path is None or not self._path.exists():
+            return {}
+        try:
+            data = json.loads(self._path.read_text())
+        except OSError, json.JSONDecodeError:
+            logger.exception("Ignoring unreadable MCP tool definitions file %s", self._path)
+            return {}
+        return data if isinstance(data, dict) else {}
 
-        Args:
-            tools: List of tool definition dicts
+    def _save(self) -> None:
+        if self._path is None:
+            return
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self._path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(self._servers, indent=2, sort_keys=True))
+        tmp.replace(self._path)
+
+    @staticmethod
+    def _definition(tool: dict) -> dict:
+        return {"description": tool.get("description", ""), "input_schema": tool.get("input_schema", {})}
+
+    def review(self, server: str, tools: list[dict]) -> tuple[list[dict], list[dict]]:
+        """Split a server's tools into (approved tools, pending changes).
+
+        Each pending change is {"tool": tool, "change": "added"|"modified",
+        "previous": recorded definition or None}. Removed tools need no review.
         """
+        known = self._servers.get(server)
+        if known is None:
+            self.approve(server, tools)
+            return list(tools), []
+
+        approved: list[dict] = []
+        pending: list[dict] = []
         for tool in tools:
-            name = tool.get("name", "")
-            self._fingerprints[name] = compute_tool_fingerprint(tool)
+            previous = known.get(tool.get("name", ""))
+            if previous is None:
+                pending.append({"tool": tool, "change": "added", "previous": None})
+            elif compute_tool_fingerprint({"name": tool.get("name", ""), **previous}) != compute_tool_fingerprint(tool):
+                pending.append({"tool": tool, "change": "modified", "previous": previous})
+            else:
+                approved.append(tool)
+        return approved, pending
 
-    def check_for_changes(self, tools: list[dict], scope: set[str] | None = None) -> list[dict]:
-        """Check tools against stored fingerprints.
-
-        Args:
-            tools: Current list of tool definition dicts
-            scope: If provided, only check for removals among these tool names.
-                   Use this when reconnecting a single server to avoid flagging
-                   tools from other servers as removed.
-
-        Returns:
-            List of change dicts: [{"tool_name": str, "change_type": "modified"|"added"|"removed"}]
-        """
-        changes = []
-        current_names = set()
-
+    def approve(self, server: str, tools: list[dict]) -> None:
+        """Record tool definitions as approved for a server."""
+        known = self._servers.setdefault(server, {})
         for tool in tools:
-            name = tool.get("name", "")
-            current_names.add(name)
-            fingerprint = compute_tool_fingerprint(tool)
+            known[tool.get("name", "")] = self._definition(tool)
+        self._save()
 
-            if name not in self._fingerprints:
-                changes.append({"tool_name": name, "change_type": "added"})
-            elif self._fingerprints[name] != fingerprint:
-                changes.append({"tool_name": name, "change_type": "modified"})
 
-        check_names = scope if scope is not None else set(self._fingerprints.keys())
-        for name in check_names:
-            if name in self._fingerprints and name not in current_names:
-                changes.append({"tool_name": name, "change_type": "removed"})
-
-        return changes
-
-    def get_fingerprint(self, tool_name: str) -> str | None:
-        """Get stored fingerprint for a tool.
-
-        Args:
-            tool_name: Tool name
-
-        Returns:
-            Hex digest or None if not registered
-        """
-        return self._fingerprints.get(tool_name)
+def describe_tool_change(change: dict) -> str:
+    """Human-readable description of a pending tool change, with a diff."""
+    tool = change["tool"]
+    current = ToolDefinitionRegistry._definition(tool)
+    if change["change"] == "added":
+        return (
+            f"New tool {tool['name']}:\n{current['description']}\n"
+            f"Input schema: {json.dumps(current['input_schema'], sort_keys=True)}"
+        )
+    lines = [f"Changed tool {tool['name']}:"]
+    for field in ("description", "input_schema"):
+        old, new = change["previous"].get(field, ""), current[field]
+        if old == new:
+            continue
+        if field == "input_schema":
+            old, new = json.dumps(old, indent=2, sort_keys=True), json.dumps(new, indent=2, sort_keys=True)
+        lines.extend(difflib.unified_diff(old.splitlines(), new.splitlines(), field, field, lineterm=""))
+    return "\n".join(lines)

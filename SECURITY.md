@@ -8,7 +8,7 @@ ai-assist implements defense-in-depth with multiple security layers:
 
 1. **Prompt injection detection** — scans MCP tool results for injection patterns
 2. **Tool poisoning detection** — validates MCP tool descriptions for hidden instructions
-3. **Rug-pull detection** — detects tool definition changes after initial connection
+3. **Rug-pull detection** — holds back MCP tools whose definition changed until the user approves them
 4. **Script execution sandboxing** — constrains Agent Skills scripts
 5. **Tool argument validation** — validates inputs against JSON schemas
 6. **Audit logging** — records all tool calls for forensic analysis
@@ -76,20 +76,18 @@ Descriptions and instruction text from external sources can contain hidden instr
 
 ## 3. Rug-Pull Detection
 
-MCP servers can change their tool definitions after initial approval (rug-pull attack). ai-assist fingerprints tool definitions at connection time and checks for changes on reconnect.
+MCP servers can change their tool definitions after initial approval (rug-pull attack). ai-assist records the approved definition of every MCP tool and holds back any tool whose definition changes until the user approves it.
 
-**Module:** `ai_assist/security.py` — `ToolDefinitionRegistry`, `compute_tool_fingerprint()`
+**Module:** `ai_assist/security.py` — `ToolDefinitionRegistry`, `describe_tool_change()`
 
 **How it works:**
-1. When a server connects, each tool's `(name, description, input_schema)` is hashed (SHA-256)
-2. On server restart or reload, new definitions are compared against stored fingerprints
-3. Changes are classified as `modified`, `added`, or `removed`
-4. Warnings are printed and logged
+1. Every time a server connects (startup, automatic reconnect, `/mcp/restart`, config reload), `_register_server_tools()` compares each tool's `(name, description, input_schema)` with the recorded definition
+2. The first connection to a server is trusted and recorded (trust on first use)
+3. Modified and new tools are hidden from the model; unchanged tools stay available; removed tools simply disappear
+4. A warning is printed and logged; `/mcp/review [server]` shows a diff of each change and approves tools one by one
+5. In non-interactive runs (`/monitor`) changed tools stay hidden until approved in an interactive session
 
-**Integration points:**
-- `_run_server()` — registers fingerprints at initial connection
-- `restart_mcp_server()` — checks for changes after reconnect
-- `reload_mcp_servers()` — checks for changes after config reload
+Approved definitions are stored in `~/.ai-assist/mcp-tool-definitions.json`, a protected config file, so changes between runs (e.g. an MCP server update) are detected too. Deleting a server's entry from that file re-trusts it on the next connection.
 
 ## 4. Script Execution Sandboxing
 
