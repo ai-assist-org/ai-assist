@@ -1,6 +1,7 @@
 """MCP Agent for ai-assist"""
 
 import asyncio
+import fnmatch
 import hashlib
 import json
 import logging
@@ -21,6 +22,7 @@ from mcp.client.extension import NotificationBinding
 from .action_tools import ActionTools
 from .audit import AuditLogger
 from .config import AiAssistConfig, MCPChannelConfig, MCPServerConfig
+from .effort import effort_output_config
 from .event_source_mcp import EVENT_NOTIFICATION_METHOD, MCPEventEnvelope
 from .filesystem_tools import FilesystemTools
 from .identity import get_identity
@@ -250,9 +252,10 @@ class AiAssistAgent:
     # Model-specific max output tokens
     # Source: https://docs.anthropic.com/en/docs/about-claude/models
     MODEL_MAX_TOKENS = {
-        # Claude Opus 5.5 / Sonnet 5.5 (no dated variants — alias only)
+        # Claude Opus 5.5 / Sonnet 5.5 / Haiku 5.5 (no dated variants — alias only)
         "claude-opus-5-5": 128000,
         "claude-sonnet-5-5": 128000,
+        "claude-haiku-5-5": 128000,
         # Claude Sonnet 5 (no dated variants — alias only)
         "claude-sonnet-5": 128000,
         # Claude Fable 5 (no dated variants — alias only)
@@ -298,6 +301,7 @@ class AiAssistAgent:
     MODEL_CONTEXT_WINDOWS = {
         "claude-opus-5-5": 1000000,
         "claude-sonnet-5-5": 1000000,
+        "claude-haiku-5-5": 1000000,
         "claude-sonnet-5": 1000000,
         "claude-fable-5": 1000000,
         "claude-opus-4-8": 1000000,
@@ -1266,6 +1270,29 @@ class AiAssistAgent:
             return self.config.compaction_model or self.config.model
         return self.config.model
 
+    def _is_repeatable_tool(self, tool_name: str) -> bool:
+        """True if the tool is marked repeatable (poll-safe) in ``repeatable_tools``.
+
+        Repeatable tools bypass the per-query result cache (so each call re-executes
+        and returns a fresh result) and are exempt from loop detection. Patterns are
+        matched with ``fnmatch`` (e.g. ``apify__get-actor-run`` or ``apify__*run``).
+        """
+        patterns = getattr(self.config, "repeatable_tools", None) or []
+        return any(fnmatch.fnmatch(tool_name, pattern) for pattern in patterns)
+
+    def _effort_for(self, role: str) -> str | None:
+        """Resolve the effort for a role, mirroring ``_model_for``.
+
+        A role's own ``:effort`` suffix wins; otherwise it inherits the session
+        effort. Roles: "synthesis", "compaction". Any other role uses the session
+        effort.
+        """
+        if role == "synthesis":
+            return self.config.synthesis_effort or self.config.effort
+        if role == "compaction":
+            return self.config.compaction_effort or self.config.effort
+        return self.config.effort
+
     def get_context_window_size(self) -> int:
         """Get context window size for the current model."""
         # Explicit override wins (for custom/self-hosted models not in the tables)
@@ -1985,22 +2012,13 @@ class AiAssistAgent:
                     def create_stream(
                         system: Any = system_prompt, tools: Any = api_tools, request_messages: Any = messages
                     ) -> Any:
-                        effort = getattr(self.config, "effort", None)
-                        if effort:
-                            return self.anthropic.messages.stream(
-                                model=self.config.model,
-                                max_tokens=self.get_max_tokens(),
-                                system=system,
-                                tools=tools,
-                                messages=request_messages,
-                                output_config={"effort": effort},
-                            )
                         return self.anthropic.messages.stream(
                             model=self.config.model,
                             max_tokens=self.get_max_tokens(),
                             system=system,
                             tools=tools,
                             messages=request_messages,
+                            **effort_output_config(getattr(self.config, "effort", None)),
                         )
 
                     stream_context: Any = await asyncio.wait_for(
@@ -2507,7 +2525,9 @@ class AiAssistAgent:
 
         # Execute uncached tools concurrently
         async def _run_one(block, sig):
-            if sig in self._tool_result_cache:
+            # Repeatable (poll-safe) tools bypass the cache so each call re-executes.
+            repeatable = self._is_repeatable_tool(block.name)
+            if not repeatable and sig in self._tool_result_cache:
                 self._duplicate_tool_call_count += 1
                 return self._tool_result_cache[sig]
             self._record_query_event("tool_started", turn=turn + 1, tool_name=block.name)
@@ -2517,7 +2537,8 @@ class AiAssistAgent:
                 self._record_query_event("tool_failed", turn=turn + 1, tool_name=block.name, detail=type(exc).__name__)
                 raise
             self._record_query_event("tool_completed", turn=turn + 1, tool_name=block.name)
-            self._tool_result_cache[sig] = result
+            if not repeatable:
+                self._tool_result_cache[sig] = result
             return result
 
         if progress_callback:
@@ -2542,7 +2563,10 @@ class AiAssistAgent:
                 tool_result["is_error"] = True
             tool_results.append(tool_result)
 
-            # Loop detection
+            # Loop detection — skipped for tools marked repeatable (e.g. async status
+            # polls like apify__get-actor-run, expected to be called until they finish).
+            if self._is_repeatable_tool(block.name):
+                continue
             self._recent_tool_calls_for_loop.append(sig)
             if len(self._recent_tool_calls_for_loop) > 5:
                 self._recent_tool_calls_for_loop.pop(0)

@@ -24,7 +24,7 @@ from .awl_ast import (
     WorkflowNode,
 )
 from .awl_expressions import AWLExpressionEvaluator
-from .config import EFFORT_LEVELS
+from .config import EFFORT_SETTINGS
 from .filesystem_tools import extract_command_names
 from .jev_client import JevError, jev_configured, jev_decide, noul, noul_probability
 from .output import console_print
@@ -99,6 +99,24 @@ def _resolve_model_level(level: str | None, tiers: dict[str, str], default_model
     return tiers.get(level or "default", default_model)
 
 
+def resolve_tier(config: Any, level: str | None, task_effort: str | None = None) -> tuple[str, str | None]:
+    """Resolve the ``(model, effort)`` a tier ``level`` uses.
+
+    Single source of truth, shared by the AWL runtime (which applies it) and by
+    ``/doctor`` (which only checks it, no reinterpretation). ``level`` ``None`` or
+    ``"default"`` -> the session model and effort; ``"low"``/``"medium"``/``"high"``
+    -> that tier's model and its effort, inheriting the session effort when the
+    tier specifies none. A task ``effort=`` override (``task_effort``) wins. ``no``
+    is a tier effort like any other here; callers pass the result through
+    ``effort.effort_output_config`` to decide whether anything is sent.
+    """
+    model = _resolve_model_level(level, config.model_tiers, config.model)
+    tier_efforts = getattr(config, "model_tier_efforts", None)
+    tier_effort = tier_efforts.get(level or "default") if isinstance(tier_efforts, dict) else None
+    effort = task_effort or tier_effort or getattr(config, "effort", None)
+    return model, effort
+
+
 def _validate_workflow_models(workflow: WorkflowNode, valid_levels: tuple[str, ...]) -> list[str]:
     """Check that every model= override is a valid level (low/medium/high)."""
     errors: list[str] = []
@@ -131,10 +149,10 @@ def _validate_workflow_efforts(workflow: WorkflowNode) -> list[str]:
 
     def _walk(nodes: list[ASTNode]):
         for node in nodes:
-            if isinstance(node, TaskNode) and node.effort and node.effort not in EFFORT_LEVELS:
+            if isinstance(node, TaskNode) and node.effort and node.effort not in EFFORT_SETTINGS:
                 errors.append(
                     f"@task '{node.task_id}': effort '{node.effort}' is not valid; "
-                    f"use one of: {', '.join(EFFORT_LEVELS)}"
+                    f"use one of: {', '.join(EFFORT_SETTINGS)}"
                 )
             elif isinstance(node, IfNode):
                 _walk(node.then_body)
@@ -505,11 +523,9 @@ class AWLRuntime:
                 max_turns = task.max_tool_calls or self._limits.max_tool_calls
                 saved_model = self._agent.config.model
                 saved_effort = getattr(self._agent.config, "effort", None)
-                resolved_model = _resolve_model_level(task.model, self._agent.config.model_tiers, saved_model)
+                resolved_model, resolved_effort = resolve_tier(self._agent.config, task.model, task.effort)
                 self._agent.config.model = resolved_model
-                tier_efforts = getattr(self._agent.config, "model_tier_efforts", None)
-                tier_effort = tier_efforts.get(task.model or "") if isinstance(tier_efforts, dict) else None
-                self._agent.config.effort = task.effort or tier_effort or saved_effort
+                self._agent.config.effort = resolved_effort
                 if resolved_model != saved_model:
                     logger.info(
                         "AWL task '%s' using model level '%s': %s",

@@ -17,23 +17,32 @@ if _project_env.exists():
 
 logger = logging.getLogger(__name__)
 
+# Effort levels actually sent to the API.
 EffortLevel = Literal["low", "medium", "high", "xhigh", "max"]
 EFFORT_LEVELS: tuple[EffortLevel, ...] = ("low", "medium", "high", "xhigh", "max")
 
+# "no" is an explicit "send no effort" setting, distinct from an unset effort
+# (which means "provider default"). It is never sent to the API; it exists so a
+# model/tier that rejects the effort parameter can opt out even when a session
+# effort is configured. See ``effort.effort_output_config``.
+EFFORT_NONE: Literal["no"] = "no"
+EffortSetting = Literal["low", "medium", "high", "xhigh", "max", "no"]
+EFFORT_SETTINGS: tuple[EffortSetting, ...] = (*EFFORT_LEVELS, EFFORT_NONE)
 
-def _split_model_effort(value: str | None) -> tuple[str | None, EffortLevel | None]:
-    """Split a model's optional ``model:effort`` suffix."""
+
+def _split_model_effort(value: str | None) -> tuple[str | None, EffortSetting | None]:
+    """Split a model's optional ``model:effort`` suffix (effort may be ``no``)."""
     if not value:
         return value, None
     model, separator, suffix = value.rpartition(":")
-    if separator and suffix in EFFORT_LEVELS and model:
+    if separator and suffix in EFFORT_SETTINGS and model:
         return model, suffix
     return value, None
 
 
-def _env_effort() -> EffortLevel | None:
+def _env_effort() -> EffortSetting | None:
     """Return the configured effort, leaving validation to Pydantic."""
-    return cast(EffortLevel | None, os.getenv("AI_ASSIST_EFFORT"))
+    return cast(EffortSetting | None, os.getenv("AI_ASSIST_EFFORT"))
 
 
 class _WatchedTimedRotatingFileHandler(logging.handlers.TimedRotatingFileHandler):
@@ -276,7 +285,7 @@ def _env_model_tiers() -> dict[str, str]:
     return tiers
 
 
-def _env_model_tier_efforts() -> dict[str, EffortLevel]:
+def _env_model_tier_efforts() -> dict[str, EffortSetting]:
     env = {"low": "AI_ASSIST_MODEL_LOW", "medium": "AI_ASSIST_MODEL_MEDIUM", "high": "AI_ASSIST_MODEL_HIGH"}
     return {
         level: effort
@@ -296,9 +305,36 @@ def _env_session_model() -> str:
     return _split_model_effort(value)[0] or "claude-sonnet-4-6"
 
 
-def _env_session_model_effort() -> EffortLevel | None:
-    value = os.getenv("AI_ASSIST_MODEL") or os.getenv("AI_ASSIST_MODEL_HIGH") or "claude-sonnet-4-6"
-    return _split_model_effort(value)[1]
+def _env_session_model_effort() -> EffortSetting | None:
+    """Return the default effort from an explicit ``AI_ASSIST_MODEL`` suffix only.
+
+    Deliberately does not fall back to ``AI_ASSIST_MODEL_HIGH``: a tier model's
+    ``:effort`` suffix belongs to that tier, not to the default. When the effort
+    is not specified (no ``AI_ASSIST_EFFORT`` and no ``AI_ASSIST_MODEL`` suffix),
+    it is ``None`` and no effort is sent.
+    """
+    return _split_model_effort(os.getenv("AI_ASSIST_MODEL"))[1]
+
+
+def _env_repeatable_tools() -> list[str]:
+    """Tool-name patterns (fnmatch) exempt from the result cache and loop detection.
+
+    For poll-safe tools whose repeated identical calls are expected (async status
+    checks like ``apify__get-actor-run``). ``AI_ASSIST_REPEATABLE_TOOLS`` is
+    whitespace- and/or comma-separated (tool names never contain either), matching
+    the whitespace convention of skills' ``allowed-tools``.
+    """
+    return os.getenv("AI_ASSIST_REPEATABLE_TOOLS", "").replace(",", " ").split()
+
+
+def _env_role_model(var: str) -> str | None:
+    """Model id for a per-role override (synthesis/compaction), suffix stripped."""
+    return _split_model_effort(os.getenv(var))[0]
+
+
+def _env_role_effort(var: str) -> EffortSetting | None:
+    """Effort from a per-role override's ``:effort`` suffix, if any."""
+    return _split_model_effort(os.getenv(var))[1]
 
 
 class AiAssistConfig(BaseModel):
@@ -325,14 +361,22 @@ class AiAssistConfig(BaseModel):
     # when AI_ASSIST_MODEL is unset (bidirectional default<->high fallback).
     model: str = Field(default_factory=_env_session_model)
 
-    # Optional per-role model overrides (fall back to `model` when unset)
-    synthesis_model: str | None = Field(default_factory=lambda: os.getenv("AI_ASSIST_SYNTHESIS_MODEL"))
-    compaction_model: str | None = Field(default_factory=lambda: os.getenv("AI_ASSIST_COMPACTION_MODEL"))
+    # Optional per-role model overrides (fall back to `model` when unset). Each
+    # accepts a `:effort` suffix (like the tier vars); the effort falls back to the
+    # session effort when the suffix is absent.
+    synthesis_model: str | None = Field(default_factory=lambda: _env_role_model("AI_ASSIST_SYNTHESIS_MODEL"))
+    synthesis_effort: EffortSetting | None = Field(
+        default_factory=lambda: _env_role_effort("AI_ASSIST_SYNTHESIS_MODEL")
+    )
+    compaction_model: str | None = Field(default_factory=lambda: _env_role_model("AI_ASSIST_COMPACTION_MODEL"))
+    compaction_effort: EffortSetting | None = Field(
+        default_factory=lambda: _env_role_effort("AI_ASSIST_COMPACTION_MODEL")
+    )
 
     # Optional Anthropic Messages API effort level. Unset preserves the provider default.
-    effort: EffortLevel | None = Field(default_factory=_env_effort)
-    model_default_effort: EffortLevel | None = Field(default_factory=_env_session_model_effort)
-    model_tier_efforts: dict[str, EffortLevel] = Field(default_factory=_env_model_tier_efforts)
+    effort: EffortSetting | None = Field(default_factory=_env_effort)
+    model_default_effort: EffortSetting | None = Field(default_factory=_env_session_model_effort)
+    model_tier_efforts: dict[str, EffortSetting] = Field(default_factory=_env_model_tier_efforts)
 
     # AWL model-level overrides: level name -> concrete model id. Levels not set
     # here fall back to `model` (the `default` tier) at resolution time. Valid
@@ -541,6 +585,9 @@ class AiAssistConfig(BaseModel):
     confirm_tools: list[str] = Field(
         default_factory=list,
     )
+    # Tools exempt from the per-query result cache and loop detection (poll-safe,
+    # e.g. async status checks). fnmatch patterns from AI_ASSIST_REPEATABLE_TOOLS.
+    repeatable_tools: list[str] = Field(default_factory=_env_repeatable_tools)
 
     # Adaptive truncation limits (percentage of context window)
     message_limit_pct: float = Field(
@@ -615,8 +662,11 @@ class AiAssistConfig(BaseModel):
             http_referer=os.getenv("AI_ASSIST_HTTP_REFERER", "https://github.com/ai-assist-org/ai-assist"),
             x_title=os.getenv("AI_ASSIST_X_TITLE", "ai-assist"),
             model=_env_session_model(),
-            synthesis_model=os.getenv("AI_ASSIST_SYNTHESIS_MODEL"),
-            compaction_model=os.getenv("AI_ASSIST_COMPACTION_MODEL"),
+            synthesis_model=_env_role_model("AI_ASSIST_SYNTHESIS_MODEL"),
+            synthesis_effort=_env_role_effort("AI_ASSIST_SYNTHESIS_MODEL"),
+            compaction_model=_env_role_model("AI_ASSIST_COMPACTION_MODEL"),
+            compaction_effort=_env_role_effort("AI_ASSIST_COMPACTION_MODEL"),
+            repeatable_tools=_env_repeatable_tools(),
             effort=_env_effort() or _env_session_model_effort(),
             model_default_effort=_env_session_model_effort(),
             model_tier_efforts=_env_model_tier_efforts(),

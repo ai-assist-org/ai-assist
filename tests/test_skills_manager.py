@@ -201,6 +201,51 @@ def test_persistence(skills_manager, temp_installed_skills_file):
     assert new_manager.installed_skills[0].name == "hello"
 
 
+def test_load_skips_invalid_skill_without_user_traceback(skills_manager, temp_installed_skills_file, tmp_path, caplog):
+    """A skill with invalid metadata is skipped, other skills still load, and the
+    user-facing WARNING carries no traceback (the traceback goes to the log at INFO)."""
+    # Skill with a description over the 1024-char limit -> validate() raises.
+    bad_dir = tmp_path / "bad-skill"
+    bad_dir.mkdir()
+    (bad_dir / "SKILL.md").write_text(f"---\nname: bad-skill\ndescription: {'x' * 1100}\n---\n\n# Bad\n")
+
+    data = {
+        "skills": [
+            {
+                "name": "bad-skill",
+                "source": str(bad_dir),
+                "source_type": "local",
+                "branch": "main",
+                "installed_at": "2026-01-01T00:00:00",
+                "cache_path": str(bad_dir),
+            },
+            {
+                "name": "hello",
+                "source": "/tmp/test-skills/hello",
+                "source_type": "local",
+                "branch": "main",
+                "installed_at": "2026-01-01T00:00:00",
+                "cache_path": "/tmp/test-skills/hello",
+            },
+        ]
+    }
+    temp_installed_skills_file.write_text(json.dumps(data))
+
+    with caplog.at_level("INFO", logger="ai_assist.skills_manager"):
+        skills_manager.load_installed_skills()
+
+    # The valid skill still loads; the bad one is skipped.
+    assert "hello" in skills_manager.loaded_skills
+    assert "bad-skill" not in skills_manager.loaded_skills
+
+    warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+    assert any("bad-skill" in r.getMessage() for r in warnings)
+    # The user-facing WARNING must not carry a traceback...
+    assert all(r.exc_info is None for r in warnings)
+    # ...but the traceback is preserved at INFO for the log file.
+    assert any(r.exc_info is not None for r in caplog.records if r.levelname == "INFO")
+
+
 def _make_clawhub_content(slug="test-skill", version="1.0.0"):
     """Helper: build a SkillContent as if returned by load_skill_from_clawhub"""
     cache_path = f"/tmp/skills-cache/clawhub_{slug}_{version}"

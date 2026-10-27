@@ -26,6 +26,9 @@ class TestGetPricing:
         result = get_pricing("claude-fable-5")
         assert result == (10.00, 50.00, 12.50, 1.00)
 
+    def test_haiku_5_5_pricing(self):
+        assert get_pricing("claude-haiku-5-5") == (0.10, 0.50, 0.125, 0.01)
+
     def test_unknown_model_falls_back(self, caplog):
         with caplog.at_level(logging.WARNING):
             result = get_pricing("claude-unknown-99")

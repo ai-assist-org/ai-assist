@@ -65,7 +65,9 @@ the shared streaming path. Both entry points default to a 600-second time budget
 
 AWL scripts define intent-driven workflows where the agent autonomously selects tools to achieve goals. Key constructs:
 
-- `@task <name> [@hints] [max_tool_calls=N] [max_time=N] [model=<level>]`: Defines a goal for the agent to achieve, exposing variables. `model=` selects an abstract capability level for this task — `low`, `medium`, `high`, or `default` (e.g., `low` for cheap data gathering, `high` for deep analysis); validated at load time. Each level maps to a concrete model via `AI_ASSIST_MODEL_LOW`/`_MEDIUM`/`_HIGH`, falling back to `default` (the session model, `AI_ASSIST_MODEL`) when unset. `default` and `high` fall back to each other, so setting only one is enough. Omitting `model=` uses `default`.
+- `@task <name> [@hints] [max_tool_calls=N] [max_time=N] [model=<level>] [effort=<level>]`: Defines a goal for the agent to achieve, exposing variables. `model=` selects an abstract capability level for this task — `low`, `medium`, `high`, or `default` (e.g., `low` for cheap data gathering, `high` for deep analysis); validated at load time. Each level maps to a concrete model via `AI_ASSIST_MODEL_LOW`/`_MEDIUM`/`_HIGH`, falling back to `default` (the session model, `AI_ASSIST_MODEL`) when unset. `default` and `high` fall back to each other, so setting only one is enough. Omitting `model=` uses `default`. `effort=` overrides the reasoning effort for this task (`low`/`medium`/`high`/`xhigh`/`max`, or `no` to send none).
+
+**Effort configuration**: Each `AI_ASSIST_MODEL*` variable accepts an optional `:effort` suffix — the session model, the AWL tiers (`AI_ASSIST_MODEL_LOW`/`_MEDIUM`/`_HIGH`), and the per-role overrides (`AI_ASSIST_SYNTHESIS_MODEL`, `AI_ASSIST_COMPACTION_MODEL`) — as does `AI_ASSIST_EFFORT` for the session default. Values are `low`/`medium`/`high`/`xhigh`/`max`, or `no` (send no effort — for models that reject the parameter). Resolution is `effort=` override (AWL only) → the model var's own suffix → the session effort; a model var with no suffix inherits the session effort, and `no` opts it out. AWL tiers resolve via `resolve_tier` (`awl_runtime.py`); the synthesis/compaction roles via `AiAssistAgent._model_for` / `_effort_for`. Effort is omitted from the request when unset or `no`. Run `ai-assist /doctor` to check every configured model+effort with a cheap live query (resolved exactly as the runtime resolves it), plus the jev goal-success service when configured.
 - `@if <condition>`: Conditional execution with Python-like expressions
 - `@loop <var> as <item> limit=N collect=<var>`: Iteration with map-reduce pattern
 - `${var}`: Variable interpolation in goals and text
@@ -89,7 +91,7 @@ Bi-temporal database tracking:
 
 **Compaction-time extraction**: In interactive mode, durable facts the user stated are extracted into the KG when the conversation is compacted, cleared (`/clear`), or the session exits (synchronous on exit so short sessions still contribute), as a background task, so they survive a growing context window. Extraction reuses an existing `project_context` key when a new fact is a near-duplicate (semantic similarity ≥ `AiAssistAgent.DEDUP_SIM_THRESHOLD`), letting the KG's last-write-wins upsert supersede it instead of accreting parallel entries. The threshold is deliberately conservative — a false merge overwrites a distinct fact irrecoverably.
 
-**Auto Context Injection**: Semantically relevant entities are automatically surfaced in the system prompt based on query similarity.
+**Auto Context Injection**: Semantically relevant entities are automatically surfaced in the system prompt based on query similarity. Bookkeeping types in `KnowledgeGraph.NON_EMBEDDED_TYPES` (`tool_result`, `skill_performance`) are never embedded, so they stay out of semantic recall and context injection.
 
 Files: `knowledge_graph.py`, `kg_queries.py`, `kg_query_tools.py`, `knowledge_tools.py`, `embedding.py`, `context.py`
 
@@ -105,12 +107,14 @@ Skills follow the [agentskills.io](https://agentskills.io) specification:
   precedence over same-named skills. Handled by `handle_skill_invocation`
   (`tui_interactive.py`).
 
+**Usage tracking**: Each skill invocation — model-invoked (via `introspection__get_skill_help`) and manual (`/<skill-name>`) — is counted in the KG as a `skill_performance` entity (invocation count + last used). View with `/skill/stats`. Recording is best-effort and never blocks the skill run. This is invocation-only (no outcome/confidence) by design; `skill_performance.py` carries the confidence-update machinery for a future outcome-scoring step.
+
 **Script Execution Security** (disabled by default):
 - Requires `AI_ASSIST_ALLOW_SCRIPT_EXECUTION=true`
 - Sandboxed environment (no API keys, 30s timeout, 20KB output limit)
 - Per-skill env var allowlist via `/skill/add_env` (persisted in `~/.ai-assist/skill_env.json`)
 
-Files: `skills_loader.py`, `skills_manager.py`, `script_execution_tools.py`, `security.py`
+Files: `skills_loader.py`, `skills_manager.py`, `script_execution_tools.py`, `security.py`, `skill_performance.py`
 
 ### Claude Code Plugins
 
@@ -355,6 +359,8 @@ Files: `config.py`, `state.py`, `config_watcher.py`, `file_watchdog.py`
 Each holds an agent back-reference so it reads collaborators (`sessions`, `report_tools`, `knowledge_graph`, …) live. `AiAssistAgent` keeps thin delegating wrappers for the method names referenced by tests and other modules.
 
 **Large tool results**: All tools support `__save_to_file`, `__write_to_report`, `__append_to_report`, `__collect_to_report`, and `__jq_filter` parameters. Add to any tool call to redirect raw results to a file or report. Agent receives a summary. `__jq_filter` applies a jq filter inline before returning or saving — composes with the other parameters (filter runs first). `__collect_to_report` auto-paginates and collects all results in one call (requires server pagination config in `mcp_servers.yaml`).
+
+**Dedup & loop detection** (`_execute_tools_concurrently` in `agent.py`): within a query, identical tool calls (name + args) are served from a result cache, and a call repeated with the same signature ≥3× in the last 5 triggers loop detection (first offense nudges, a second aborts). **Poll-safe tools** — async status checks like `apify__get-actor-run`, expected to be called repeatedly until they finish — are exempt from both: list fnmatch patterns in `AI_ASSIST_REPEATABLE_TOOLS` (whitespace- or comma-separated; `config.repeatable_tools`), matched by `AiAssistAgent._is_repeatable_tool`. A repeatable tool bypasses the cache (each call re-executes for a fresh result) and is never loop-flagged.
 
 ## Documentation
 

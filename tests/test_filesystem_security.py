@@ -1066,6 +1066,23 @@ class TestExtractCommandNames:
         assert "env" not in result
         assert "timeout" not in result
 
+    def test_xargs_wrapper_extracts_inner_command(self):
+        result = extract_command_names("find . | xargs grep pattern")
+        assert "grep" in result
+        assert "xargs" not in result
+
+    def test_xargs_replace_flag_extracts_inner_command(self):
+        # -I {} takes a separate, non-numeric argument that must not be read as the command.
+        result = extract_command_names("find . | xargs -I {} grep {} file")
+        assert "grep" in result
+        assert "xargs" not in result
+        assert "{}" not in result
+
+    def test_xargs_numeric_flags_extract_inner_command(self):
+        result = extract_command_names("find . | xargs -0 -n 1 grep pattern")
+        assert "grep" in result
+        assert "xargs" not in result
+
 
 # --- Integration tests for smart parsing with execute_command ---
 
@@ -1109,6 +1126,26 @@ async def test_comment_command_allowed():
 
     result = await tools.execute_tool("execute_command", {"command": "# this is a comment"})
     assert "not allowed" not in result.lower()
+
+
+@pytest.mark.asyncio
+async def test_xargs_allows_allowed_inner_command():
+    """xargs is a transparent wrapper: `xargs grep` is allowed when grep is."""
+    config = AiAssistConfig(anthropic_api_key="test", allowed_commands=["grep", "find"])
+    tools = FilesystemTools(config, load_user_config=False)
+    cmd = "find . | xargs -I {} grep foo {}"
+    assert await tools._check_command_allowed(extract_command_names(cmd), cmd) is None
+
+
+@pytest.mark.asyncio
+async def test_xargs_rejects_disallowed_inner_command():
+    """xargs does not launder a disallowed command: `xargs rm` is still rejected."""
+    config = AiAssistConfig(anthropic_api_key="test", allowed_commands=["grep", "find"])
+    tools = FilesystemTools(config, load_user_config=False)
+    cmd = "find . | xargs rm -rf"
+    err = await tools._check_command_allowed(extract_command_names(cmd), cmd)
+    assert err is not None
+    assert "rm" in err
 
 
 @pytest.mark.asyncio
