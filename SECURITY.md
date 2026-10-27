@@ -134,20 +134,46 @@ The system prompt requires every factual claim to cite the tool call that provid
 
 ## 8. Command Argument Validation
 
+### How command lines are split
+
+Before any allowlist or argument check, `_split_shell_commands()` splits a
+command line into every simple command that would run:
+
+- separators: `;`, `&&`, `||`, `|`, `&`, newlines, parentheses (subshells,
+  `case` patterns); comments end at the newline; `\`-newline continues a line
+- `$(...)`, backticks, `<(...)` and `>(...)` (also inside double quotes,
+  `$((...))` and unquoted heredoc bodies) are checked as separate commands
+- quoted heredoc bodies (`<<'EOF'`) are skipped as data
+- keywords and builtins that run the next word (`if`, `then`, `do`, `!`, `{`,
+  `time`, `command`, `builtin`, `exec`, ...) are skipped, and the command after
+  them is checked
+- builtins that run code (`eval`, `source`/`.`, `trap`, `alias`, `enable`,
+  `hash`, `mapfile`/`readarray`, `coproc`) need an allowlist entry or
+  confirmation; other builtins (`echo`, `cd`, `export`, ...) are free
+
 Even when a command passes the allowlist check, its arguments may target restricted paths or execute arbitrary code. ai-assist inspects arguments for specific commands before execution.
 
 **Module:** `ai_assist/filesystem_tools.py` — `_extract_command_argument_paths()`, `_validate_command_arguments()`
 
-### Path validation for `cd` and `find`
+### Path validation for `cd`, `find` and written files
 
-When path restrictions are enabled (`allowed_paths` is non-empty), the path arguments of `cd` and `find` are validated against the same allowed directories used by filesystem tools.
+When path restrictions are enabled (`allowed_paths` is non-empty), the path arguments of `cd` and `find`, and the files a command writes, are validated against the same allowed directories used by filesystem tools.
 
 | Command | What is checked |
 |---------|-----------------|
 | `cd <dir>` | Target directory must be within allowed paths |
 | `find <paths...> [options]` | All search paths (before option flags) must be within allowed paths |
 
+| `find -H/-L/-P <paths...>` | Leading `find` options are skipped, then paths are checked |
+| `> file`, `>> file`, `2> file`, `&> file`, ... | Every output redirection target, for any command |
+| `sort -o file`, `yq -i ... file` | Files written in place |
+
 Path traversal is blocked: `cd /allowed/../../etc` is resolved before validation.
+Write targets the shell computes at run time (`> $HOME/x`, globs,
+substitutions) cannot be checked statically: they require confirmation and are
+rejected in non-interactive mode. Protected config files are refused as write
+targets in every permission mode. `/dev/null`, `/dev/stdout`, `/dev/stderr`,
+`/dev/tty` and `/dev/fd/*` are always allowed.
 
 `cd -` (previous directory) and `cd` with no arguments are not checked since they cannot be resolved statically.
 

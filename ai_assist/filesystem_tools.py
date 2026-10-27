@@ -114,7 +114,41 @@ FIND_DANGEROUS_PRIMARIES = frozenset(
     {"-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprintf", "-fprint", "-fprint0", "-fls"}
 )
 
-TRANSPARENT_WRAPPERS = frozenset({"env", "nohup", "nice", "ionice", "timeout", "stdbuf", "script", "xargs"})
+TRANSPARENT_WRAPPERS = frozenset(
+    {
+        "env",
+        "nohup",
+        "nice",
+        "ionice",
+        "timeout",
+        "stdbuf",
+        "script",
+        "xargs",
+        # Builtins and keywords that run the command following them
+        "command",
+        "builtin",
+        "exec",
+        "time",
+        "if",
+        "then",
+        "else",
+        "elif",
+        "do",
+        "while",
+        "until",
+        "!",
+        "{",
+    }
+)
+
+# Builtins that run code given as arguments or redirect later command lookups.
+# They need an allowlist entry or user confirmation like any external command.
+CODE_RUNNING_SHELL_BUILTINS = frozenset(
+    {"eval", "source", ".", "trap", "alias", "enable", "hash", "mapfile", "readarray", "coproc"}
+)
+
+# Builtins that run nothing by themselves: skipped by the allowlist check
+INERT_SHELL_BUILTINS = SHELL_BUILTINS - CODE_RUNNING_SHELL_BUILTINS - TRANSPARENT_WRAPPERS
 
 # Per-wrapper flags whose argument is a separate, possibly non-numeric token
 # (e.g. `xargs -I {} grep {}`), which the generic numeric-value rule would miss.
@@ -232,83 +266,257 @@ def _strip_transparent_wrappers(tokens: list[str], idx: int) -> int:
     return idx
 
 
-def _strip_shell_comments(command: str) -> str:
-    """Strip shell comments (# to end) outside of quotes.
+# Stands in for $(...), `...`, <(...) and >(...) in split segments: the
+# substituted commands are validated as separate segments, and the "$" marks
+# the value as unknown (e.g. for redirect targets).
+SUBSTITUTION_PLACEHOLDER = "$__substitution__"
+_HEREDOC_WORD_END = frozenset(" \t\n;|&<>()")
 
-    Respects single quotes, double quotes, and backslash escapes.
-    """
-    result: list[str] = []
-    in_single = False
-    in_double = False
-    i = 0
+
+def _find_closing_paren(command: str, start: int) -> int:
+    """Index of the ')' matching an already-open '(' (len(command) if none)."""
+    depth = 1
+    in_single = in_double = False
+    i = start
     while i < len(command):
         c = command[i]
-        if c == "\\" and not in_single and i + 1 < len(command):
-            result.append(c)
-            result.append(command[i + 1])
-            i += 2
-            continue
-        if c == "'" and not in_double:
-            in_single = not in_single
-        elif c == '"' and not in_single:
+        if in_single:
+            in_single = c != "'"
+        elif c == "\\":
+            i += 1
+        elif c == '"':
             in_double = not in_double
-        elif c == "#" and not in_single and not in_double:
-            break
-        result.append(c)
+        elif not in_double and c == "'":
+            in_single = True
+        elif not in_double and c == "(":
+            depth += 1
+        elif not in_double and c == ")":
+            depth -= 1
+            if depth == 0:
+                return i
         i += 1
-    return "".join(result)
+    return len(command)
 
 
-def _split_shell_commands(command: str) -> list[str]:
-    """Split command on shell operators (&&, ||, ;, |, &) outside of quotes."""
-    segments: list[str] = []
-    current: list[str] = []
-    in_single = False
-    in_double = False
-    i = 0
+def _find_backtick_end(command: str, start: int) -> int:
+    """Index of the closing backtick (len(command) if none)."""
+    i = start
     while i < len(command):
-        c = command[i]
-        if c == "\\" and not in_single and i + 1 < len(command):
-            current.append(c)
-            current.append(command[i + 1])
+        if command[i] == "\\":
             i += 2
             continue
-        if c == "'" and not in_double:
-            in_single = not in_single
+        if command[i] == "`":
+            return i
+        i += 1
+    return len(command)
+
+
+def _substitution_at(command: str, i: int, process: bool = False) -> tuple[list[str], int] | None:
+    """If a $(...), $((...)) or `...` starts at i, return (bodies, end index).
+
+    With process=True, <(...) and >(...) process substitutions are matched too.
+    """
+    if process and command[i] in "<>" and command.startswith("(", i + 1):
+        end = _find_closing_paren(command, i + 2)
+        return [command[i + 2 : end]], end + 1
+    if command[i] == "`":
+        end = _find_backtick_end(command, i + 1)
+        return [command[i + 1 : end]], end + 1
+    if command.startswith("$((", i):
+        end = _find_closing_paren(command, i + 2)
+        # Arithmetic itself runs nothing, but substitutions inside it do
+        return _scan_shell(command[i + 2 : end])[1], end + 1
+    if command.startswith("$(", i):
+        end = _find_closing_paren(command, i + 2)
+        return [command[i + 2 : end]], end + 1
+    return None
+
+
+def _heredoc_body_substitutions(body: str) -> list[str]:
+    """Substitutions in an unquoted heredoc body (quotes are literal there)."""
+    bodies: list[str] = []
+    i = 0
+    while i < len(body):
+        if body[i] == "\\":
+            i += 2
+            continue
+        found = _substitution_at(body, i)
+        if found:
+            bodies.extend(found[0])
+            i = found[1]
+        else:
+            i += 1
+    return bodies
+
+
+def _skip_heredoc_bodies(command: str, i: int, heredocs: list[tuple[str, bool, bool]], bodies: list[str]) -> int:
+    """Skip the bodies of pending heredocs starting at line index i.
+
+    Substitutions in bodies that expand are appended to bodies. Returns the
+    index of the first line after the last body.
+    """
+    for delimiter, expands, strip_tabs in heredocs:
+        body: list[str] = []
+        while i < len(command):
+            newline = command.find("\n", i)
+            line_end = len(command) if newline == -1 else newline
+            line = command[i:line_end]
+            i = line_end + 1
+            if (line.lstrip("\t") if strip_tabs else line) == delimiter:
+                break
+            body.append(line)
+        if expands:
+            bodies.extend(_heredoc_body_substitutions("\n".join(body)))
+    return i
+
+
+def _parse_heredoc_operator(command: str, i: int) -> tuple[int, str, bool, bool]:
+    """Parse `<<[-]WORD` at i. Returns (end, delimiter, body_expands, strip_tabs)."""
+    j = i + 2
+    strip_tabs = j < len(command) and command[j] == "-"
+    if strip_tabs:
+        j += 1
+    while j < len(command) and command[j] in " \t":
+        j += 1
+    word_start = j
+    in_quote = ""
+    while j < len(command) and (in_quote or command[j] not in _HEREDOC_WORD_END):
+        if in_quote:
+            if command[j] == in_quote:
+                in_quote = ""
+        elif command[j] in "'\"":
+            in_quote = command[j]
+        j += 1
+    word = command[word_start:j]
+    quoted = any(q in word for q in "'\"\\")
+    delimiter = word.replace("'", "").replace('"', "").replace("\\", "")
+    return j, delimiter, not quoted, strip_tabs
+
+
+def _scan_shell(command: str) -> tuple[list[str], list[str]]:
+    """Split a command line into simple-command segments.
+
+    Splits on ;, &&, ||, |, &, parentheses and newlines outside quotes; drops comments and
+    heredoc bodies; joins backslash-newline continuations. Command
+    substitutions are replaced by SUBSTITUTION_PLACEHOLDER and their bodies
+    returned separately (including those inside double quotes, $((...)) and
+    unquoted heredoc bodies), as (segments, substitution_bodies).
+    """
+    segments: list[str] = []
+    bodies: list[str] = []
+    current: list[str] = []
+    heredocs: list[tuple[str, bool, bool]] = []
+    in_single = in_double = False
+    # Inside a case statement, text up to the next ")" after "in" or ";;" is a
+    # pattern, not a command (outside a case, ";;" is a syntax error)
+    in_case_pattern = False
+    n = len(command)
+    i = 0
+
+    def flush() -> None:
+        nonlocal in_case_pattern
+        segment = "".join(current).strip()
+        current.clear()
+        if segment:
+            segments.append(segment)
+            words = segment.split()
+            in_case_pattern = words[0] == "case" and words[-1] == "in"
+
+    while i < n:
+        c = command[i]
+        if in_single:
+            in_single = c != "'"
             current.append(c)
-        elif c == '"' and not in_single:
-            in_double = not in_double
+            i += 1
+            continue
+        if c == "\\" and i + 1 < n:
+            if command[i + 1] != "\n":
+                current.append(command[i : i + 2])
+            i += 2
+            continue
+        found = _substitution_at(command, i, process=not in_double)
+        if found:
+            bodies.extend(found[0])
+            current.append(SUBSTITUTION_PLACEHOLDER)
+            i = found[1]
+            continue
+        if in_double:
+            in_double = c != '"'
             current.append(c)
-        elif not in_single and not in_double:
-            if c == ";":
-                segments.append("".join(current))
-                current = []
-            elif c == "|":
-                if i + 1 < len(command) and command[i + 1] == "|":
-                    segments.append("".join(current))
-                    current = []
-                    i += 1
-                else:
-                    segments.append("".join(current))
-                    current = []
-            elif c == "&":
-                if i + 1 < len(command) and command[i + 1] == "&":
-                    segments.append("".join(current))
-                    current = []
-                    i += 1
-                elif i > 0 and command[i - 1] == ">":
-                    current.append(c)
-                else:
-                    segments.append("".join(current))
-                    current = []
-            else:
+            i += 1
+            continue
+        nxt = command[i + 1] if i + 1 < n else ""
+        if c == "'":
+            in_single = True
+            current.append(c)
+        elif c == '"':
+            in_double = True
+            current.append(c)
+        elif c == "#" and (not current or current[-1][-1].isspace()):
+            newline = command.find("\n", i)
+            i = n if newline == -1 else newline
+            continue
+        elif command.startswith("<<", i) and not command.startswith("<<<", i):
+            end, delimiter, expands, strip_tabs = _parse_heredoc_operator(command, i)
+            heredocs.append((delimiter, expands, strip_tabs))
+            current.append(command[i:end])
+            i = end
+            continue
+        elif c == "\n":
+            flush()
+            i = _skip_heredoc_bodies(command, i + 1, heredocs, bodies)
+            heredocs.clear()
+            continue
+        elif c == "(" and nxt == "(":
+            # Arithmetic command ((...)): runs nothing, but substitutions inside it do
+            end = _find_closing_paren(command, i + 2)
+            bodies.extend(_scan_shell(command[i + 2 : end])[1])
+            flush()
+            i = end + 2
+            continue
+        elif c == ")" and in_case_pattern:
+            current.clear()
+            in_case_pattern = False
+        elif c == "|" and in_case_pattern:
+            current.append(c)
+        elif c == ";" and nxt in ";&" and nxt:
+            # ;; ;& ;;& end a case branch: a pattern or esac follows
+            flush()
+            in_case_pattern = True
+            i += 3 if command.startswith(";;&", i) else 2
+            continue
+        elif c in ";()":
+            # Parentheses end segments too: subshells and case patterns
+            flush()
+        elif c == "|":
+            flush()
+            if nxt in "|&" and nxt:
+                i += 1
+        elif c == "&":
+            if nxt == "&":
+                flush()
+                i += 1
+            elif nxt == ">" or (current and current[-1][-1] in "<>"):
                 current.append(c)
+            else:
+                flush()
         else:
             current.append(c)
         i += 1
-    if current:
-        segments.append("".join(current))
-    return [s.strip() for s in segments if s.strip()]
+    flush()
+    return segments, bodies
+
+
+def _split_shell_commands(command: str) -> list[str]:
+    """Split a command line into segments, including substituted commands.
+
+    See _scan_shell. Bodies of command substitutions are split recursively
+    and appended, so every command that would run is a segment.
+    """
+    segments, bodies = _scan_shell(command)
+    for body in bodies:
+        segments.extend(_split_shell_commands(body))
+    return segments
 
 
 def _is_safe_env_assignment(token: str) -> bool:
@@ -338,7 +546,7 @@ def _expand_shell_invocations(command: str, depth: int = 0) -> str:
     """
     if depth > _MAX_SHELL_NESTING:
         return SHELL_STDIN_MARKER
-    segments = _split_shell_commands(_strip_shell_comments(command))
+    segments = _split_shell_commands(command)
     expanded: list[str] = []
     changed = False
     for segment in segments:
@@ -386,12 +594,7 @@ def extract_command_names(command: str) -> list[str]:
     command substitution. Looks inside `bash -c` payloads and
     `bash <script>` invocations (see _expand_shell_invocations).
     """
-    command = _expand_shell_invocations(command)
-    stripped = _strip_shell_comments(command)
-    if not stripped.strip():
-        return []
-
-    segments = _split_shell_commands(stripped)
+    segments = _split_shell_commands(_expand_shell_invocations(command))
     commands: list[str] = []
 
     for segment in segments:
@@ -463,7 +666,7 @@ def _compute_segment_prefix(tokens: list[str]) -> str | None:
         return " ".join(prefix_parts) if prefix_parts else None
 
     cmd_name = _resolve_command_token(tokens[idx])
-    if cmd_name in SHELL_BUILTINS:
+    if cmd_name in INERT_SHELL_BUILTINS:
         return None
     prefix_parts.append(cmd_name)
     idx += 1
@@ -495,12 +698,8 @@ def compute_allowlist_prefixes(command: str) -> list[str]:
     that contains a non-builtin command. Builtin-only segments (cd, echo, etc.)
     are skipped.
     """
-    stripped = _strip_shell_comments(command)
-    if not stripped.strip():
-        return []
-
     prefixes: list[str] = []
-    for segment in _split_shell_commands(stripped):
+    for segment in _split_shell_commands(command):
         try:
             tokens = shlex.split(segment)
         except ValueError:
@@ -521,7 +720,63 @@ def compute_allowlist_prefix(command: str) -> str | None:
     return prefixes[0] if prefixes else None
 
 
-def _extract_command_argument_paths(command: str) -> list[tuple[str, str]]:
+# Redirection operators that write to their target
+_WRITE_REDIRECTS = frozenset({">", ">>", ">|", "&>", "&>>", "<>", ">&"})
+# Redirect targets that are always fine to write
+_HARMLESS_REDIRECT_TARGETS = frozenset({"/dev/null", "/dev/stdout", "/dev/stderr", "/dev/tty"})
+# Marks a path the shell computes at run time ($VAR, globs, substitutions)
+_DYNAMIC_PATH_CHARS = frozenset("$`*?[")
+# Pseudo command names under which _extract_command_argument_paths reports written files
+_WRITE_TARGET_SOURCES = frozenset({">", "sort", "yq"})
+# find options that come before the search paths
+_FIND_LEADING_OPTIONS = frozenset({"-H", "-L", "-P"})
+
+
+def _redirect_write_targets(segment: str) -> list[str]:
+    """Files a segment's redirections write to (fd duplications excluded)."""
+    lexer = shlex.shlex(segment, posix=True, punctuation_chars=True)
+    lexer.whitespace_split = True
+    try:
+        tokens = list(lexer)
+    except ValueError:
+        return []
+    targets: list[str] = []
+    for op, target in zip(tokens, tokens[1:], strict=False):
+        if op not in _WRITE_REDIRECTS:
+            continue
+        if op == ">&" and (target.isdigit() or target == "-"):
+            continue
+        if target in _HARMLESS_REDIRECT_TARGETS or target.startswith("/dev/fd/"):
+            continue
+        targets.append(target)
+    return targets
+
+
+def _sort_output_paths(args: list[str]) -> list[str]:
+    paths: list[str] = []
+    for i, arg in enumerate(args):
+        if arg in ("-o", "--output") and i + 1 < len(args):
+            paths.append(args[i + 1])
+        elif arg.startswith("--output="):
+            paths.append(arg.split("=", 1)[1])
+        elif arg.startswith("-o") and not arg.startswith("--"):
+            paths.append(arg[2:])
+    return paths
+
+
+def _yq_inplace_paths(args: list[str]) -> list[str]:
+    inplace = any(
+        arg in ("--inplace", "-i") or (arg.startswith("-") and not arg.startswith("--") and "i" in arg[1:])
+        for arg in args
+    )
+    if not inplace:
+        return []
+    positional = [arg for arg in args if not arg.startswith("-")]
+    # First positional is the expression, unless it is the only one
+    return positional[1:] if len(positional) > 1 else positional
+
+
+def _extract_command_argument_paths(command: str, cwd: str | None = None) -> list[tuple[str, str]]:
     """Extract paths from command arguments that need validation.
 
     Returns list of (command_name, path_or_marker) tuples for commands whose
@@ -529,6 +784,10 @@ def _extract_command_argument_paths(command: str) -> list[tuple[str, str]]:
     - cd <dir>: the target directory
     - find <paths...>: the search paths (before option flags)
     - python/python3 <script>: the script file path
+    - sort -o <file>, yq -i <files>: files written in place
+    - (">", target): files written by output redirections, for every command
+
+    Relative paths are resolved against cwd and earlier cd targets.
 
     Special markers for python:
     - ("<inline-code>") for python -c
@@ -537,16 +796,19 @@ def _extract_command_argument_paths(command: str) -> list[tuple[str, str]]:
 
     Shell invocations are expanded first (see _expand_shell_invocations).
     """
-    stripped = _strip_shell_comments(_expand_shell_invocations(command))
-    if not stripped.strip():
-        return []
-
-    segments = _split_shell_commands(stripped)
+    segments = _split_shell_commands(_expand_shell_invocations(command))
     results: list[tuple[str, str]] = []
     # Track cd targets so relative paths in later segments resolve correctly
-    effective_cwd: str | None = None
+    effective_cwd: str | None = cwd
+
+    def resolve(path: str) -> str:
+        if effective_cwd and not Path(path).expanduser().is_absolute():
+            return str(Path(effective_cwd) / path)
+        return path
 
     for segment in segments:
+        results.extend((">", resolve(target)) for target in _redirect_write_targets(segment))
+
         try:
             tokens = shlex.split(segment)
         except ValueError:
@@ -555,10 +817,11 @@ def _extract_command_argument_paths(command: str) -> list[tuple[str, str]]:
         if not tokens:
             continue
 
-        # Skip env var prefixes
+        # Skip env var prefixes and wrappers (env find ..., nice find ...)
         idx = 0
         while idx < len(tokens) and ENV_VAR_PATTERN.match(tokens[idx]):
             idx += 1
+        idx = _strip_transparent_wrappers(tokens, idx)
 
         if idx >= len(tokens):
             continue
@@ -569,19 +832,25 @@ def _extract_command_argument_paths(command: str) -> list[tuple[str, str]]:
         if cmd_name == "cd" and args:
             target = args[0]
             if target != "-":
-                results.append(("cd", target))
-                effective_cwd = target
+                results.append(("cd", resolve(target)))
+                effective_cwd = resolve(target)
 
         elif cmd_name == "find":
             if any(arg in FIND_DANGEROUS_PRIMARIES for arg in args):
                 results.append(("find", "<dangerous-find>"))
-            for arg in args:
+            i = 0
+            while i < len(args) and (args[i] in _FIND_LEADING_OPTIONS or args[i].startswith(("-D", "-O"))):
+                i += 2 if args[i] == "-D" else 1
+            for arg in args[i:]:
                 if arg.startswith("-") or arg.startswith("(") or arg == "!":
                     break
-                path = arg
-                if effective_cwd and not Path(path).is_absolute():
-                    path = str(Path(effective_cwd) / path)
-                results.append(("find", path))
+                results.append(("find", resolve(arg)))
+
+        elif cmd_name == "sort":
+            results.extend(("sort", resolve(path)) for path in _sort_output_paths(args))
+
+        elif cmd_name == "yq":
+            results.extend(("yq", resolve(path)) for path in _yq_inplace_paths(args))
 
         elif cmd_name in PYTHON_COMMANDS:
             i = 0
@@ -668,7 +937,8 @@ class FilesystemTools:
                 if not isinstance(cmd, str) or len(cmd) <= 1:
                     continue
                 first_word = cmd.split()[0]
-                if first_word in SHELL_BUILTINS:
+                # Keep code-running builtins: an allowlist entry is how users allow them
+                if first_word in SHELL_BUILTINS - CODE_RUNNING_SHELL_BUILTINS:
                     continue
                 if cmd not in self.allowed_commands:
                     self.allowed_commands.append(cmd)
@@ -1219,8 +1489,7 @@ class FilesystemTools:
         Returns an empty list if all commands are allowed, or a list of
         rejected command names.
         """
-        stripped = _strip_shell_comments(_expand_shell_invocations(full_command))
-        segments = _split_shell_commands(stripped)
+        segments = _split_shell_commands(_expand_shell_invocations(full_command))
         rejected: list[str] = []
 
         for segment in segments:
@@ -1247,7 +1516,7 @@ class FilesystemTools:
                 continue
 
             cmd_name = _resolve_command_token(tokens[idx])
-            if cmd_name in SHELL_BUILTINS:
+            if cmd_name in INERT_SHELL_BUILTINS:
                 continue
 
             # Build the effective token list for matching (preserve full paths)
@@ -1295,8 +1564,7 @@ class FilesystemTools:
             return None
 
         # Per-segment validation
-        stripped = _strip_shell_comments(_expand_shell_invocations(full_command))
-        segments = _split_shell_commands(stripped)
+        segments = _split_shell_commands(_expand_shell_invocations(full_command))
 
         for segment in segments:
             try:
@@ -1328,7 +1596,7 @@ class FilesystemTools:
                         return f"Error: cd target path is not allowed. {path_error}"
                 continue
 
-            if cmd_name in SHELL_BUILTINS:
+            if cmd_name in INERT_SHELL_BUILTINS:
                 continue
 
             # Check if this segment is prefix-allowed
@@ -1368,7 +1636,7 @@ class FilesystemTools:
         if re.search(r"(?:^|\s)(?:curl|wget|ssh|scp|rsync)(?:\s|$)", command):
             return False
 
-        segments = _split_shell_commands(_strip_shell_comments(command))
+        segments = _split_shell_commands(command)
         if not segments:
             return False
         return all(self._is_auto_segment_safe(segment) for segment in segments)
@@ -1483,7 +1751,9 @@ class FilesystemTools:
                 return True
         return False
 
-    async def _validate_command_arguments(self, command: str, was_auto_allowed: bool) -> str | None:
+    async def _validate_command_arguments(
+        self, command: str, was_auto_allowed: bool, working_dir: str | None = None
+    ) -> str | None:
         """Validate path arguments and parameters for specific commands.
 
         Checks:
@@ -1491,6 +1761,8 @@ class FilesystemTools:
         - python/python3: script paths must be within allowed directories;
           -c (inline code), stdin, and interactive mode require confirmation
           when the command was auto-allowed via allowlist
+        - files written by redirections, sort -o and yq -i: must be within
+          allowed directories; paths computed at run time need confirmation
 
         Note: cd path validation is handled by _check_command_allowed to
         avoid double-prompting.
@@ -1504,10 +1776,17 @@ class FilesystemTools:
         Returns:
             Error message if blocked, None if allowed
         """
-        pairs = _extract_command_argument_paths(command)
+        pairs = _extract_command_argument_paths(command, working_dir)
 
         for cmd_name, path_or_marker in pairs:
             if cmd_name == "cd":
+                continue
+            if cmd_name in _WRITE_TARGET_SOURCES and _DYNAMIC_PATH_CHARS.intersection(path_or_marker):
+                desc = f"Write to a path computed at run time ({path_or_marker}): {command}"
+                if self.confirmation_callback is None:
+                    return f"Error: Cannot verify write target {path_or_marker} in non-interactive mode."
+                if not await self.confirmation_callback(desc):
+                    return f"Error: Write to {path_or_marker} rejected by user."
                 continue
             if path_or_marker == "<dangerous-find>":
                 return (
@@ -1641,6 +1920,11 @@ class FilesystemTools:
             protected_path = f"{config_dir}/{protected}"
             if protected_path in command or f"~/.ai-assist/{protected}" in command:
                 return f"Error: {protected} is a protected security config file and cannot be modified by the agent."
+        for cmd_name, path in _extract_command_argument_paths(command, working_dir):
+            if cmd_name in _WRITE_TARGET_SOURCES and self._is_protected_config(path):
+                return (
+                    f"Error: {Path(path).name} is a protected security config file and cannot be modified by the agent."
+                )
 
         # In interactive mode (confirmation_callback set), no timeout -- the user
         # can press Escape to interrupt like any normal interaction.
@@ -1682,7 +1966,9 @@ class FilesystemTools:
         # AWL-authorized commands skip the extra inline-code confirmation
         arg_error = None
         if self.permission_mode != "autonomous":
-            arg_error = await self._validate_command_arguments(command, was_auto_allowed and not awl_confirmed)
+            arg_error = await self._validate_command_arguments(
+                command, was_auto_allowed and not awl_confirmed, working_dir
+            )
         if arg_error:
             return arg_error
 

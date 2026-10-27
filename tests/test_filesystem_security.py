@@ -10,12 +10,12 @@ from ai_assist.filesystem_tools import (
     ALLOWED_PATHS_FILE,
     PRIVILEGE_WRAPPERS,
     SHELL_BUILTINS,
+    SUBSTITUTION_PLACEHOLDER,
     TRANSPARENT_WRAPPERS,
     FilesystemTools,
     _extract_command_argument_paths,
     _is_safe_env_assignment,
     _split_shell_commands,
-    _strip_shell_comments,
     compute_allowlist_prefix,
     compute_allowlist_prefixes,
     extract_command_names,
@@ -870,28 +870,32 @@ def test_all_skill_paths_added_to_allowed_paths(tmp_path):
 # --- Phase 10: Smart command parsing ---
 
 
-class TestStripShellComments:
-    """Tests for _strip_shell_comments()"""
+class TestShellComments:
+    """Comments are dropped by _split_shell_commands()"""
 
     def test_no_comment(self):
-        assert _strip_shell_comments("ls /tmp") == "ls /tmp"
+        assert _split_shell_commands("ls /tmp") == ["ls /tmp"]
 
     def test_full_line_comment(self):
-        assert _strip_shell_comments("# this is a comment").strip() == ""
+        assert _split_shell_commands("# this is a comment") == []
 
     def test_inline_comment(self):
-        result = _strip_shell_comments("ls /tmp # list files")
-        assert "ls /tmp" in result
-        assert "list files" not in result
+        assert _split_shell_commands("ls /tmp # list files") == ["ls /tmp"]
+
+    def test_comment_ends_at_newline(self):
+        assert _split_shell_commands("ls # list\nrm x") == ["ls", "rm x"]
 
     def test_hash_in_double_quotes(self):
-        assert _strip_shell_comments('echo "hello # world"') == 'echo "hello # world"'
+        assert _split_shell_commands('echo "hello # world"') == ['echo "hello # world"']
 
     def test_hash_in_single_quotes(self):
-        assert _strip_shell_comments("echo 'foo # bar'") == "echo 'foo # bar'"
+        assert _split_shell_commands("echo 'foo # bar'") == ["echo 'foo # bar'"]
 
     def test_escaped_hash(self):
-        assert _strip_shell_comments("echo hello \\# world") == "echo hello \\# world"
+        assert _split_shell_commands("echo hello \\# world") == ["echo hello \\# world"]
+
+    def test_hash_inside_word_is_not_a_comment(self):
+        assert _split_shell_commands("echo a#b") == ["echo a#b"]
 
 
 class TestSplitShellCommands:
@@ -939,6 +943,27 @@ class TestSplitShellCommands:
     def test_background_ampersand_still_splits(self):
         result = _split_shell_commands("cmd1 & cmd2")
         assert len(result) == 2
+
+    def test_newline_splits(self):
+        assert _split_shell_commands("ls\npwd") == ["ls", "pwd"]
+
+    def test_line_continuation_joins(self):
+        assert _split_shell_commands("grep x \\\n  f") == ["grep x   f"]
+
+    def test_combined_stdout_stderr_redirect_not_split(self):
+        assert _split_shell_commands("ls &> out") == ["ls &> out"]
+
+    def test_substitution_bodies_become_segments(self):
+        assert _split_shell_commands('grep "$(id -u)" f') == [f'grep "{SUBSTITUTION_PLACEHOLDER}" f', "id -u"]
+
+    def test_single_quotes_prevent_substitution(self):
+        assert _split_shell_commands("echo '$(id)'") == ["echo '$(id)'"]
+
+    def test_quoted_heredoc_body_is_skipped(self):
+        assert _split_shell_commands("cat <<'EOF'\n$(id)\nEOF\nls") == ["cat <<'EOF'", "ls"]
+
+    def test_unquoted_heredoc_body_substitutions_checked(self):
+        assert _split_shell_commands("cat <<EOF\nuser $(id)\nEOF") == ["cat <<EOF", "id"]
 
 
 class TestIsSafeEnvAssignment:
