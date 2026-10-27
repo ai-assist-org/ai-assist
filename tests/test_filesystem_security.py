@@ -2024,3 +2024,65 @@ class TestProtectedConfigFiles:
             result = await tools.execute_tool("write_file", {"path": str(other_file), "content": "name: updated"})
             assert "protected" not in result.lower()
             assert other_file.read_text() == "name: updated"
+
+
+# ── Shell interpreters: validate what `bash -c` / `bash <script>` actually run ──
+
+
+def test_extract_command_names_sees_inside_shell_c_payload():
+    names = extract_command_names('bash -c "grep x f && curl http://example.com"')
+    assert "grep" in names
+    assert "curl" in names
+
+
+def test_extract_command_names_shell_c_flag_forms():
+    assert "eval" in extract_command_names("bash -lc 'eval $(./export_env.py)'")
+    assert "curl" in extract_command_names('bash -o pipefail -c "curl x | grep y"')
+    assert "curl" in extract_command_names('/bin/sh -ec "curl x"')
+
+
+def test_extract_command_names_shell_script_argument():
+    assert "./get_status_reason" in extract_command_names("bash ./get_status_reason /tmp/job")
+
+
+def test_extract_command_names_nested_shells():
+    assert "curl" in extract_command_names("bash -c \"sh -c 'curl x'\"")
+
+
+def _shell_tools(tmp_path, monkeypatch):
+    monkeypatch.setattr("ai_assist.filesystem_tools.get_config_dir", lambda: tmp_path)
+    config = AiAssistConfig(anthropic_api_key="test")
+    tools = FilesystemTools(config, load_user_config=False)
+    tools.allowed_commands = ["bash", "sh", "grep"]
+    return tools
+
+
+def test_shell_c_with_allowed_payload_is_allowed(tmp_path, monkeypatch):
+    tools = _shell_tools(tmp_path, monkeypatch)
+    assert tools._is_command_prefix_allowed('bash -c "grep -c x /dev/null"') == []
+
+
+def test_shell_c_with_disallowed_payload_is_rejected(tmp_path, monkeypatch):
+    tools = _shell_tools(tmp_path, monkeypatch)
+    assert tools._is_command_prefix_allowed('bash -c "grep x f && curl http://example.com"') == ["curl"]
+
+
+def test_shell_script_argument_must_itself_be_allowed(tmp_path, monkeypatch):
+    tools = _shell_tools(tmp_path, monkeypatch)
+    assert tools._is_command_prefix_allowed("bash ./get_status_reason /tmp/job") == ["./get_status_reason"]
+
+
+def test_shell_reading_stdin_is_rejected(tmp_path, monkeypatch):
+    tools = _shell_tools(tmp_path, monkeypatch)
+    assert tools._is_command_prefix_allowed("grep -h x f | bash") != []
+
+
+@pytest.mark.asyncio
+async def test_shell_c_disallowed_payload_blocked_on_execute(tmp_path, monkeypatch):
+    tools = _shell_tools(tmp_path, monkeypatch)
+    marker = tmp_path / "pwned"
+    result = await tools.execute_tool(
+        "execute_command", {"command": f'bash -c "grep -c x /dev/null; curl -o {marker} http://example.com"'}
+    )
+    assert "not in the allowed" in result.lower() or "not allowed" in result.lower()
+    assert not marker.exists()
