@@ -12,7 +12,7 @@ ai-assist implements defense-in-depth with multiple security layers:
 4. **Script execution sandboxing** — constrains Agent Skills scripts
 5. **Tool argument validation** — validates inputs against JSON schemas
 6. **Audit logging** — records all tool calls for forensic analysis
-7. **Secret redaction** — filters sensitive environment variables
+7. **Secret redaction** — redacts secrets from tool results and filters sensitive environment variables
 8. **Command/path allowlists** — restricts filesystem and command access
 9. **Command argument validation** — validates paths in `cd`/`find` and parameters in `python`/`python3`
 10. **Plugin trust model** — untrusted plugin skills scanned; bundled MCP servers confirmed before connecting
@@ -164,6 +164,50 @@ Python commands receive additional scrutiny beyond the command allowlist:
 | `python3 -m module` | Allowed (module execution, no path to validate) |
 
 **Double-prompting avoidance:** When `python` is not in the command allowlist, the user already confirms the full command (including `-c` details) during the allowlist check. The parameter validation only adds a second prompt when `python` was auto-allowed via the allowlist — preventing commands silently added to the allowlist from executing arbitrary inline code without review.
+
+### Result redirection and jq
+
+`__save_to_file` goes through the same checks as `internal__write_file`
+(protected config files, path allowlist, write confirmation) before the tool
+runs. `__jq_filter` and `internal__json_query` run jq with an empty
+environment, so `$ENV` / `env` cannot read API keys.
+
+### Secrets in command environments
+
+`execute_command` runs with the same filtered environment as skill scripts
+(see the patterns in section 4). To let commands see a specific variable
+(e.g. `GITHUB_TOKEN` for `gh`), list it in `~/.ai-assist/command_env.json`:
+
+```json
+["GITHUB_TOKEN"]
+```
+
+Sandboxes created with the `gh` feature get this file automatically.
+
+## 8b. Secret Redaction
+
+**Module:** `ai_assist/redaction.py` — `Redactor`
+
+Every tool result (MCP, internal, introspection, goal tools) and every MCP
+prompt/resource is redacted before the model, history, audit log, knowledge
+graph, MLflow traces, or `__save_to_file` see it:
+
+- **Environment values** — the value of any variable whose name contains
+  `TOKEN`, `SECRET`, `PASSWORD`, `API_KEY`, or ends in `_KEY`/`_PAT` (8+
+  characters) becomes `[REDACTED:VAR_NAME]`.
+- **Known formats** — Anthropic/OpenAI `sk-`, GitHub, GitLab, Slack, Google
+  `AIza`, AWS access key ids, JWTs, `Bearer` tokens, `user:password@` in URLs,
+  PEM private keys.
+- **Your own list** — `~/.ai-assist/redact.json`:
+
+```json
+{"strings": ["internal-codename"], "patterns": ["EMP-\\d{6}"]}
+```
+
+`redact.json` and `command_env.json` are protected config files. Redaction
+catches accidental leaks but not a model that deliberately transforms a secret
+(`rev`, `base64`) before printing it, which is why command environments are
+filtered too.
 
 ## 9. Claude Code Plugin Trust Model
 

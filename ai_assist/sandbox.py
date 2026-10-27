@@ -228,6 +228,16 @@ def _write_allowed_commands(path: Path, features: set[str]) -> None:
         f.write("\n")
 
 
+def _write_command_env(path: Path, features: set[str]) -> None:
+    """Let execute_command see GITHUB_TOKEN when the gh feature passes it in."""
+    import json
+
+    if "gh" in features:
+        with open(path, "w") as f:
+            json.dump(["GITHUB_TOKEN"], f, indent=2)
+            f.write("\n")
+
+
 def _write_mcp_servers(path: Path, features: set[str]) -> None:
     """Write mcp_servers.yaml based on enabled features."""
     if "dci" in features:
@@ -280,6 +290,7 @@ def sandbox_init(name: str, features: set[str] | None = None, image: str = DEFAU
         yaml.dump(compose, f, default_flow_style=False, sort_keys=False)
 
     _write_allowed_commands(sandbox / ".ai-assist" / "allowed_commands.json", features)
+    _write_command_env(sandbox / ".ai-assist" / "command_env.json", features)
     _write_mcp_servers(sandbox / ".ai-assist" / "mcp_servers.yaml", features)
     _write_litellm_config(sandbox / ".ai-assist" / "litellm_config.yaml", features)
 

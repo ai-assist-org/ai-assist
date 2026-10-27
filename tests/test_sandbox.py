@@ -1,5 +1,6 @@
 """Tests for sandbox management module"""
 
+import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -266,6 +267,19 @@ class TestSandboxInit:
 
         config = tmp_path / "no-litellm" / "sandbox" / ".ai-assist" / "litellm_config.yaml"
         assert not config.exists()
+
+    def test_gh_feature_lets_commands_see_github_token(self, tmp_path):
+        with patch.dict("os.environ", {"AI_ASSIST_INSTANCES_DIR": str(tmp_path)}):
+            sandbox_init("with-gh", features={"gh"})
+
+        command_env = tmp_path / "with-gh" / "sandbox" / ".ai-assist" / "command_env.json"
+        assert json.loads(command_env.read_text()) == ["GITHUB_TOKEN"]
+
+    def test_no_command_env_without_gh(self, tmp_path):
+        with patch.dict("os.environ", {"AI_ASSIST_INSTANCES_DIR": str(tmp_path)}):
+            sandbox_init("no-gh", features={"git"})
+
+        assert not (tmp_path / "no-gh" / "sandbox" / ".ai-assist" / "command_env.json").exists()
 
     def test_refuses_existing(self, tmp_path):
         with patch.dict("os.environ", {"AI_ASSIST_INSTANCES_DIR": str(tmp_path)}):

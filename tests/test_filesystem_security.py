@@ -2086,3 +2086,43 @@ async def test_shell_c_disallowed_payload_blocked_on_execute(tmp_path, monkeypat
     )
     assert "not in the allowed" in result.lower() or "not allowed" in result.lower()
     assert not marker.exists()
+
+
+def _printenv_tools(tmp_path):
+    config = AiAssistConfig(anthropic_api_key="test", allowed_commands=["printenv"], allowed_paths=[str(tmp_path)])
+    return FilesystemTools(config, load_user_config=False)
+
+
+@pytest.mark.asyncio
+async def test_execute_command_strips_secret_env_vars(tmp_path, monkeypatch):
+    monkeypatch.setenv("TEST_SERVICE_TOKEN", "hidden-from-commands")
+    monkeypatch.setenv("TEST_PLAIN_SETTING", "visible-to-commands")
+    tools = _printenv_tools(tmp_path)
+
+    result = await tools.execute_tool("execute_command", {"command": "printenv"})
+
+    assert "hidden-from-commands" not in result
+    assert "visible-to-commands" in result
+
+
+@pytest.mark.asyncio
+async def test_execute_command_passes_allowlisted_secret(tmp_path, monkeypatch, isolate_config_dir):
+    monkeypatch.setenv("TEST_SERVICE_TOKEN", "allowed-for-commands")
+    (isolate_config_dir / "command_env.json").write_text(json.dumps(["TEST_SERVICE_TOKEN"]))
+    tools = _printenv_tools(tmp_path)
+
+    result = await tools.execute_tool("execute_command", {"command": "printenv TEST_SERVICE_TOKEN"})
+
+    assert "allowed-for-commands" in result
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("name", ["redact.json", "command_env.json"])
+async def test_redaction_configs_are_protected(tmp_path, isolate_config_dir, name):
+    config = AiAssistConfig(anthropic_api_key="test", allowed_paths=[str(isolate_config_dir)])
+    tools = FilesystemTools(config, load_user_config=False)
+
+    result = await tools.execute_tool("write_file", {"path": str(isolate_config_dir / name), "content": "{}"})
+
+    assert "protected" in result
+    assert not (isolate_config_dir / name).exists()

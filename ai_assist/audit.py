@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from .config import get_config_dir
+from .redaction import SECRET_PATTERN_SOURCES
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +18,7 @@ SECRET_PATTERNS = re.compile(
     r"|xoxb-[a-zA-Z0-9-]+|xoxp-[a-zA-Z0-9-]+"
     r"|eyJ[a-zA-Z0-9_-]+\.eyJ[a-zA-Z0-9_-]+"  # JWTs
     r"|(?=[a-zA-Z0-9+]*[A-Z+])(?=[a-zA-Z0-9+]*[0-9+])[a-zA-Z0-9+]{40,}={0,2})"  # Base64 keys (must contain uppercase AND digit/+), excludes hex SHAs and CamelCase identifiers
+    + "".join(f"|(?:{p})" for p in SECRET_PATTERN_SOURCES)  # Same formats as LLM-bound redaction
 )
 
 SECRET_KEY_PATTERNS = {"api_key", "token", "secret", "password", "credential", "auth"}

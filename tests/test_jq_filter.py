@@ -16,7 +16,7 @@ requires_jq = pytest.mark.skipif(not shutil.which("jq"), reason="jq not installe
 
 def _make_agent_with_mcp(result_text):
     """Create an agent with a mocked MCP session returning result_text."""
-    config = AiAssistConfig(anthropic_api_key="test-key", working_dirs=["/tmp"])
+    config = AiAssistConfig(anthropic_api_key="test-key", working_dirs=["/tmp"], allowed_paths=[tempfile.gettempdir()])
     agent = AiAssistAgent(config=config)
 
     mock_session = AsyncMock()
@@ -192,3 +192,15 @@ class TestLastToolCallsReflectsFilteredResult:
         recorded = agent.last_tool_calls[-1]["result"]
         assert "total" not in recorded
         assert json.loads(recorded.strip()) == [1, 2]
+
+
+@requires_jq
+@pytest.mark.asyncio
+async def test_jq_filter_cannot_read_environment(monkeypatch):
+    """jq's $ENV / env must not expose the agent's environment (API keys)."""
+    monkeypatch.setenv("TEST_SECRET_API_KEY", "super-secret-value")
+    agent = _make_agent_with_mcp("{}")
+
+    for expr in ("$ENV", "env"):
+        result = await agent._execute_tool("test__some_tool", {"__jq_filter": expr})
+        assert "super-secret-value" not in result

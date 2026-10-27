@@ -38,6 +38,7 @@ from .mlflow_tracing import end_span, record_query_trace, setup_mlflow, start_qu
 from .output import console_print
 from .plugins_loader import PluginsLoader
 from .plugins_manager import PluginsManager
+from .redaction import Redactor
 from .report_tools import ReportTools
 from .script_execution_tools import ScriptExecutionTools
 from .security import ToolDefinitionRegistry, sanitize_tool_result, validate_tool_description
@@ -355,6 +356,7 @@ class AiAssistAgent:
 
         # Initialize internal filesystem tools
         self.filesystem_tools = FilesystemTools(config)
+        self.redactor = Redactor.from_environment()
 
         # Initialize audit logger
         self.audit_logger = AuditLogger()
@@ -2340,6 +2342,7 @@ class AiAssistAgent:
                     content = msg.content.text
                 else:
                     content = str(msg.content)
+                content = self.redactor.redact(content)
                 # Sanitize prompt message content for injection
                 content, injection_warnings = sanitize_tool_result(content, f"prompt:{server_name}/{prompt_name}")
                 if injection_warnings:
@@ -2399,7 +2402,7 @@ class AiAssistAgent:
         contents = []
         for item in result.contents:
             if hasattr(item, "text") and item.text is not None:
-                text, _ = sanitize_tool_result(str(item.text), f"resource:{server_name}/{uri}")
+                text, _ = sanitize_tool_result(self.redactor.redact(str(item.text)), f"resource:{server_name}/{uri}")
                 contents.append(
                     {"text": text, "mimeType": item.mime_type, "uri": str(item.uri) if hasattr(item, "uri") else uri}
                 )
@@ -2621,6 +2624,10 @@ class AiAssistAgent:
             save_to_file = None
         if save_to_file:
             logger.info("Tool %s called with __save_to_file=%s", tool_name, save_to_file)
+            # Same checks as internal__write_file, before the tool runs
+            write_error = await self.filesystem_tools.validate_write_target(save_to_file)
+            if write_error:
+                return write_error
         if write_to_report:
             logger.info("Tool %s called with __write_to_report=%s", tool_name, write_to_report)
         if append_to_report:
@@ -2661,7 +2668,9 @@ class AiAssistAgent:
         # Handle introspection tools (self-awareness)
         if server_name == "introspection":
             try:
-                result_text = await self.introspection_tools.execute_tool(original_tool_name, arguments)
+                result_text = self.redactor.redact(
+                    await self.introspection_tools.execute_tool(original_tool_name, arguments)
+                )
 
                 # Apply __jq_filter before recording/logging so the audit trail (and
                 # anything inspecting last_tool_calls) reflects what was actually
@@ -2699,7 +2708,7 @@ class AiAssistAgent:
         # Handle goal tools (autonomous agent goals)
         if server_name == "goal":
             try:
-                result_text = await self.goal_tools.execute_tool(tool_name, arguments)
+                result_text = self.redactor.redact(await self.goal_tools.execute_tool(tool_name, arguments))
 
                 self.last_tool_calls.append(
                     {
@@ -2816,6 +2825,8 @@ class AiAssistAgent:
                     # Default to report tools
                     result_text = await self.report_tools.execute_tool(original_tool_name, arguments)
 
+                result_text = self.redactor.redact(result_text)
+
                 # Apply __jq_filter before recording/logging so the audit trail (and
                 # anything inspecting last_tool_calls) reflects what was actually
                 # returned to the model, not the pre-filter raw result.
@@ -2884,6 +2895,7 @@ class AiAssistAgent:
                 result_text = "\n".join([item.text if hasattr(item, "text") else str(item) for item in result.content])
             else:
                 result_text = "Tool executed successfully with no output"
+            result_text = self.redactor.redact(result_text)
 
             # Sanitize MCP tool results for prompt injection
             result_text, injection_warnings = sanitize_tool_result(result_text, tool_name)

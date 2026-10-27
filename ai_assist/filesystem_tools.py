@@ -1,6 +1,7 @@
 """Filesystem tools for ai-assist agent"""
 
 import json
+import logging
 import os
 import re
 import shlex
@@ -10,9 +11,14 @@ from pathlib import Path
 from typing import Any
 
 from .config import AiAssistConfig, get_config_dir
+from .redaction import REDACT_CONFIG_FILE, filter_sensitive_env
+
+logger = logging.getLogger(__name__)
 
 ALLOWED_COMMANDS_FILE = "allowed_commands.json"
 ALLOWED_PATHS_FILE = "allowed_paths.json"
+# Sensitive env var names execute_command may pass through (e.g. ["GITHUB_TOKEN"])
+COMMAND_ENV_FILE = "command_env.json"
 
 SHELL_BUILTINS = frozenset(
     {
@@ -134,6 +140,15 @@ PROTECTED_CONFIG_FILES = frozenset(
         ALLOWED_COMMANDS_FILE,
         ALLOWED_PATHS_FILE,
         "skill_env.json",
+        # Files whose contents get executed or trusted at load time
+        "mcp_servers.yaml",
+        ".env",
+        "schedules.json",
+        "installed-plugins.json",
+        "installed-skills.json",
+        "plugin-marketplaces.json",
+        REDACT_CONFIG_FILE,
+        COMMAND_ENV_FILE,
     }
 )
 
@@ -1518,6 +1533,33 @@ class FilesystemTools:
 
         return None
 
+    @staticmethod
+    def _load_command_env_allowlist() -> set[str]:
+        """Sensitive env var names the user allows execute_command to see."""
+        path = get_config_dir() / COMMAND_ENV_FILE
+        if not path.exists():
+            return set()
+        try:
+            with open(path) as f:
+                return {name for name in json.load(f) if isinstance(name, str)}
+        except json.JSONDecodeError, OSError, TypeError:
+            logger.exception("Ignoring unreadable %s", path)
+            return set()
+
+    async def validate_write_target(self, path: str) -> str | None:
+        """Run the internal__write_file checks on a path the agent wants to write.
+
+        Returns an error message if the write is not allowed, None otherwise.
+        """
+        if self._is_protected_config(path):
+            return f"Error: {Path(path).name} is a protected security config file and cannot be modified by the agent."
+
+        path_error = await self._validate_path(path)
+        if path_error:
+            return path_error
+
+        return await self._check_confirmation("internal__write_file", f"Write file: {path}")
+
     async def _write_file(self, args: dict) -> str:
         """Write content to a file"""
         path = args.get("path")
@@ -1528,16 +1570,9 @@ class FilesystemTools:
         if content is None:
             return "Error: content parameter is required"
 
-        if self._is_protected_config(path):
-            return f"Error: {Path(path).name} is a protected security config file and cannot be modified by the agent."
-
-        path_error = await self._validate_path(path)
-        if path_error:
-            return path_error
-
-        confirm_error = await self._check_confirmation("internal__write_file", f"Write file: {path}")
-        if confirm_error:
-            return confirm_error
+        write_error = await self.validate_write_target(path)
+        if write_error:
+            return write_error
 
         try:
             path_obj = Path(path).expanduser()
@@ -1661,7 +1696,14 @@ class FilesystemTools:
             # shell=True is required for shell command execution with pipes, redirects, etc.
             # Commands are validated through allowlists and confirmation callbacks above
             result = subprocess.run(  # nosec B602
-                command, shell=True, cwd=cwd, capture_output=True, text=True, timeout=timeout, check=False
+                command,
+                shell=True,
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                check=False,
+                env=filter_sensitive_env(os.environ, allowed=self._load_command_env_allowlist()),
             )
 
             output = f"Command: {command}\n"
