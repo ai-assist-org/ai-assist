@@ -59,7 +59,11 @@ User → CLI (main.py) → AiAssistAgent (agent.py) → Claude API
 
 Both interactive and collected responses use the streaming agent loop in `agent.py`.
 `query()` collects the final answer from `query_streaming()`; keep execution logic in
-the shared streaming path. Both entry points default to a 600-second time budget.
+the shared streaming path. Both entry points default to a 600-second time budget
+(`AI_ASSIST_QUERY_TIMEOUT`). Time spent waiting on an approval prompt (`pause_timeout()`)
+doesn't count. An AWL script run from a tool call doesn't count against the enclosing
+query either (`exempt_enclosing_queries_from_timeout()`): the script bounds itself per
+task, and its tasks keep their own budgets.
 
 ### AWL (Agent Workflow Language)
 

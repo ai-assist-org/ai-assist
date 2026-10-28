@@ -1397,7 +1397,10 @@ Do NOT compact if you still need the old tool results for your current task.
             return json.dumps(error, indent=2)
 
         try:
-            output = await run_awl_script(script_path, self.agent, variables=variables or None)
+            # The script bounds itself per task, so the enclosing query's budget must
+            # not cap the whole run; the tasks inside keep their own limits.
+            async with self.agent.exempt_enclosing_queries_from_timeout():
+                output = await run_awl_script(script_path, self.agent, variables=variables or None)
         except (AWLRuntimeError, RuntimeError) as e:
             return json.dumps(
                 {
