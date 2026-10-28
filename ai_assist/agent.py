@@ -485,6 +485,11 @@ class AiAssistAgent:
         # True while inside pause_timeout(), so query_streaming's deadline poll
         # doesn't fire mid-pause (the pause credit only lands when it ends).
         self._timeout_paused: bool = False
+        # Per-depth time excluded via exempt_enclosing_queries_from_timeout(): only the
+        # queries enclosing the exempt section stop counting, not those started inside
+        # it. Keyed by query_streaming depth (0 = outermost).
+        self._timeout_exempt_since: dict[int, float] = {}
+        self._timeout_exempt_credit: dict[int, float] = {}
 
         # Update introspection tools with reference to available_prompts and agent
         # (will be populated during server connection)
@@ -1726,8 +1731,10 @@ class AiAssistAgent:
         approval prompt (see pause_timeout()) doesn't count against that limit.
         """
         timeout = max_time_seconds if max_time_seconds is not None else self.config.default_query_timeout
-        if self._query_depth == 0:
+        depth = self._query_depth
+        if depth == 0:
             self._timeout_pause_seconds = 0.0
+        self._timeout_exempt_credit[depth] = 0.0
         start_monotonic = time.monotonic()
         poll_interval = 1.0
         async with aclosing(
@@ -1737,7 +1744,12 @@ class AiAssistAgent:
                 next_event = asyncio.ensure_future(anext(stream))
                 try:
                     while not next_event.done():
-                        remaining = timeout + self._timeout_pause_seconds - (time.monotonic() - start_monotonic)
+                        remaining = (
+                            timeout
+                            + self._timeout_pause_seconds
+                            + self._timeout_exempt_seconds(depth)
+                            - (time.monotonic() - start_monotonic)
+                        )
                         if remaining <= 0 and not self._timeout_paused:
                             next_event.cancel()
                             with suppress(asyncio.CancelledError):
@@ -1784,6 +1796,33 @@ class AiAssistAgent:
             self._timeout_pause_seconds += time.monotonic() - paused_start
             self._timeout_paused = False
 
+    @asynccontextmanager
+    async def exempt_enclosing_queries_from_timeout(self):
+        """Stop the time budget of the queries enclosing this section.
+
+        Used around an AWL script run from a tool call: the script bounds itself per
+        task (max_time=, max_tool_calls=), so the enclosing interactive query's budget
+        must not cap the whole script. Unlike pause_timeout(), queries started inside
+        the section (the AWL tasks) keep their own budgets. Nests safely.
+        """
+        now = time.monotonic()
+        newly_exempt = [d for d in range(self._query_depth) if d not in self._timeout_exempt_since]
+        for depth in newly_exempt:
+            self._timeout_exempt_since[depth] = now
+        try:
+            yield
+        finally:
+            now = time.monotonic()
+            for depth in newly_exempt:
+                started = self._timeout_exempt_since.pop(depth)
+                self._timeout_exempt_credit[depth] = self._timeout_exempt_credit.get(depth, 0.0) + now - started
+
+    def _timeout_exempt_seconds(self, depth: int) -> float:
+        """Time excluded from the budget of the query at ``depth``, including any ongoing span."""
+        ongoing = self._timeout_exempt_since.get(depth)
+        current = time.monotonic() - ongoing if ongoing is not None else 0.0
+        return self._timeout_exempt_credit.get(depth, 0.0) + current
+
     async def _query_streaming_inner(
         self,
         prompt: str | None = None,
@@ -1823,6 +1862,7 @@ class AiAssistAgent:
         # Track nesting depth for _no_kg reset logic
         self._query_depth += 1
         is_outermost = self._query_depth == 1
+        budget_depth = self._query_depth - 1  # depth query_streaming tracks this budget under
         if is_outermost:
             # Carried-over history (e.g. from a previous completed query, possibly
             # compacted) may contain thinking blocks bound to a system prompt that
@@ -1933,7 +1973,12 @@ class AiAssistAgent:
                 self._record_query_event("turn_started", turn=turn + 1)
                 # Check time-based timeout (only when max_time_seconds is explicitly set)
                 if max_time_seconds:
-                    elapsed = time.time() - start_time - self._timeout_pause_seconds
+                    elapsed = (
+                        time.time()
+                        - start_time
+                        - self._timeout_pause_seconds
+                        - self._timeout_exempt_seconds(budget_depth)
+                    )
                     if elapsed > max_time_seconds:
                         self._last_turn_count = turn + 1
                         logger.warning(
@@ -2357,7 +2402,15 @@ class AiAssistAgent:
             # Inherit remaining time from outer query deadline if no explicit timeout
             effective_timeout = max_time_seconds
             if effective_timeout is None and self._query_deadline is not None:
-                effective_timeout = max(1, int(self._query_deadline - time.time() + self._timeout_pause_seconds))
+                effective_timeout = max(
+                    1,
+                    int(
+                        self._query_deadline
+                        - time.time()
+                        + self._timeout_pause_seconds
+                        + self._timeout_exempt_seconds(0)
+                    ),
+                )
             full_response = ""
             async for chunk in self.query_streaming(
                 messages=messages,

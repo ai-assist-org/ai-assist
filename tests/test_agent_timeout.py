@@ -89,6 +89,64 @@ async def test_timeout_interrupts_tool_and_cleans_query(make_replay_agent, strea
     assert agent._mlflow_root_span is None
 
 
+async def test_exempt_section_does_not_time_out_enclosing_query(make_replay_agent):
+    """A tool running inside exempt_enclosing_queries_from_timeout() (e.g. an AWL script)
+    may outlast the enclosing query's budget, and the turn after it still runs."""
+    agent = await make_replay_agent(
+        [
+            {
+                "content": [{"type": "tool_use", "id": "t1", "name": "internal__think", "input": {"thought": "x"}}],
+                "stop_reason": "tool_use",
+            },
+            {"content": [{"type": "text", "text": "done"}], "stop_reason": "end_turn"},
+        ]
+    )
+
+    async def long_exempt_tool(content, *args, **kwargs):
+        if not any(getattr(block, "type", None) == "tool_use" for block in content):
+            return [], False
+        async with agent.exempt_enclosing_queries_from_timeout():
+            await asyncio.sleep(1.5)  # longer than the 1s budget below
+        return [{"type": "tool_result", "tool_use_id": "t1", "content": "ok"}], False
+
+    with patch.object(agent, "_execute_tools_concurrently", side_effect=long_exempt_tool):
+        assert await agent.query("test", max_time_seconds=1) == "done"
+
+
+def test_exempt_section_only_covers_enclosing_queries(agent):
+    """Queries started inside the section (AWL tasks) keep counting their own budget."""
+    agent._query_depth = 1  # inside the outermost query's tool call
+
+    async def run():
+        async with agent.exempt_enclosing_queries_from_timeout():
+            await asyncio.sleep(0.05)
+            assert agent._timeout_exempt_seconds(0) > 0  # enclosing query: exempt
+            assert agent._timeout_exempt_seconds(1) == 0  # query started inside: not exempt
+
+    asyncio.run(run())
+    assert agent._timeout_exempt_credit[0] >= 0.05
+    assert agent._timeout_exempt_since == {}
+
+
+def test_nested_exempt_sections_do_not_double_count(agent):
+    """An AWL script run from inside another one credits each enclosing depth once."""
+
+    async def run():
+        agent._query_depth = 1
+        async with agent.exempt_enclosing_queries_from_timeout():
+            agent._query_depth = 2
+            async with agent.exempt_enclosing_queries_from_timeout():
+                await asyncio.sleep(0.05)
+            agent._query_depth = 1
+
+    start = time.monotonic()
+    asyncio.run(run())
+    total = time.monotonic() - start
+    # Depth 0 was exempt for the whole run (once, not twice); depth 1 only for the inner section.
+    assert agent._timeout_exempt_credit[0] <= total
+    assert 0.05 <= agent._timeout_exempt_credit[1] <= agent._timeout_exempt_credit[0]
+
+
 async def test_query_default_deadline_and_cleanup(make_replay_agent):
     agent = await make_replay_agent(
         [
