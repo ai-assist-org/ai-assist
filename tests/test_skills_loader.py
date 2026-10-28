@@ -339,3 +339,46 @@ def test_search_skills_sh_no_results():
         result = loader.search_skills_sh("nonexistent-xyz")
 
     assert "No skills found" in result
+
+
+@pytest.mark.parametrize("version", ["1.0.0/../../../victim", "../victim", "1.0 0", "1.0;rm"])
+def test_clawhub_malicious_registry_version_rejected(tmp_path, version):
+    """A version from the registry must not escape the cache dir (rmtree + extract there)."""
+    cache = tmp_path / "cache"
+    (cache / "clawhub_test-skill_1.0.0").mkdir(parents=True)
+    victim = tmp_path / "victim"
+    victim.mkdir()
+    (victim / "keep.txt").write_text("important")
+    loader = SkillsLoader()
+    loader.cache_dir = cache
+
+    def fake_get(url, **kwargs):
+        if "/api/v1/skills/" in url:
+            return _FakeResponse(json_data={"latestVersion": {"version": version}})
+        return _FakeResponse(content=_make_skill_zip())
+
+    with patch("ai_assist.skills_loader.httpx.get", side_effect=fake_get), pytest.raises(ValueError):
+        loader.load_skill_from_clawhub("test-skill")
+
+    assert (victim / "keep.txt").read_text() == "important"
+
+
+@pytest.mark.parametrize("slug", ["../etc", "a/b", "skill name", ""])
+def test_clawhub_invalid_slug_rejected_before_request(tmp_path, slug):
+    loader = SkillsLoader()
+    loader.cache_dir = tmp_path
+
+    with patch("ai_assist.skills_loader.httpx.get") as get, pytest.raises(ValueError):
+        loader.load_skill_from_clawhub(slug)
+
+    get.assert_not_called()
+
+
+def test_clawhub_invalid_user_version_rejected(tmp_path):
+    loader = SkillsLoader()
+    loader.cache_dir = tmp_path
+
+    with patch("ai_assist.skills_loader.httpx.get") as get, pytest.raises(ValueError):
+        loader.load_skill_from_clawhub("test-skill", version="1.0/../../x")
+
+    get.assert_not_called()

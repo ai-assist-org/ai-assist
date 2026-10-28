@@ -81,6 +81,15 @@ class SkillContent(BaseModel):
     assets: dict[str, Path] = Field(default_factory=dict)
 
 
+_CLAWHUB_NAME = re.compile(r"^[A-Za-z0-9._-]+$")
+
+
+def _check_clawhub_name(kind: str, value: str) -> None:
+    """Reject ClawHub slugs/versions that are not plain names (no / or spaces)."""
+    if not isinstance(value, str) or not _CLAWHUB_NAME.match(value) or value in (".", ".."):
+        raise ValueError(f"Invalid ClawHub {kind}: {value!r}")
+
+
 class SkillsLoader:
     """Load and manage Agent Skills from multiple sources"""
 
@@ -157,6 +166,12 @@ class SkillsLoader:
         2. GET /api/v1/download?slug=...&version=... — download ZIP
         3. Extract to cache dir, load via load_skill_from_local
         """
+        # Slug and version end up in the registry URL and the cache dir name
+        # (which is deleted and re-extracted): only allow plain names.
+        _check_clawhub_name("slug", slug)
+        if version:
+            _check_clawhub_name("version", version)
+
         registry = self._get_clawhub_registry_url()
         timeout = httpx.Timeout(30.0)
 
@@ -176,6 +191,8 @@ class SkillsLoader:
 
         # Resolve version from metadata if not specified
         resolved_version = version or metadata.get("latestVersion", {}).get("version")
+        if resolved_version:
+            _check_clawhub_name("version from registry", resolved_version)
 
         # Build download params: only pass version if we resolved one
         download_params: dict[str, str] = {"slug": slug}
@@ -208,6 +225,8 @@ class SkillsLoader:
 
         cache_name = f"clawhub_{slug}_{resolved_version}"
         skill_cache_dir = self.cache_dir / cache_name
+        if skill_cache_dir.resolve().parent != self.cache_dir.resolve():
+            raise ValueError(f"Invalid ClawHub cache path: {cache_name}")
 
         if skill_cache_dir.exists():
             shutil.rmtree(skill_cache_dir)

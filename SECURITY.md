@@ -202,6 +202,13 @@ require confirmation (rejected in non-interactive mode). Writes inside a
 `.git` directory (file tools, `__save_to_file`, redirections) also require
 confirmation, since git runs hooks and programs configured there.
 
+### Approval prompts
+
+Approval prompts show the complete command or description, as plain text:
+nothing is truncated, Rich markup is not interpreted, and control, invisible,
+and bidi characters are shown as escapes (`\x1b`, `\r`, `\u202e`), so the
+text cannot hide, overwrite, or reorder what will actually run.
+
 ### Assignments that change which program runs
 
 Setting `PATH`, `LD_*`, `BASH_ENV`, `GIT_SSH_COMMAND`, `PYTHONPATH`,
