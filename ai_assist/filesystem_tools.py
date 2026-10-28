@@ -107,7 +107,37 @@ SHELL_BUILTINS = frozenset(
 # command classification, so only inert builtins are safe to auto-approve.
 AUTO_SAFE_SHELL_BUILTINS = frozenset({"cd", "echo", "false", "pwd", "printf", "test", "true", "["})
 
-PYTHON_COMMANDS = frozenset({"python", "python3"})
+# python, python3, python3.12, ...
+_PYTHON_NAME = re.compile(r"^python(\d+(\.\d+)*)?$")
+
+
+def _python_invocation(args: list[str]) -> str | None:
+    """What a python command line runs: a script path, or a marker.
+
+    Markers: <inline-code> (-c), <module:NAME> (-m), <stdin> (-), and
+    <interactive> (no arguments). Handles combined short flags (-Ic, -Im) and
+    the options taking a value (-W, -X).
+    """
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg == "-":
+            return "<stdin>"
+        if not arg.startswith("-"):
+            return arg
+        if not arg.startswith("--"):
+            for j, flag in enumerate(arg[1:], start=1):
+                rest = arg[j + 1 :]
+                if flag in "cm":
+                    value = rest or (args[i + 1] if i + 1 < len(args) else "")
+                    return "<inline-code>" if flag == "c" else f"<module:{value}>"
+                if flag in "WX":
+                    if not rest:
+                        i += 1  # the value is the next argument
+                    break
+        i += 1
+    return None if args else "<interactive>"
+
 
 # find primaries that run arbitrary commands or write/delete files. These
 # bypass the command allowlist (the executed program is find's argument, not a
@@ -678,6 +708,9 @@ def _compute_segment_prefix(tokens: list[str]) -> str | None:
     saw_inline_flag = False
     while idx < len(tokens):
         token = tokens[idx]
+        if token == "-m" and _PYTHON_NAME.match(Path(cmd_name).name) and idx + 1 < len(tokens):
+            prefix_parts.extend(["-m", tokens[idx + 1]])
+            break
         if _SHELL_REDIRECT.match(token):
             idx += 1
             if idx < len(tokens):
@@ -995,8 +1028,9 @@ def _extract_command_argument_paths(command: str, cwd: str | None = None) -> lis
 
     Relative paths are resolved against cwd and earlier cd targets.
 
-    Special markers for python:
+    Special markers for python (see _python_invocation):
     - ("<inline-code>") for python -c
+    - ("<module:NAME>") for python -m NAME
     - ("<stdin>") for python -
     - ("<interactive>") for python with no arguments
 
@@ -1058,32 +1092,10 @@ def _extract_command_argument_paths(command: str, cwd: str | None = None) -> lis
         elif cmd_name == "yq":
             results.extend(("yq", resolve(path)) for path in _yq_inplace_paths(args))
 
-        elif cmd_name in PYTHON_COMMANDS:
-            i = 0
-            found = False
-            while i < len(args):
-                arg = args[i]
-                if arg == "-c":
-                    results.append((cmd_name, "<inline-code>"))
-                    found = True
-                    break
-                elif arg == "-m":
-                    found = True
-                    break
-                elif arg == "-":
-                    results.append((cmd_name, "<stdin>"))
-                    found = True
-                    break
-                elif arg.startswith("-"):
-                    i += 1
-                    continue
-                else:
-                    results.append((cmd_name, arg))
-                    found = True
-                    break
-                i += 1
-            if not found and not args:
-                results.append((cmd_name, "<interactive>"))
+        elif _PYTHON_NAME.match(cmd_name):
+            invocation = _python_invocation(args)
+            if invocation:
+                results.append((cmd_name, invocation))
 
     return results
 
@@ -2066,8 +2078,11 @@ class FilesystemTools:
                     "Error: find with -exec/-execdir/-ok/-okdir/-delete/-fprintf is not allowed "
                     "(these run arbitrary commands or modify files, bypassing the command allowlist)."
                 )
-            if path_or_marker in ("<inline-code>", "<stdin>", "<interactive>"):
+            is_module = path_or_marker.startswith("<module:")
+            if is_module or path_or_marker in ("<inline-code>", "<stdin>", "<interactive>"):
                 if not was_auto_allowed:
+                    continue
+                if is_module and self._is_python_module_allowlisted(cmd_name, path_or_marker[8:-1]):
                     continue
                 if self.confirmation_callback is not None:
                     desc = f"{cmd_name} {path_or_marker.strip('<>')} execution: {command}"
@@ -2097,6 +2112,14 @@ class FilesystemTools:
         except json.JSONDecodeError, OSError, TypeError:
             logger.exception("Ignoring unreadable %s", path)
             return set()
+
+    def _is_python_module_allowlisted(self, python: str, module: str) -> bool:
+        """Whether an allowlist entry names this module explicitly (e.g. "python3 -m pytest")."""
+        invocation = [python, "-m", module]
+        return any(
+            len(parts) >= 2 and invocation[: len(parts)] == parts
+            for parts in (entry.split() for entry in self.allowed_commands)
+        )
 
     async def _check_git_internals_write(self, path: str) -> str | None:
         """Writes inside a .git directory need confirmation: git runs programs configured there."""

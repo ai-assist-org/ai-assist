@@ -1303,9 +1303,9 @@ class TestExtractCommandArgumentPaths:
         assert ("python3", "<inline-code>") in result
 
     def test_python_m_flag(self):
-        """python -m module is safe, no path to validate"""
+        """python -m runs a module's code: reported like inline code"""
         result = _extract_command_argument_paths("python3 -m pytest")
-        assert result == []
+        assert result == [("python3", "<module:pytest>")]
 
     def test_python_no_args(self):
         result = _extract_command_argument_paths("python3")

@@ -227,7 +227,12 @@ Python commands receive additional scrutiny beyond the command allowlist:
 | `python3 -c "code"` | Blocked in non-interactive mode; requires confirmation in interactive mode |
 | `python3 -` (stdin) | Blocked in non-interactive mode; requires confirmation in interactive mode |
 | `python3` (no args) | Blocked in non-interactive mode; requires confirmation in interactive mode |
-| `python3 -m module` | Allowed (module execution, no path to validate) |
+| `python3 -m module` | Same as `-c` (a module runs code, and `-m` looks in the current directory first), unless an allowlist entry names the module (e.g. `python3 -m pytest`) |
+
+These checks apply to `python`, `python3`, and versioned names such as
+`python3.12`, and understand combined short flags (`-Ic`, `-Im`) and options
+taking a value (`-W`, `-X`). In auto mode, `python -m pytest` in the workspace
+is still approved automatically.
 
 **Double-prompting avoidance:** When `python` is not in the command allowlist, the user already confirms the full command (including `-c` details) during the allowlist check. The parameter validation only adds a second prompt when `python` was auto-allowed via the allowlist — preventing commands silently added to the allowlist from executing arbitrary inline code without review.
 

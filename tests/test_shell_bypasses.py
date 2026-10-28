@@ -4,6 +4,8 @@ Every command below must either be rejected (non-interactive, no callback) or
 run normally. Bypass attempts try to create a marker file; it must not exist.
 """
 
+from unittest.mock import AsyncMock
+
 import pytest
 
 from ai_assist.config import AiAssistConfig
@@ -278,3 +280,95 @@ async def test_other_home_files_still_readable(workdir, home):
     result = await tools.execute_tool("execute_command", {"command": "cat ~/notes.txt"})
 
     assert "hello" in result
+
+
+# --- python -m and combined flags ---
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        ("python3 -m timeit 'x'", ("python3", "<module:timeit>")),
+        ("python3 -mtimeit", ("python3", "<module:timeit>")),
+        ("python3 -Im http.server", ("python3", "<module:http.server>")),
+        ("python3 -Ic 'print(1)'", ("python3", "<inline-code>")),
+        ("python3 -cprint(1)", ("python3", "<inline-code>")),
+        ("python3 -W ignore script.py", ("python3", "script.py")),
+        ("python3 -X dev -u script.py", ("python3", "script.py")),
+        ("python3.12 -c 'print(1)'", ("python3.12", "<inline-code>")),
+        ("/usr/bin/python3 -m pip list", ("python3", "<module:pip>")),
+    ],
+)
+def test_python_invocations_classified(command, expected):
+    from ai_assist.filesystem_tools import _extract_command_argument_paths
+
+    assert _extract_command_argument_paths(command) == [expected]
+
+
+def _python_tools(workdir, commands=("python3",)):
+    config = AiAssistConfig(anthropic_api_key="test", allowed_commands=list(commands), allowed_paths=[str(workdir)])
+    return FilesystemTools(config, load_user_config=False)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "command",
+    ["python3 -m timeit -n1 'pass'", "python3 -Ic 'print(1)'", "python3 -Im timeit -n1 'pass'"],
+)
+async def test_python_module_and_combined_flags_prompt(workdir, command):
+    tools = _python_tools(workdir)
+    prompts = []
+
+    async def deny(description):
+        prompts.append(description)
+        return False
+
+    tools.confirmation_callback = deny
+
+    result = await tools.execute_tool("execute_command", {"command": command})
+
+    assert prompts, "expected a confirmation prompt"
+    assert result.startswith("Error")
+
+
+@pytest.mark.asyncio
+async def test_python_c_variant_name_prompts(workdir):
+    import shutil
+
+    name = next((n for n in ("python3.14", "python3.13", "python3.12", "python3.11") if shutil.which(n)), None)
+    if name is None:
+        pytest.skip("no versioned python binary")
+    tools = _python_tools(workdir, commands=(name,))
+    tools.confirmation_callback = AsyncMock(return_value=False)
+
+    result = await tools.execute_tool("execute_command", {"command": f"{name} -c 'print(1)'"})
+
+    tools.confirmation_callback.assert_awaited()
+    assert result.startswith("Error")
+
+
+@pytest.mark.asyncio
+async def test_explicitly_allowlisted_module_runs_without_prompt(workdir):
+    tools = _python_tools(workdir, commands=("python3 -m timeit",))
+    tools.confirmation_callback = AsyncMock(return_value=False)
+
+    result = await tools.execute_tool("execute_command", {"command": "python3 -m timeit -n1 'pass'"})
+
+    tools.confirmation_callback.assert_not_awaited()
+    assert "Exit code: 0" in result
+
+
+@pytest.mark.asyncio
+async def test_auto_mode_still_runs_pytest_module(workdir):
+    config = AiAssistConfig(anthropic_api_key="test", permission_mode="auto", allowed_paths=[str(workdir)])
+    tools = FilesystemTools(config, load_user_config=False)
+
+    result = await tools.execute_tool("execute_command", {"command": "python3 -m pytest --version"})
+
+    assert not result.startswith("Error"), result
+
+
+def test_always_allow_prefix_keeps_module():
+    from ai_assist.filesystem_tools import compute_allowlist_prefix
+
+    assert compute_allowlist_prefix("python3 -m pytest -q tests/") == "python3 -m pytest"

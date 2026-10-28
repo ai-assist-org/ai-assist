@@ -1305,21 +1305,21 @@ internal__cancel_background_task
 
   % Labels on the side
   \node[font=\scriptsize\sffamily, anchor=west] at (5,1.5) {%
-    \textcolor{rhorange}{\textbullet} Prompt Injection Detection};
+    \textcolor{rhorange}{\textbullet} Prompt Injection Marking (per-call ids)};
   \node[font=\scriptsize\sffamily, anchor=west] at (5,0.9) {%
     \textcolor{rhorange}{\textbullet} Tool Poisoning Validation};
   \node[font=\scriptsize\sffamily, anchor=west] at (5,0.3) {%
-    \textcolor{rhgreen}{\textbullet} Rug-Pull Detection (SHA-256)};
+    \textcolor{rhgreen}{\textbullet} Rug-Pull Detection (approval required)};
   \node[font=\scriptsize\sffamily, anchor=west] at (5,-0.3) {%
     \textcolor{rhgreen}{\textbullet} Script Sandboxing};
   \node[font=\scriptsize\sffamily, anchor=west] at (5,-0.9) {%
-    \textcolor{rhteal}{\textbullet} Argument Validation};
+    \textcolor{rhteal}{\textbullet} Shell-Aware Argument Validation};
   \node[font=\scriptsize\sffamily, anchor=west] at (5,-1.5) {%
     \textcolor{rhteal}{\textbullet} Audit Logging (JSONL)};
   \node[font=\scriptsize\sffamily, anchor=west] at (5,-2.1) {%
-    \textcolor{rhblue}{\textbullet} Secret Redaction};
+    \textcolor{rhblue}{\textbullet} Secret Redaction (env + tool output)};
   \node[font=\scriptsize\sffamily, anchor=west] at (5,-2.7) {%
-    \textcolor{rhblue}{\textbullet} Command/Path Allowlists};
+    \textcolor{rhblue}{\textbullet} Allowlists + Protected/Sensitive Paths};
 
   % Core label
   \node[font=\scriptsize\sffamily\bfseries, text=rhdarkgray] at (core.center) {Agent Core};
@@ -1334,27 +1334,27 @@ internal__cancel_background_task
 \begin{itemize}\scriptsize
   \item MCP server returns:\\
     \textit{``Ignore previous instructions...''}
-  \item ai-assist wraps in sentinel markers:
+  \item \emph{Every} tool result is wrapped:
 \end{itemize}
 \begin{lstlisting}[style=code,basicstyle=\ttfamily\tiny]
-[UNTRUSTED_TOOL_OUTPUT_START]
+[UNTRUSTED_TOOL_OUTPUT_START id=3fa9c2d1]
   <server response here>
-[UNTRUSTED_TOOL_OUTPUT_END]
+[UNTRUSTED_TOOL_OUTPUT_END id=3fa9c2d1]
 \end{lstlisting}
-\scriptsize Claude treats marked content as raw data only.
+\scriptsize Random id per call: content cannot fake the end marker. Claude treats marked content as raw data only.
 
 \medskip
 \textbf{\color{rhorange}2. Rug-Pull Detection}
 \begin{itemize}\scriptsize
-  \item Tool descriptions fingerprinted (SHA-256) at connection
-  \item If a server changes a tool description mid-session: mismatch detected and logged
+  \item Approved tool definitions stored across runs
+  \item Changed or new tools are \alert{hidden} until reviewed (diff) with \texttt{/mcp/review}
 \end{itemize}
 \end{column}
 \begin{column}{0.48\textwidth}
 \textbf{\color{rhgreen}3. Environment Filtering}
 \begin{itemize}\scriptsize
-  \item Skill script tries to access \texttt{\$ANTHROPIC\_API\_KEY}
-  \item Environment is filtered before execution:
+  \item Skill script or shell command tries to read \texttt{\$ANTHROPIC\_API\_KEY}
+  \item Environment is filtered before execution (opt-in: \texttt{command\_env.json}):
 \end{itemize}
 \begin{lstlisting}[style=python,basicstyle=\ttfamily\tiny]
 FILTERED_PATTERNS = [
@@ -1377,6 +1377,36 @@ def filter_env(env):
 \end{itemize}
 \end{column}
 \end{columns}
+\end{frame}
+
+% ── Slide: Security Audit Hardening ─────────────────────────────
+\begin{frame}{Hardening from a Security Audit}
+\scriptsize
+Threat model: a \alert{hijacked model} (prompt injection from a web page, ticket, or MCP result) tries to escape its limits.
+
+\medskip
+\begin{tabular}{@{}p{0.43\textwidth}p{0.53\textwidth}@{}}
+\toprule
+\textbf{Attack} & \textbf{Mitigation} \\
+\midrule
+API keys leak through tool output &
+  Redaction before the model: env secret values, known token formats, \texttt{redact.json} \\
+Shell allowlist bypass: \texttt{\$(...)}, newlines, heredocs, \texttt{eval}, \texttt{PATH=} &
+  Shell-aware parser; code-running builtins and assignments need confirmation \\
+\texttt{git -c}, \texttt{ssh -o ProxyCommand}, \texttt{.git/config} hooks &
+  Confirmation for program-running options and writes inside \texttt{.git} \\
+Rewrite own config or read \texttt{\textasciitilde/.ssh} &
+  Protected config files; credential locations blocked for commands and file tools \\
+Model-written AWL runs approved commands &
+  Commands auto-authorized only for user-started scripts; AWL actions need confirmation \\
+Persistent injection via saved preferences &
+  \texttt{user\_preference} saves need confirmation \\
+Write tools during \texttt{/plan} &
+  Plan mode enforced when tools run, not just in the tool list \\
+Text hidden in approval prompts &
+  Full command shown literally: no truncation, markup, or control characters \\
+\bottomrule
+\end{tabular}
 \end{frame}
 
 % ── Slide: Permission Modes ─────────────────────────────────────
@@ -1436,16 +1466,18 @@ for their sandbox.
 \medskip
 \textbf{\color{rhred}Feature-Based Configuration}
 \begin{itemize}\scriptsize
-  \item \texttt{--features=ssh,gpg,git,gh,dci,litellm}
-  \item Only mount what you need
+  \item Default: \texttt{git,dci,vertex}
+  \item Opt-in: \texttt{ssh,gpg,gh,dbus,litellm}\\
+    (host credentials/control: warned at init)
+  \item \texttt{vertex} mounts only the ADC file, not \texttt{\textasciitilde/.config/gcloud}
   \item Allowed commands auto-generated per feature
   \item Autonomous mode is container-only and explicit
-  \item Vertex AI (gcloud) always included
 \end{itemize}
 \end{column}
 \begin{column}{0.48\textwidth}
 \begin{lstlisting}[basicstyle=\ttfamily\fontsize{5}{6}\selectfont,frame=single,language=bash]
-# Create isolated instance
+# Create isolated instance (opts into host
+# SSH agent + GitHub credentials)
 ai-assist /sandbox init pr-review \
   --features=ssh,git,gh,dci
 
@@ -1778,6 +1810,7 @@ Task blocks show brief description; hover reveals full goal, context, constraint
   \item \textcolor{green!60!black}{\checkmark} \alert{MLflow tracing} (optional GenAI observability)
   \item \textcolor{green!60!black}{\checkmark} Query event timelines + model-stream idle timeouts
   \item \textcolor{green!60!black}{\checkmark} LoCoMo memory benchmark: 86.2\%
+  \item \textcolor{green!60!black}{\checkmark} \alert{Security audit hardening}
 \end{itemize}
 \end{column}
 \begin{column}{0.48\textwidth}
