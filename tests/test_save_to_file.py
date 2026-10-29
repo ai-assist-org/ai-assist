@@ -201,3 +201,87 @@ async def test_save_to_file_cannot_overwrite_protected_config(isolate_config_dir
     assert "protected" in result
     assert not target.exists()
     session.call_tool.assert_not_called()
+
+
+# --- Path traversal / symlink regression matrix for __save_to_file ---
+
+
+def _agent_scoped_to(dirpath):
+    config = AiAssistConfig(anthropic_api_key="test-key", allowed_paths=[str(dirpath)])
+    agent = AiAssistAgent(config=config)
+    session = AsyncMock()
+    result = MagicMock()
+    result.content = [MagicMock(text="PWNED")]
+    session.call_tool.return_value = result
+    agent.sessions = {"dci": session}
+    return agent
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("relative", ["../escape.txt", "../../evil.txt", "./../escape2.txt", "sub/../../out.txt"])
+async def test_save_to_file_traversal_rejected(tmp_path, relative):
+    allowed = tmp_path / "dci"
+    allowed.mkdir()
+    agent = _agent_scoped_to(allowed)
+
+    result = await agent._execute_tool("dci__q", {"__save_to_file": f"{allowed}/{relative}"})
+
+    assert result.startswith("Error"), result
+    assert not any(p.read_text() == "PWNED" for p in tmp_path.rglob("*") if p.is_file())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("relative", ["ok.txt", "double//ok.txt", "sub/../ok2.txt"])
+async def test_save_to_file_inside_allowed_succeeds(tmp_path, relative):
+    allowed = tmp_path / "dci"
+    allowed.mkdir()
+    agent = _agent_scoped_to(allowed)
+
+    result = await agent._execute_tool("dci__q", {"__save_to_file": f"{allowed}/{relative}"})
+
+    assert "Result saved to" in result
+    assert (allowed / relative).resolve().read_text() == "PWNED"
+
+
+@pytest.mark.asyncio
+async def test_save_to_file_symlink_escaping_allowed_dir_rejected(tmp_path):
+    allowed = tmp_path / "dci"
+    allowed.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (allowed / "link").symlink_to(outside)
+    agent = _agent_scoped_to(allowed)
+
+    result = await agent._execute_tool("dci__q", {"__save_to_file": f"{allowed}/link/x.txt"})
+
+    assert result.startswith("Error"), result
+    assert not (outside / "x.txt").exists()
+
+
+@pytest.mark.asyncio
+async def test_save_to_file_homoglyph_dir_not_conflated_with_allowed(tmp_path):
+    (tmp_path / "dci").mkdir()
+    agent = _agent_scoped_to(tmp_path / "dci")
+
+    # Cyrillic 'с' (U+0441) looks like Latin 'c' but is a different directory
+    result = await agent._execute_tool("dci__q", {"__save_to_file": f"{tmp_path}/dсi/x.txt"})
+
+    assert result.startswith("Error"), result
+    assert not (tmp_path / "dсi").exists()
+
+
+@pytest.mark.asyncio
+async def test_save_to_file_logs_original_and_resolved_path(tmp_path, caplog):
+    import logging
+
+    allowed = tmp_path / "dci"
+    allowed.mkdir()
+    agent = _agent_scoped_to(allowed)
+
+    with caplog.at_level(logging.INFO, logger="ai_assist.tool_result_router"):
+        await agent._execute_tool("dci__q", {"__save_to_file": f"{allowed}/sub/../saved.txt"})
+
+    saved_logs = [r.getMessage() for r in caplog.records if "Saved tool result" in r.getMessage()]
+    assert saved_logs
+    assert "sub/../saved.txt" in saved_logs[0]  # original, as the model gave it
+    assert str((allowed / "saved.txt").resolve()) in saved_logs[0]  # resolved
