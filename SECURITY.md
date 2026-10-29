@@ -171,6 +171,7 @@ When path restrictions are enabled (`allowed_paths` is non-empty), the path argu
 | `find -H/-L/-P <paths...>` | Leading `find` options are skipped, then paths are checked |
 | `> file`, `>> file`, `2> file`, `&> file`, ... | Every output redirection target, for any command |
 | `sort -o file`, `yq -i ... file` | Files written in place |
+| `cp`/`mv`/`install`/`tee`/`dd`/`ln` destinations | The file(s) each writes (incl. `-t <dir>`, `dd of=`) |
 
 Path traversal is blocked: `cd /allowed/../../etc` is resolved before validation.
 Write targets the shell computes at run time (`> $HOME/x`, globs,
@@ -180,6 +181,16 @@ targets in every permission mode. `/dev/null`, `/dev/stdout`, `/dev/stderr`,
 `/dev/tty` and `/dev/fd/*` are always allowed.
 
 `cd -` (previous directory) and `cd` with no arguments are not checked since they cannot be resolved statically.
+
+### Writes when no allowlist is configured
+
+An empty `allowed_paths` disables path restrictions for *reads* (backwards
+compatible), but not for *writes*: a write outside the workspace still requires
+confirmation and is refused non-interactively. So a hijacked model cannot use
+`__save_to_file`, `write_file`, `edit_file`, or `create_directory` to write
+anywhere the OS permits just because no allowlist is set. `__save_to_file`
+writes to the resolved (realpath) target, matching what was validated, and the
+audit log records both the original and resolved paths.
 
 ### Sensitive locations
 

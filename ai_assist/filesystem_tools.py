@@ -1012,8 +1012,40 @@ def _program_running_arguments(command: str) -> list[str]:
     return found
 
 
+# Commands that write a file given as an argument (not via redirection)
+_FILE_WRITE_COMMANDS = frozenset({"cp", "mv", "install", "tee", "dd", "ln"})
+
+
+def _file_write_destinations(name: str, args: list[str]) -> list[str]:
+    """Destination paths a file-copying command writes (see _FILE_WRITE_COMMANDS)."""
+    if name == "dd":
+        return [a[3:] for a in args if a.startswith("of=") and len(a) > 3]
+    if name == "tee":
+        return [a for a in args if not a.startswith("-")]
+    # cp, mv, install, ln: -t/--target-directory names the dest dir; else last positional
+    positionals: list[str] = []
+    target_dir: str | None = None
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg in ("-t", "--target-directory") and i + 1 < len(args):
+            target_dir = args[i + 1]
+            i += 2
+            continue
+        if arg.startswith("--target-directory="):
+            target_dir = arg.split("=", 1)[1]
+        elif not arg.startswith("-"):
+            positionals.append(arg)
+        i += 1
+    if target_dir is not None:
+        return [target_dir]
+    if name == "ln":
+        return [positionals[-1]] if positionals else []
+    return [positionals[-1]] if len(positionals) >= 2 else []
+
+
 # Pseudo command names under which _extract_command_argument_paths reports written files
-_WRITE_TARGET_SOURCES = frozenset({">", "sort", "yq"})
+_WRITE_TARGET_SOURCES = frozenset({">", "sort", "yq", "write"})
 # find options that come before the search paths
 _FIND_LEADING_OPTIONS = frozenset({"-H", "-L", "-P"})
 
@@ -1138,6 +1170,9 @@ def _extract_command_argument_paths(command: str, cwd: str | None = None) -> lis
 
         elif cmd_name == "yq":
             results.extend(("yq", resolve(path)) for path in _yq_inplace_paths(args))
+
+        elif cmd_name in _FILE_WRITE_COMMANDS:
+            results.extend(("write", resolve(dest)) for dest in _file_write_destinations(cmd_name, args))
 
         elif _PYTHON_NAME.match(cmd_name):
             invocation = _python_invocation(args)
@@ -1274,7 +1309,7 @@ class FilesystemTools:
                 return True
         return False
 
-    async def _validate_path(self, path_str: str, reason: str | None = None) -> str | None:
+    async def _validate_path(self, path_str: str, reason: str | None = None, for_write: bool = False) -> str | None:
         """Validate that a path is within allowed directories.
         Falls back to path_confirmation_callback if path is blocked.
 
@@ -1282,6 +1317,11 @@ class FilesystemTools:
             path_str: The path to validate.
             reason: Optional context (e.g. the triggering command) shown to the
                 user in the approval prompt to explain why the path is needed.
+            for_write: True when the path will be written. Writes never use the
+                "no allowlist = unrestricted" escape hatch that reads do: with
+                restrictions disabled, a write outside the workspace still needs
+                confirmation (denied non-interactively), so a hijacked model
+                cannot silently write anywhere the OS permits.
 
         Returns:
             Error message if path is not allowed, None if validation passes
@@ -1292,22 +1332,28 @@ class FilesystemTools:
         if is_sensitive_path(Path(path_str)):
             return f"Error: {path_str} is a sensitive location (keys/credentials) the agent cannot access."
 
-        if not self._path_restrictions_enabled:
-            return None
-
         if self.permission_mode == "auto" and self._is_workspace_path(path_str):
             return None
 
-        resolved = Path(path_str).expanduser().resolve()
-
-        for allowed in self.allowed_paths:
-            try:
-                resolved.relative_to(allowed)
+        if not self._path_restrictions_enabled:
+            # Reads are unrestricted when no allowlist is configured (backwards
+            # compat). Writes are not: only the workspace is allowed silently,
+            # anything else falls through to confirmation / non-interactive deny.
+            if not for_write:
                 return None
-            except ValueError:
-                continue
+            if self._is_workspace_path(path_str):
+                return None
+        else:
+            resolved = Path(path_str).expanduser().resolve()
+            for allowed in self.allowed_paths:
+                try:
+                    resolved.relative_to(allowed)
+                    return None
+                except ValueError:
+                    continue
 
-        # Path not in allowlist — try interactive approval
+        # Path not in allowlist (or a write outside it with no allowlist) — try approval
+        resolved = Path(path_str).expanduser().resolve()
         if self.path_confirmation_callback is not None:
             description = f"Access path: {resolved}"
             if reason:
@@ -1699,7 +1745,7 @@ class FilesystemTools:
         if not path:
             return "Error: path parameter is required"
 
-        path_error = await self._validate_path(path)
+        path_error = await self._validate_path(path, for_write=True)
         if path_error:
             return path_error
 
@@ -2141,7 +2187,9 @@ class FilesystemTools:
                 elif cmd_name not in self.allowed_commands:
                     return f"Error: {cmd_name} {path_or_marker} execution is not allowed in non-interactive mode."
             else:
-                path_error = await self._validate_path(path_or_marker, reason=command)
+                path_error = await self._validate_path(
+                    path_or_marker, reason=command, for_write=cmd_name in _WRITE_TARGET_SOURCES
+                )
                 if path_error:
                     return f"Error: {cmd_name} target path is not allowed. {path_error}"
 
@@ -2195,7 +2243,7 @@ class FilesystemTools:
         if self._is_protected_config(path):
             return f"Error: {Path(path).name} is a protected security config file and cannot be modified by the agent."
 
-        path_error = await self._validate_path(path)
+        path_error = await self._validate_path(path, for_write=True)
         if path_error:
             return path_error
 
@@ -2244,7 +2292,7 @@ class FilesystemTools:
             return f"Error: {Path(path).name} is a protected security config file and cannot be modified by the agent."
 
         for check in (
-            await self._validate_path(path),
+            await self._validate_path(path, for_write=True),
             await self._check_code_location_write(path),
             await self._check_confirmation("internal__edit_file", f"Edit file: {path}"),
         ):

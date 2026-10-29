@@ -411,3 +411,91 @@ async def test_similar_names_not_blocked(tmp_path):
     for name in ("ssh-notes.txt", ".sshrc-example"):
         result = await tools.execute_tool("read_file", {"path": str(tmp_path / name)})
         assert "ok" in result, result
+
+
+# --- F2: file-copying commands must validate their destination ---
+
+
+def _copy_tools(workdir, extra=()):
+    cmds = ["cp", "mv", "tee", "install", "dd", "ln", "echo", *extra]
+    config = AiAssistConfig(anthropic_api_key="test", allowed_commands=cmds, allowed_paths=[str(workdir)])
+    return FilesystemTools(config, load_user_config=False)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cp {w}/src {out}/x",
+        "mv {w}/src {out}/x",
+        "install {w}/src {out}/x",
+        "install -t {out} {w}/src",
+        "cp -t {out} {w}/src",
+        "tee {out}/x",
+        "tee -a {w}/ok {out}/x",
+        "dd if={w}/src of={out}/x",
+        "ln -s {w}/src {out}/x",
+    ],
+)
+async def test_copy_commands_destination_outside_allowlist_blocked(workdir, tmp_path_factory, command):
+    out = tmp_path_factory.mktemp("outside")
+    (workdir / "src").write_text("data")
+    (workdir / "ok").write_text("")
+    tools = _copy_tools(workdir)
+
+    result = await tools.execute_tool("execute_command", {"command": command.format(w=workdir, out=out)})
+
+    assert result.startswith("Error"), result
+    assert not (out / "x").exists()
+
+
+@pytest.mark.asyncio
+async def test_cp_into_startup_location_blocked(workdir, tmp_path_factory, monkeypatch):
+    home = tmp_path_factory.mktemp("home")
+    (home / "bin").mkdir()
+    (home / "bin" / "git-save").write_text("#real\n")
+    monkeypatch.setenv("HOME", str(home))
+    (workdir / "evil").write_text("evil")
+    tools = _copy_tools(workdir)
+
+    result = await tools.execute_tool("execute_command", {"command": "cp evil ~/bin/git-save"})
+
+    assert result.startswith("Error"), result
+    assert (home / "bin" / "git-save").read_text() == "#real\n"
+
+
+@pytest.mark.asyncio
+async def test_cp_into_git_dir_blocked(workdir):
+    (workdir / ".git").mkdir()
+    (workdir / "evil").write_text("[core]\n  fsmonitor=/tmp/x\n")
+    tools = _copy_tools(workdir)
+
+    result = await tools.execute_tool("execute_command", {"command": "cp evil .git/config"})
+
+    assert result.startswith("Error"), result
+    assert not (workdir / ".git" / "config").exists()
+
+
+@pytest.mark.asyncio
+async def test_cp_within_allowlist_succeeds(workdir):
+    (workdir / "src").write_text("data")
+    tools = _copy_tools(workdir)
+
+    result = await tools.execute_tool("execute_command", {"command": "cp src dest"})
+
+    assert "Exit code: 0" in result
+    assert (workdir / "dest").read_text() == "data"
+
+
+@pytest.mark.asyncio
+async def test_redirect_outside_workspace_blocked_with_empty_allowlist(tmp_path_factory, monkeypatch):
+    workspace = tmp_path_factory.mktemp("workspace")
+    monkeypatch.chdir(workspace)
+    outside = tmp_path_factory.mktemp("outside") / "redir"
+    config = AiAssistConfig(anthropic_api_key="test", allowed_commands=["echo"], allowed_paths=[])
+    tools = FilesystemTools(config, load_user_config=False)
+
+    result = await tools.execute_tool("execute_command", {"command": f"echo pwn > {outside}"})
+
+    assert result.startswith("Error"), result
+    assert not outside.exists()

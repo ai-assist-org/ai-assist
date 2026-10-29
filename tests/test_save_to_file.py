@@ -9,6 +9,7 @@ import pytest
 
 from ai_assist.agent import AiAssistAgent
 from ai_assist.config import AiAssistConfig
+from ai_assist.filesystem_tools import FilesystemTools
 
 
 @pytest.mark.asyncio
@@ -285,3 +286,66 @@ async def test_save_to_file_logs_original_and_resolved_path(tmp_path, caplog):
     assert saved_logs
     assert "sub/../saved.txt" in saved_logs[0]  # original, as the model gave it
     assert str((allowed / "saved.txt").resolve()) in saved_logs[0]  # resolved
+
+
+# --- Empty allowlist must not let writes escape silently (reads stay open) ---
+
+
+@pytest.mark.asyncio
+async def test_empty_allowlist_write_outside_denied_non_interactive(tmp_path_factory, monkeypatch):
+    workspace = tmp_path_factory.mktemp("workspace")
+    monkeypatch.chdir(workspace)  # workspace = cwd; target is elsewhere
+    config = AiAssistConfig(anthropic_api_key="test-key", allowed_paths=[])
+    agent = AiAssistAgent(config=config)
+    session = AsyncMock()
+    res = MagicMock()
+    res.content = [MagicMock(text="PWNED")]
+    session.call_tool.return_value = res
+    agent.sessions = {"dci": session}
+    target = tmp_path_factory.mktemp("outside") / "x.txt"
+
+    result = await agent._execute_tool("dci__q", {"__save_to_file": str(target)})
+
+    assert result.startswith("Error"), result
+    assert not target.exists()
+
+
+@pytest.mark.asyncio
+async def test_empty_allowlist_write_outside_prompts_interactive(tmp_path):
+    config = AiAssistConfig(anthropic_api_key="test", allowed_paths=[])
+    tools = FilesystemTools(config, load_user_config=False)
+    prompts = []
+
+    async def approve(desc):
+        prompts.append(desc)
+        return True
+
+    tools.path_confirmation_callback = approve
+    target = tmp_path / "anywhere" / "x.txt"
+
+    await tools.execute_tool("write_file", {"path": str(target), "content": "x"})
+
+    assert prompts, "expected a path confirmation prompt"
+    assert target.read_text() == "x"
+
+
+@pytest.mark.asyncio
+async def test_empty_allowlist_read_still_unrestricted(tmp_path):
+    f = tmp_path / "anywhere.txt"
+    f.write_text("accessible")
+    tools = FilesystemTools(AiAssistConfig(anthropic_api_key="test", allowed_paths=[]), load_user_config=False)
+
+    result = await tools.execute_tool("read_file", {"path": str(f)})
+
+    assert "accessible" in result
+
+
+@pytest.mark.asyncio
+async def test_empty_allowlist_write_to_workspace_ok(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    tools = FilesystemTools(AiAssistConfig(anthropic_api_key="test", allowed_paths=[]), load_user_config=False)
+
+    result = await tools.execute_tool("write_file", {"path": str(tmp_path / "note.txt"), "content": "x"})
+
+    assert "File written" in result
+    assert (tmp_path / "note.txt").read_text() == "x"
