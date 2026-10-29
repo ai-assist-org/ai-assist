@@ -192,6 +192,40 @@ anywhere the OS permits just because no allowlist is set. `__save_to_file`
 writes to the resolved (realpath) target, matching what was validated, and the
 audit log records both the original and resolved paths.
 
+### Interpreters and package runners
+
+Allowlisting an interpreter by bare name (`python3`, `awk`, `uvx`, ...) would
+otherwise be equivalent to allowlisting arbitrary code, since the code lives in
+the arguments and path checks can be sidestepped from inside it. So running
+code/scripts/packages needs confirmation (refused non-interactively) unless the
+*specific* invocation is explicitly allowlisted (e.g. `python3 -m pytest`,
+`python3 scripts/check.py`):
+
+- `python`/`python3`/`pythonX.Y`: `-c`, `-m <module>`, a script path, stdin,
+  and the REPL. `-m pytest` in the workspace stays auto-approved in auto mode.
+- `awk`/`gawk`/`mawk`/`nawk`, `perl`, `ruby`: a program or `-e`/`-f` body.
+- `uvx`, `uv run`/`uv tool`, `npx`, `pipx run`: run an arbitrary package.
+- `--version`/`--help` and similar info-only argv are not gated.
+
+`tar` (archive on `-c -f`, directory on `-x -C`) and `unzip -d` go through the
+same write-destination validation as `cp`/`mv`/`tee`/`dd`/`ln`.
+
+**Limitation:** this is defense against a hijacked model escalating through an
+allowlisted interpreter; it is not a sandbox. Content inspection cannot catch
+every obfuscation. The robust class-defense is running commands in a
+process-level sandbox (e.g. bubblewrap/nsjail) confined to the workspace — see
+the container sandbox (section on Permission Modes) for the supported isolation.
+
+### Kernel / virtual filesystems
+
+Writing `/proc`, `/sys`, or `/dev` is refused for every write path (file tools,
+`__save_to_file`, redirections, `cp`/`mv`/`tee`/`dd`/`ln`) regardless of the
+allowlist — even `allowed_paths: ["/"]`. These control the host
+(`/proc/sys/kernel/core_pattern`, `/proc/sysrq-trigger`,
+`/sys/kernel/uevent_helper`, `/dev/mem`, raw block devices). Reading them
+(e.g. `/proc/cpuinfo`) is unaffected; `/dev/null`, `/dev/stdout`,
+`/dev/stderr`, `/dev/tty`, and `/dev/fd/*` remain writable.
+
 ### Sensitive locations
 
 Commands and the built-in file tools can never touch credential and key

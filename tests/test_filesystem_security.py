@@ -1292,11 +1292,11 @@ class TestExtractCommandArgumentPaths:
 
     def test_python_script(self):
         result = _extract_command_argument_paths("python3 /tmp/script.py")
-        assert ("python3", "/tmp/script.py") in result
+        assert ("python3", "<script:/tmp/script.py>") in result
 
     def test_python_script_with_args(self):
         result = _extract_command_argument_paths("python script.py --verbose")
-        assert ("python", "script.py") in result
+        assert ("python", "<script:script.py>") in result
 
     def test_python_c_flag(self):
         result = _extract_command_argument_paths("python3 -c 'print(1)'")
@@ -1346,7 +1346,7 @@ class TestExtractCommandArgumentPaths:
 
     def test_python_with_option_flags(self):
         result = _extract_command_argument_paths("python3 -u script.py")
-        assert ("python3", "script.py") in result
+        assert ("python3", "<script:script.py>") in result
 
 
 # --- Integration tests for command argument path validation ---
@@ -1450,14 +1450,18 @@ async def test_python_script_allowed_path(tmp_path):
     )
     tools = FilesystemTools(config, load_user_config=False)
 
+    # Running a script is arbitrary code: it needs confirmation even inside an allowed path.
+    async def approve(_desc):
+        return True
+
+    tools.confirmation_callback = approve
     result = await tools.execute_tool("execute_command", {"command": f"python3 {script}"})
-    assert "not allowed" not in result.lower()
     assert "ok" in result
 
 
 @pytest.mark.asyncio
-async def test_python_c_allowed_in_non_interactive_when_allowlisted(tmp_path):
-    """python -c is allowed in non-interactive mode when python is in allowlist"""
+async def test_python_c_denied_non_interactive_even_when_python_allowlisted(tmp_path):
+    """A bare python3 allowlist entry is NOT enough to run -c non-interactively."""
     config = AiAssistConfig(
         anthropic_api_key="test",
         allowed_commands=["python3"],
@@ -1467,8 +1471,8 @@ async def test_python_c_allowed_in_non_interactive_when_allowlisted(tmp_path):
     # No confirmation_callback set = non-interactive
 
     result = await tools.execute_tool("execute_command", {"command": "python3 -c 'print(1)'"})
-    assert "not allowed" not in result.lower()
-    assert "1" in result
+    assert result.startswith("Error")
+    assert "not allowed in non-interactive" in result
 
 
 @pytest.mark.asyncio

@@ -296,8 +296,8 @@ async def test_other_home_files_still_readable(workdir, home):
         ("python3 -Im http.server", ("python3", "<module:http.server>")),
         ("python3 -Ic 'print(1)'", ("python3", "<inline-code>")),
         ("python3 -cprint(1)", ("python3", "<inline-code>")),
-        ("python3 -W ignore script.py", ("python3", "script.py")),
-        ("python3 -X dev -u script.py", ("python3", "script.py")),
+        ("python3 -W ignore script.py", ("python3", "<script:script.py>")),
+        ("python3 -X dev -u script.py", ("python3", "<script:script.py>")),
         ("python3.12 -c 'print(1)'", ("python3.12", "<inline-code>")),
         ("/usr/bin/python3 -m pip list", ("python3", "<module:pip>")),
     ],
@@ -499,3 +499,175 @@ async def test_redirect_outside_workspace_blocked_with_empty_allowlist(tmp_path_
 
     assert result.startswith("Error"), result
     assert not outside.exists()
+
+
+# --- Virtual/special filesystems are never writable, even with a broad allowlist ---
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/proc/sys/kernel/core_pattern",
+        "/proc/sysrq-trigger",
+        "/proc/self/mem",
+        "/sys/kernel/uevent_helper",
+        "/sys/class/x",
+        "/dev/mem",
+        "/dev/sda",
+    ],
+)
+async def test_virtual_filesystem_writes_blocked_even_with_root_allowlist(path):
+    tools = FilesystemTools(AiAssistConfig(anthropic_api_key="test", allowed_paths=["/"]), load_user_config=False)
+
+    assert await tools.validate_write_target(path) is not None
+
+
+@pytest.mark.asyncio
+async def test_virtual_filesystem_reads_still_allowed(tmp_path):
+    # Reading /proc is legitimate (e.g. /proc/cpuinfo); only writes are blocked
+    tools = FilesystemTools(AiAssistConfig(anthropic_api_key="test", allowed_paths=["/"]), load_user_config=False)
+
+    assert await tools._validate_path("/proc/cpuinfo", for_write=False) is None
+
+
+@pytest.mark.asyncio
+async def test_virtual_filesystem_save_to_file_blocked(tmp_path):
+    from unittest.mock import AsyncMock, MagicMock
+
+    from ai_assist.agent import AiAssistAgent
+
+    agent = AiAssistAgent(config=AiAssistConfig(anthropic_api_key="test-key", allowed_paths=["/"]))
+    session = AsyncMock()
+    res = MagicMock()
+    res.content = [MagicMock(text="x")]
+    session.call_tool.return_value = res
+    agent.sessions = {"dci": session}
+
+    result = await agent._execute_tool("dci__q", {"__save_to_file": "/proc/sys/kernel/core_pattern"})
+
+    assert result.startswith("Error")
+
+
+@pytest.mark.asyncio
+async def test_cp_to_proc_blocked(workdir):
+    (workdir / "evil").write_text("|/tmp/x")
+    config = AiAssistConfig(anthropic_api_key="test", allowed_commands=["cp"], allowed_paths=["/"])
+    tools = FilesystemTools(config, load_user_config=False)
+
+    result = await tools.execute_tool("execute_command", {"command": "cp evil /proc/sys/kernel/core_pattern"})
+
+    assert result.startswith("Error"), result
+
+
+# --- Interpreters that run arbitrary code/scripts/packages must be confirm-gated ---
+
+
+def _interp_tools(workdir, commands):
+    config = AiAssistConfig(anthropic_api_key="test", allowed_commands=list(commands), allowed_paths=[str(workdir)])
+    return FilesystemTools(config, load_user_config=False)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("allow", "command"),
+    [
+        (["python3"], "python3 {w}/s.py"),
+        (["awk"], "awk 'BEGIN{{system(\"/bin/true\")}}'"),
+        (["awk"], "awk -f {w}/prog.awk {w}/data"),
+        (["gawk"], "gawk 'BEGIN{{print 1}}'"),
+        (["perl"], "perl -e 'system(\"/bin/true\")'"),
+        (["ruby"], "ruby -e 'puts 1'"),
+        (["uvx"], "uvx ruff check ."),
+        (["uv"], "uv run python -c 1"),
+        (["npx"], "npx cowsay hi"),
+        (["pipx"], "pipx run black ."),
+    ],
+)
+async def test_interpreter_code_exec_denied_non_interactive(workdir, allow, command):
+    (workdir / "s.py").write_text("print(1)")
+    (workdir / "prog.awk").write_text("BEGIN{print 1}")
+    (workdir / "data").write_text("x")
+    tools = _interp_tools(workdir, allow)
+
+    result = await tools.execute_tool("execute_command", {"command": command.format(w=workdir)})
+
+    assert result.startswith("Error"), result
+
+
+@pytest.mark.asyncio
+async def test_interpreter_code_exec_prompts_interactive(workdir):
+    (workdir / "s.py").write_text("print(1)")
+    tools = _interp_tools(workdir, ["python3"])
+    prompts = []
+
+    async def approve(d):
+        prompts.append(d)
+        return True
+
+    tools.confirmation_callback = approve
+
+    result = await tools.execute_tool("execute_command", {"command": f"python3 {workdir}/s.py"})
+
+    assert prompts
+    assert "Exit code: 0" in result
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("command", ["awk --version", "python3 --version", "uvx --version", "npx --version"])
+async def test_interpreter_version_is_benign(workdir, command):
+    tools = _interp_tools(workdir, command.split()[:1])
+    tools.confirmation_callback = AsyncMock(return_value=False)
+
+    result = await tools.execute_tool("execute_command", {"command": command})
+
+    tools.confirmation_callback.assert_not_awaited()
+    assert "Exit code: 0" in result or "not allowed" not in result.lower()
+
+
+@pytest.mark.asyncio
+async def test_explicitly_allowlisted_interpreter_invocation_runs(workdir):
+    (workdir / "s.py").write_text("print(1)")
+    tools = _interp_tools(workdir, [f"python3 {workdir}/s.py"])
+    tools.confirmation_callback = AsyncMock(return_value=False)
+
+    result = await tools.execute_tool("execute_command", {"command": f"python3 {workdir}/s.py"})
+
+    tools.confirmation_callback.assert_not_awaited()
+    assert "Exit code: 0" in result
+
+
+@pytest.mark.asyncio
+async def test_python_m_pytest_still_auto_in_auto_mode(workdir, monkeypatch):
+    monkeypatch.chdir(workdir)
+    config = AiAssistConfig(anthropic_api_key="test", permission_mode="auto", allowed_paths=[str(workdir)])
+    tools = FilesystemTools(config, load_user_config=False)
+
+    result = await tools.execute_tool("execute_command", {"command": "python3 -m pytest --version"})
+
+    assert not result.startswith("Error"), result
+
+
+# --- tar / unzip write destinations ---
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "command",
+    [
+        "tar -cf {out}/a.tar {w}/data",
+        "tar cf {out}/a.tar {w}/data",
+        "tar -xf {w}/a.tar -C {out}",
+        "unzip {w}/a.zip -d {out}",
+    ],
+)
+async def test_tar_unzip_destination_outside_blocked(workdir, tmp_path_factory, command):
+    out = tmp_path_factory.mktemp("outside")
+    (workdir / "data").write_text("x")
+    (workdir / "a.tar").write_text("x")
+    (workdir / "a.zip").write_text("x")
+    tools = _interp_tools(workdir, ["tar", "unzip"])
+
+    result = await tools.execute_tool("execute_command", {"command": command.format(w=workdir, out=out)})
+
+    assert result.startswith("Error"), result

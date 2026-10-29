@@ -124,7 +124,7 @@ def _python_invocation(args: list[str]) -> str | None:
         if arg == "-":
             return "<stdin>"
         if not arg.startswith("-"):
-            return arg
+            return f"<script:{arg}>"
         if not arg.startswith("--"):
             for j, flag in enumerate(arg[1:], start=1):
                 rest = arg[j + 1 :]
@@ -883,6 +883,23 @@ def is_startup_path(path: Path) -> bool:
     return any(_is_relative_to(resolved, location.resolve()) for location in startup_locations())
 
 
+# Kernel / virtual filesystems: writing them controls the host
+# (/proc/sys/kernel/core_pattern, /proc/sysrq-trigger, /sys/kernel/uevent_helper,
+# /dev/mem, raw block devices). Reads are fine; writes are never allowed.
+_VIRTUAL_FS_ROOTS = frozenset({"proc", "sys", "dev"})
+
+
+def is_unwritable_system_path(path: Path) -> bool:
+    resolved = path.expanduser().resolve()
+    parts = resolved.parts
+    if len(parts) < 2 or parts[1] not in _VIRTUAL_FS_ROOTS:
+        return False
+    # The usual harmless device targets stay writable
+    if str(resolved) in _HARMLESS_REDIRECT_TARGETS or str(resolved).startswith("/dev/fd/"):
+        return False
+    return True
+
+
 def is_sensitive_path(path: Path) -> bool:
     """Whether a path is (inside) a credential location the agent may never access."""
     resolved = path.expanduser().resolve()
@@ -1014,6 +1031,98 @@ def _program_running_arguments(command: str) -> list[str]:
 
 # Commands that write a file given as an argument (not via redirection)
 _FILE_WRITE_COMMANDS = frozenset({"cp", "mv", "install", "tee", "dd", "ln"})
+
+# Interpreters/runners whose arguments are code, a script, or a package to run.
+# Allowlisting the bare name = allowlisting arbitrary code, so an invocation that
+# runs code needs confirmation unless the full invocation is explicitly allowlisted.
+_CODE_INTERPRETERS = frozenset({"awk", "gawk", "mawk", "nawk", "perl", "ruby", "uvx", "uv", "npx", "pipx"})
+# argv that only prints info and runs no user code
+_BENIGN_INTERPRETER_ARGS = frozenset({"--version", "-V", "--help", "-h", "version", "help"})
+
+
+def _interpreter_runs_code(name: str, args: list[str]) -> bool:
+    """Whether an interpreter/runner invocation executes arbitrary code or a package."""
+    if not args or _BENIGN_INTERPRETER_ARGS.intersection(args):
+        return False
+    if name in ("uv", "pipx"):
+        # only the sub-commands that execute a package/script
+        return args[0] in ("run", "tool")
+    return True
+
+
+_TAR_FLAG_LETTERS = set("cxtruvzjJafkpPhlmoswC")
+
+
+def _tar_write_targets(args: list[str]) -> list[str]:
+    """Destinations a tar invocation writes: the -f archive on create, the -C dir on extract."""
+    create = extract = False
+    file_val: str | None = None
+    cdir: str | None = None
+    expect: str | None = None
+    for arg in args:
+        if expect:
+            file_val, cdir = (arg, cdir) if expect == "f" else (file_val, arg)
+            expect = None
+            continue
+        if arg.startswith("--"):
+            if arg.startswith("--file="):
+                file_val = arg.split("=", 1)[1]
+            elif arg == "--file":
+                expect = "f"
+            elif arg.startswith("--directory="):
+                cdir = arg.split("=", 1)[1]
+            elif arg == "--directory":
+                expect = "C"
+            elif arg == "--create":
+                create = True
+            elif arg in ("--extract", "--get"):
+                extract = True
+            continue
+        flags = arg[1:] if arg.startswith("-") else arg
+        if flags and all(c in _TAR_FLAG_LETTERS for c in flags):
+            create = create or "c" in flags
+            extract = extract or "x" in flags
+            if "f" in flags:
+                expect = "f"
+            elif "C" in flags:
+                expect = "C"
+    targets: list[str] = []
+    if create and file_val:
+        targets.append(file_val)
+    if extract:
+        targets.append(cdir or ".")
+    return targets
+
+
+def _unzip_write_targets(args: list[str]) -> list[str]:
+    """Destination an unzip invocation extracts into (-d dir, else the cwd)."""
+    for i, arg in enumerate(args):
+        if arg == "-d" and i + 1 < len(args):
+            return [args[i + 1]]
+        if arg.startswith("-d") and len(arg) > 2:
+            return [arg[2:]]
+    return ["."]
+
+
+def _code_interpreter_invocations(command: str) -> list[tuple[str, list[str]]]:
+    """Find (name, args) for code-running interpreters in a command line (see _CODE_INTERPRETERS)."""
+    found: list[tuple[str, list[str]]] = []
+    for segment in _split_shell_commands(command):
+        try:
+            tokens = shlex.split(segment)
+        except ValueError:
+            tokens = segment.split()
+        idx = 0
+        while idx < len(tokens) and _ASSIGNMENT.match(tokens[idx]):
+            idx += 1
+        idx = _strip_transparent_wrappers(tokens, idx)
+        if idx >= len(tokens):
+            continue
+        name = Path(tokens[idx]).name
+        args = tokens[idx + 1 :]
+        if name in _CODE_INTERPRETERS and _interpreter_runs_code(name, args):
+            found.append((name, args))
+    return found
 
 
 def _file_write_destinations(name: str, args: list[str]) -> list[str]:
@@ -1174,6 +1283,12 @@ def _extract_command_argument_paths(command: str, cwd: str | None = None) -> lis
         elif cmd_name in _FILE_WRITE_COMMANDS:
             results.extend(("write", resolve(dest)) for dest in _file_write_destinations(cmd_name, args))
 
+        elif cmd_name == "tar":
+            results.extend(("write", resolve(dest)) for dest in _tar_write_targets(args))
+
+        elif cmd_name == "unzip":
+            results.extend(("write", resolve(dest)) for dest in _unzip_write_targets(args))
+
         elif _PYTHON_NAME.match(cmd_name):
             invocation = _python_invocation(args)
             if invocation:
@@ -1331,6 +1446,9 @@ class FilesystemTools:
 
         if is_sensitive_path(Path(path_str)):
             return f"Error: {path_str} is a sensitive location (keys/credentials) the agent cannot access."
+
+        if for_write and is_unwritable_system_path(Path(path_str)):
+            return f"Error: {path_str} is a kernel/virtual filesystem (/proc, /sys, /dev) and cannot be written."
 
         if self.permission_mode == "auto" and self._is_workspace_path(path_str):
             return None
@@ -2150,50 +2268,89 @@ class FilesystemTools:
             if not await self.confirmation_callback(f"Set {hijacked} (changes which program runs): {command}"):
                 return f"Error: Setting {hijacked} rejected by user."
 
-        pairs = _extract_command_argument_paths(command, working_dir)
+        for cmd_name, path_or_marker in _extract_command_argument_paths(command, working_dir):
+            pair_error = await self._validate_argument_pair(cmd_name, path_or_marker, command, was_auto_allowed)
+            if pair_error:
+                return pair_error
 
-        for cmd_name, path_or_marker in pairs:
-            if cmd_name == "cd":
-                continue
-            if cmd_name in _WRITE_TARGET_SOURCES and (
-                git_error := await self._check_code_location_write(path_or_marker)
-            ):
-                return git_error
-            if cmd_name in _WRITE_TARGET_SOURCES and _DYNAMIC_PATH_CHARS.intersection(path_or_marker):
-                desc = f"Write to a path computed at run time ({path_or_marker}): {command}"
-                if self.confirmation_callback is None:
-                    return f"Error: Cannot verify write target {path_or_marker} in non-interactive mode."
-                if not await self.confirmation_callback(desc):
-                    return f"Error: Write to {path_or_marker} rejected by user."
-                continue
-            if path_or_marker == "<dangerous-find>":
-                return (
-                    "Error: find with -exec/-execdir/-ok/-okdir/-delete/-fprintf is not allowed "
-                    "(these run arbitrary commands or modify files, bypassing the command allowlist)."
-                )
-            is_module = path_or_marker.startswith("<module:")
-            if is_module or path_or_marker in ("<inline-code>", "<stdin>", "<interactive>"):
-                if not was_auto_allowed:
-                    continue
-                if is_module and self._is_python_module_allowlisted(cmd_name, path_or_marker[8:-1]):
-                    continue
-                if self.confirmation_callback is not None:
-                    desc = f"{cmd_name} {path_or_marker.strip('<>')} execution: {command}"
-                    approved = await self.confirmation_callback(desc)
-                    if not approved:
-                        return f"Error: {cmd_name} {path_or_marker} execution rejected by user."
-                elif path_or_marker == "<interactive>":
-                    return f"Error: {cmd_name} {path_or_marker} execution is not allowed in non-interactive mode."
-                elif cmd_name not in self.allowed_commands:
-                    return f"Error: {cmd_name} {path_or_marker} execution is not allowed in non-interactive mode."
-            else:
-                path_error = await self._validate_path(
-                    path_or_marker, reason=command, for_write=cmd_name in _WRITE_TARGET_SOURCES
-                )
-                if path_error:
-                    return f"Error: {cmd_name} target path is not allowed. {path_error}"
+        interpreter_error = await self._check_code_interpreters(command)
+        if interpreter_error:
+            return interpreter_error
 
         return None
+
+    async def _validate_argument_pair(
+        self, cmd_name: str, path_or_marker: str, command: str, was_auto_allowed: bool
+    ) -> str | None:
+        """Validate one (command, path-or-marker) pair from _extract_command_argument_paths."""
+        if cmd_name == "cd":
+            return None
+        is_write = cmd_name in _WRITE_TARGET_SOURCES
+        if is_write and (git_error := await self._check_code_location_write(path_or_marker)):
+            return git_error
+        if is_write and _DYNAMIC_PATH_CHARS.intersection(path_or_marker):
+            if self.confirmation_callback is None:
+                return f"Error: Cannot verify write target {path_or_marker} in non-interactive mode."
+            if not await self.confirmation_callback(
+                f"Write to a path computed at run time ({path_or_marker}): {command}"
+            ):
+                return f"Error: Write to {path_or_marker} rejected by user."
+            return None
+        if path_or_marker == "<dangerous-find>":
+            return (
+                "Error: find with -exec/-execdir/-ok/-okdir/-delete/-fprintf is not allowed "
+                "(these run arbitrary commands or modify files, bypassing the command allowlist)."
+            )
+        is_module = path_or_marker.startswith("<module:")
+        is_script = path_or_marker.startswith("<script:")
+        if is_script:
+            read_error = await self._validate_path(path_or_marker[len("<script:") : -1], reason=command)
+            if read_error:
+                return f"Error: {cmd_name} target path is not allowed. {read_error}"
+        if is_module or is_script or path_or_marker in ("<inline-code>", "<stdin>", "<interactive>"):
+            return await self._gate_code_execution(cmd_name, path_or_marker, command, was_auto_allowed)
+        path_error = await self._validate_path(path_or_marker, reason=command, for_write=is_write)
+        if path_error:
+            return f"Error: {cmd_name} target path is not allowed. {path_error}"
+        return None
+
+    async def _gate_code_execution(
+        self, cmd_name: str, path_or_marker: str, command: str, was_auto_allowed: bool
+    ) -> str | None:
+        """Confirm-gate python -c / -m / script / stdin / REPL execution."""
+        if not was_auto_allowed:
+            return None
+        if path_or_marker.startswith("<module:") and self._is_python_module_allowlisted(cmd_name, path_or_marker[8:-1]):
+            return None
+        if path_or_marker.startswith("<script:") and self._is_invocation_allowlisted(
+            [cmd_name, path_or_marker[len("<script:") : -1]]
+        ):
+            return None
+        if self.confirmation_callback is None:
+            # A bare interpreter on the allowlist is not enough to run arbitrary
+            # code non-interactively; the specific invocation must be allowlisted.
+            return f"Error: {cmd_name} {path_or_marker} execution is not allowed in non-interactive mode."
+        if not await self.confirmation_callback(f"{cmd_name} {path_or_marker.strip('<>')} execution: {command}"):
+            return f"Error: {cmd_name} {path_or_marker} execution rejected by user."
+        return None
+
+    async def _check_code_interpreters(self, command: str) -> str | None:
+        """Confirm-gate interpreters/runners that execute arbitrary code or packages."""
+        for name, iargs in _code_interpreter_invocations(command):
+            if self._is_invocation_allowlisted([name, *iargs]):
+                continue
+            if self.confirmation_callback is None:
+                return f"Error: {name} runs arbitrary code and needs confirmation; not allowed non-interactively."
+            if not await self.confirmation_callback(f"{name} runs arbitrary code/package: {command}"):
+                return f"Error: {name} invocation rejected by user."
+        return None
+
+    def _is_invocation_allowlisted(self, tokens: list[str]) -> bool:
+        """Whether a multi-token allowlist entry explicitly permits this invocation."""
+        return any(
+            len(parts) >= 2 and tokens[: len(parts)] == parts
+            for parts in (entry.split() for entry in self.allowed_commands)
+        )
 
     @staticmethod
     def _load_command_env_allowlist() -> set[str]:
