@@ -88,7 +88,10 @@ async def test_bypass_is_rejected(workdir, template):
         "echo '[]' > {protected}",
     ],
 )
-async def test_write_outside_allowed_paths_is_rejected(workdir, tmp_path_factory, isolate_config_dir, command):
+async def test_write_outside_allowed_paths_is_rejected(
+    workdir, tmp_path_factory, isolate_config_dir, monkeypatch, command
+):
+    monkeypatch.setenv("HOME", str(tmp_path_factory.mktemp("home")))  # `>$HOME/x` must not reach the real home
     outside = tmp_path_factory.mktemp("outside") / "target"
     protected = isolate_config_dir / "allowed_commands.json"
     tools = _tools(workdir)

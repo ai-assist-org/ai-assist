@@ -60,6 +60,9 @@ def test_still_auto_safe(auto_tools, command):
 @pytest.fixture
 def manual_tools(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
+    # Commands may really run if a check regresses: keep git/ssh away from the user's config
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "gitconfig"))
     (tmp_path / ".git").mkdir()
     config = AiAssistConfig(anthropic_api_key="test", allowed_commands=["git", "ssh"], allowed_paths=[str(tmp_path)])
     return FilesystemTools(config, load_user_config=False)
@@ -124,3 +127,101 @@ async def test_git_internals_write_after_confirmation(manual_tools, tmp_path):
 
     assert any(".git" in p for p in prompts)
     assert (tmp_path / ".git" / "info" / "exclude").exists()
+
+
+# --- Startup locations: code there runs later, outside ai-assist ---
+
+
+@pytest.fixture
+def home_tools(tmp_path_factory, monkeypatch):
+    home = tmp_path_factory.mktemp("home")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.chdir(home)
+    config = AiAssistConfig(anthropic_api_key="test", allowed_commands=["echo", "crontab"], allowed_paths=[str(home)])
+    return FilesystemTools(config, load_user_config=False), home
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "relative",
+    [
+        ".bashrc",
+        ".profile",
+        ".zshrc",
+        ".config/fish/config.fish",
+        ".local/bin/date",
+        "bin/git",
+        ".config/systemd/user/x.service",
+        ".config/autostart/x.desktop",
+        ".config/environment.d/x.conf",
+        ".gitconfig",
+        ".config/git/config",
+        ".local/lib/python3.12/site-packages/evil.pth",
+    ],
+)
+async def test_startup_location_write_needs_confirmation(home_tools, relative):
+    tools, home = home_tools
+
+    result = await tools.execute_tool("write_file", {"path": f"~/{relative}", "content": "x"})
+
+    assert result.startswith("Error"), result
+    assert not (home / relative).exists()
+
+
+@pytest.mark.asyncio
+async def test_startup_location_redirect_needs_confirmation(home_tools):
+    tools, home = home_tools
+
+    result = await tools.execute_tool("execute_command", {"command": "echo 'evil' >> ~/.bashrc"})
+
+    assert result.startswith("Error"), result
+    assert not (home / ".bashrc").exists()
+
+
+@pytest.mark.asyncio
+async def test_startup_location_write_after_confirmation(home_tools):
+    tools, home = home_tools
+    prompts = []
+
+    async def approve(description):
+        prompts.append(description)
+        return True
+
+    tools.confirmation_callback = approve
+
+    await tools.execute_tool("write_file", {"path": "~/.bashrc", "content": "alias ll='ls -l'\n"})
+
+    assert any("startup" in p.lower() for p in prompts)
+    assert (home / ".bashrc").exists()
+
+
+@pytest.mark.asyncio
+async def test_ordinary_home_files_still_writable(home_tools):
+    tools, home = home_tools
+
+    await tools.execute_tool("write_file", {"path": "~/notes/todo.md", "content": "x"})
+
+    assert (home / "notes" / "todo.md").exists()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("command", ["crontab job.txt", "echo '* * * * * x' | crontab -", "crontab -r"])
+async def test_crontab_changes_need_confirmation(home_tools, tmp_path_factory, monkeypatch, command):
+    # Never let the real crontab run: it edits the user's actual crontab, whatever HOME is
+    fake_bin = tmp_path_factory.mktemp("bin")
+    marker = fake_bin / "ran"
+    (fake_bin / "crontab").write_text(f"#!/bin/sh\ntouch {marker}\n")
+    (fake_bin / "crontab").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{fake_bin}:/usr/bin:/bin")
+    tools, _ = home_tools
+
+    result = await tools.execute_tool("execute_command", {"command": command})
+
+    assert result.startswith("Error"), result
+    assert not marker.exists()
+
+
+def test_crontab_listing_is_not_flagged():
+    from ai_assist.filesystem_tools import _program_running_arguments
+
+    assert _program_running_arguments("crontab -l") == []

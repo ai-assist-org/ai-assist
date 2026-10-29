@@ -846,6 +846,42 @@ def sensitive_locations() -> list[Path]:
     ]
 
 
+def startup_locations() -> list[Path]:
+    """Places whose contents run later, outside ai-assist (writes need confirmation)."""
+    home = Path.home()
+    rc_files = [
+        ".bashrc",
+        ".bash_profile",
+        ".bash_login",
+        ".bash_logout",
+        ".profile",
+        ".zshrc",
+        ".zshenv",
+        ".zprofile",
+        ".zlogin",
+        ".xprofile",
+        ".xinitrc",
+        ".xsession",
+        ".gitconfig",
+    ]
+    directories = [
+        ".local/bin",
+        "bin",
+        ".local/lib",
+        ".config/fish",
+        ".config/systemd/user",
+        ".config/autostart",
+        ".config/environment.d",
+        ".config/git",
+    ]
+    return [home / name for name in rc_files + directories]
+
+
+def is_startup_path(path: Path) -> bool:
+    resolved = path.expanduser().resolve()
+    return any(_is_relative_to(resolved, location.resolve()) for location in startup_locations())
+
+
 def is_sensitive_path(path: Path) -> bool:
     resolved = path.expanduser().resolve()
     return any(_is_relative_to(resolved, location.resolve()) for location in sensitive_locations())
@@ -949,6 +985,10 @@ def _program_running_arguments(command: str) -> list[str]:
                 values = [arg for arg in rest[1:] if not arg.startswith("-")]
                 if not _GIT_CONFIG_READ_OPTIONS.intersection(rest[1:]) and len(values) >= 2:
                     found.append("git config (set)")
+        elif name == "crontab":
+            # Anything but listing installs or removes scheduled jobs
+            if not args or any(arg != "-l" and not arg.startswith("-u") for arg in args):
+                found.append("crontab (install/remove jobs)")
         elif name == "ssh":
             for i, arg in enumerate(args):
                 if arg.startswith("-F"):
@@ -2063,7 +2103,7 @@ class FilesystemTools:
             if cmd_name == "cd":
                 continue
             if cmd_name in _WRITE_TARGET_SOURCES and (
-                git_error := await self._check_git_internals_write(path_or_marker)
+                git_error := await self._check_code_location_write(path_or_marker)
             ):
                 return git_error
             if cmd_name in _WRITE_TARGET_SOURCES and _DYNAMIC_PATH_CHARS.intersection(path_or_marker):
@@ -2121,13 +2161,24 @@ class FilesystemTools:
             for parts in (entry.split() for entry in self.allowed_commands)
         )
 
-    async def _check_git_internals_write(self, path: str) -> str | None:
-        """Writes inside a .git directory need confirmation: git runs programs configured there."""
-        if self.permission_mode == "autonomous" or ".git" not in Path(path).expanduser().resolve().parts:
+    async def _check_code_location_write(self, path: str) -> str | None:
+        """Writes where code runs later, outside ai-assist, need confirmation.
+
+        That is inside a .git directory (hooks, config) and startup locations
+        (shell rc files, ~/.local/bin, systemd user units, ...).
+        """
+        if self.permission_mode == "autonomous":
             return None
-        if await self.confirm(f"Modify git internals: {path} (git runs hooks and programs configured there)"):
+        resolved = Path(path).expanduser().resolve()
+        if ".git" in resolved.parts:
+            what = "git internals (git runs hooks and programs configured there)"
+        elif is_startup_path(resolved):
+            what = "a startup location (code there runs later, outside ai-assist)"
+        else:
             return None
-        return f"Error: Writing inside .git ({path}) requires user confirmation."
+        if await self.confirm(f"Modify {what}: {path}"):
+            return None
+        return f"Error: Writing to {path} requires user confirmation: it is {what.split(' (')[0]}."
 
     async def validate_write_target(self, path: str) -> str | None:
         """Run the internal__write_file checks on a path the agent wants to write.
@@ -2141,7 +2192,7 @@ class FilesystemTools:
         if path_error:
             return path_error
 
-        git_error = await self._check_git_internals_write(path)
+        git_error = await self._check_code_location_write(path)
         if git_error:
             return git_error
 
@@ -2187,7 +2238,7 @@ class FilesystemTools:
 
         for check in (
             await self._validate_path(path),
-            await self._check_git_internals_write(path),
+            await self._check_code_location_write(path),
             await self._check_confirmation("internal__edit_file", f"Edit file: {path}"),
         ):
             if check:

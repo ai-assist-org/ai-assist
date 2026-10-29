@@ -209,6 +209,17 @@ nothing is truncated, Rich markup is not interpreted, and control, invisible,
 and bidi characters are shown as escapes (`\x1b`, `\r`, `\u202e`), so the
 text cannot hide, overwrite, or reorder what will actually run.
 
+### Startup locations
+
+Writes to places whose contents run later, outside ai-assist, need
+confirmation even inside allowed paths (refused when nobody can be asked):
+shell startup files (`~/.bashrc`, `~/.profile`, `~/.zshrc`, ...),
+`~/.gitconfig`, `~/.config/git`, `~/.local/bin`, `~/bin`, `~/.local/lib`
+(`.pth` files run at every Python start), `~/.config/fish`,
+`~/.config/systemd/user`, `~/.config/autostart`, and
+`~/.config/environment.d`. The `crontab` command needs confirmation unless it
+only lists jobs (`crontab -l`). Reading these locations is unaffected.
+
 ### Assignments that change which program runs
 
 Setting `PATH`, `LD_*`, `BASH_ENV`, `GIT_SSH_COMMAND`, `PYTHONPATH`,
