@@ -375,3 +375,39 @@ def test_always_allow_prefix_keeps_module():
     from ai_assist.filesystem_tools import compute_allowlist_prefix
 
     assert compute_allowlist_prefix("python3 -m pytest -q tests/") == "python3 -m pytest"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/root/.ssh/id_rsa",
+        "/tmp/dci/../../home/../root/.ssh/id_rsa",
+        "/home/someone-else/.aws/credentials",
+        "/home/someone-else/.config/gcloud/credentials.db",
+        "/var/lib/svc/.docker/config.json",
+        "/srv/user/.netrc",
+    ],
+)
+async def test_credential_locations_blocked_under_any_home(tmp_path, path):
+    """Blocked as sensitive before any prompt or existence check, whoever's home it is."""
+    config = AiAssistConfig(anthropic_api_key="test", allowed_paths=["/"])
+    tools = FilesystemTools(config, load_user_config=False)
+    tools.path_confirmation_callback = AsyncMock(return_value=True)
+
+    result = await tools.execute_tool("read_file", {"path": path})
+
+    assert "sensitive location" in result, result
+    tools.path_confirmation_callback.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_similar_names_not_blocked(tmp_path):
+    (tmp_path / "ssh-notes.txt").write_text("ok\n")
+    (tmp_path / ".sshrc-example").write_text("ok\n")
+    config = AiAssistConfig(anthropic_api_key="test", allowed_paths=[str(tmp_path)])
+    tools = FilesystemTools(config, load_user_config=False)
+
+    for name in ("ssh-notes.txt", ".sshrc-example"):
+        result = await tools.execute_tool("read_file", {"path": str(tmp_path / name)})
+        assert "ok" in result, result

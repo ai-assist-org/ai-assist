@@ -823,27 +823,28 @@ def _program_hijacking_assignments(command: str) -> set[str]:
     return names
 
 
+# Credential and key locations, matched under any home (yours, /root, other users)
+_CREDENTIAL_LOCATIONS = (
+    (".ssh",),
+    (".gnupg",),
+    (".aws",),
+    (".azure",),
+    (".config", "gcloud"),
+    (".config", "gh"),
+    (".kube",),
+    (".docker", "config.json"),
+    (".netrc",),
+    (".git-credentials",),
+    (".pgpass",),
+    (".password-store",),
+    (".local", "share", "keyrings"),
+)
+
+
 def sensitive_locations() -> list[Path]:
-    """Credential and key locations the agent may never read or write."""
-    home = Path.home()
+    """ai-assist's own secrets; see also _CREDENTIAL_LOCATIONS, matched anywhere."""
     config_dir = get_config_dir()
-    return [
-        home / ".ssh",
-        home / ".gnupg",
-        home / ".aws",
-        home / ".azure",
-        home / ".config" / "gcloud",
-        home / ".config" / "gh",
-        home / ".kube",
-        home / ".docker" / "config.json",
-        home / ".netrc",
-        home / ".git-credentials",
-        home / ".pgpass",
-        home / ".password-store",
-        home / ".local" / "share" / "keyrings",
-        config_dir / ".env",
-        config_dir / "mcp-oauth",
-    ]
+    return [config_dir / ".env", config_dir / "mcp-oauth"]
 
 
 def startup_locations() -> list[Path]:
@@ -883,7 +884,13 @@ def is_startup_path(path: Path) -> bool:
 
 
 def is_sensitive_path(path: Path) -> bool:
+    """Whether a path is (inside) a credential location the agent may never access."""
     resolved = path.expanduser().resolve()
+    parts = resolved.parts
+    for location in _CREDENTIAL_LOCATIONS:
+        size = len(location)
+        if any(parts[i : i + size] == location for i in range(len(parts) - size + 1)):
+            return True
     return any(_is_relative_to(resolved, location.resolve()) for location in sensitive_locations())
 
 

@@ -184,11 +184,12 @@ targets in every permission mode. `/dev/null`, `/dev/stdout`, `/dev/stderr`,
 ### Sensitive locations
 
 Commands and the built-in file tools can never touch credential and key
-locations, even inside allowed paths: `~/.ssh`, `~/.gnupg`, `~/.aws`,
-`~/.azure`, `~/.config/gcloud`, `~/.config/gh`, `~/.kube`,
-`~/.docker/config.json`, `~/.netrc`, `~/.git-credentials`, `~/.pgpass`,
-`~/.password-store`, `~/.local/share/keyrings`, and `.env` / `mcp-oauth/` in
-the config dir. Every word of a command is checked after expanding `$VARS`,
+locations, even inside allowed paths. They are matched under any home (yours,
+`/root`, other users), before any prompt or existence check: `.ssh`,
+`.gnupg`, `.aws`, `.azure`, `.config/gcloud`, `.config/gh`, `.kube`,
+`.docker/config.json`, `.netrc`, `.git-credentials`, `.pgpass`,
+`.password-store`, `.local/share/keyrings`, and `.env` / `mcp-oauth/` in the
+config dir. Every word of a command is checked after expanding `$VARS`,
 `~`, globs and earlier `cd` targets. This is best effort: a path the shell
 builds at run time (`find ~ | xargs cat`, `grep -r x ~`) is not caught, which
 is why tool results are also redacted (section 8b).
