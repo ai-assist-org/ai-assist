@@ -1,5 +1,6 @@
 """Tests for AWL executor script-level locking."""
 
+import json
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -152,6 +153,42 @@ class TestRunAwlScriptLocking:
             fh = _try_lock_script(awl_path)
             assert fh is not None, "Lock should be released after error"
             fh.close()
+
+
+class TestRunAwlScriptReturnValue:
+    """run_awl_script returns text: callers (action engine, tools) treat it as a string."""
+
+    async def _run(self, tmp_path, return_value):
+        workflow = MagicMock()
+        workflow.body = []
+        with (
+            patch("ai_assist.awl_executor.get_config_dir", return_value=tmp_path),
+            patch("ai_assist.awl_executor.load_awl_workflow", return_value=(workflow, tmp_path / "test.awl")),
+            patch("ai_assist.awl_executor.load_local_variables", return_value={}),
+            patch("ai_assist.awl_executor.get_reports_dir", return_value=tmp_path / "reports"),
+            patch("ai_assist.awl_runtime.AWLRuntime.execute", new_callable=AsyncMock) as mock_execute,
+        ):
+            mock_result = MagicMock()
+            mock_result.success = True
+            mock_result.return_value = return_value
+            mock_execute.return_value = mock_result
+            return await run_awl_script("test.awl", MagicMock())
+
+    @pytest.mark.asyncio
+    async def test_list_return_value_is_json_text(self, tmp_path):
+        value = [{"job_id": "j1", "ticket_key": "CNF-1"}, {"job_id": "j2", "ticket_key": "CNF-2"}]
+        result = await self._run(tmp_path, value)
+        assert isinstance(result, str)
+        assert json.loads(result) == value
+
+    @pytest.mark.asyncio
+    async def test_string_return_value_unchanged(self, tmp_path):
+        assert await self._run(tmp_path, "https://example.com/pull/1") == "https://example.com/pull/1"
+
+    @pytest.mark.asyncio
+    async def test_empty_return_value_gives_default_message(self, tmp_path):
+        assert await self._run(tmp_path, None) == "Workflow completed successfully."
+        assert await self._run(tmp_path, []) == "Workflow completed successfully."
 
 
 class TestAllowSessionTmpdir:

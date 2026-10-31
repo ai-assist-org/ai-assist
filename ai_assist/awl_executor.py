@@ -234,7 +234,11 @@ async def run_awl_script(
             raise RuntimeError(
                 f"AWL workflow failed: {result.task_outcomes[-1].summary if result.task_outcomes else 'unknown error'}"
             )
-        return result.return_value or "Workflow completed successfully."
+        value = result.return_value
+        if not value:
+            return "Workflow completed successfully."
+        # @return can yield a list or dict variable; callers expect text
+        return value if isinstance(value, str) else json.dumps(value, default=str)
     finally:
         if _set_script:
             setattr(agent, "_current_script_path", "")  # noqa: B010
