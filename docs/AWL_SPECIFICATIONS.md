@@ -398,6 +398,15 @@ Validation warnings are reported in three places:
 
 A task fails when its model call fails (API error such as a rate limit, or a stalled model stream): the error is never taken as the task's answer. Like any task failure, this stops the workflow unless the task has `@continue-on-failure`.
 
+## Reporting the task outcome
+
+During a task, and only then, the agent has an `internal__finish_task` tool. The task prompt asks it to call the tool once when done:
+
+- `status="success"` with `values` holding the task's `Expose:` variables. These are taken as is (method `finish_tool`); only keys missing from `values` go through the usual extraction (JSON block in the reply, nudge, report sections).
+- `status="failed"` with a `reason` when the goal could not be achieved (a required step failed, a tool returned an error, needed data is missing). The task then fails with that reason, exactly like any other task failure, instead of exposing empty values that later steps would take as real results.
+
+If the agent doesn't call the tool, the task behaves as before: success, with values extracted from its reply.
+
 ## @fail
 
 Aborts the workflow immediately with an error message.

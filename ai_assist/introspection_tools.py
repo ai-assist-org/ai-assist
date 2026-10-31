@@ -344,7 +344,7 @@ Every script starts with @start and ends with @end:
   Context: <text>        — additional context (optional)
   Constraints: <text>    — limitations (optional)
   Success: <text>        — completion criteria (optional)
-  Expose: var1, var2     — variables to extract from the agent response
+  Expose: var1, var2     — variables the task reports (via internal__finish_task)
   @end
 
   @set <var> = <value>   — assign a variable (literal or ${interpolation})

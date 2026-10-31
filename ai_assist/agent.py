@@ -53,6 +53,7 @@ from .skills_loader import SkillsLoader
 from .skills_manager import SkillsManager
 from .synthesis_engine import SynthesisEngine
 from .system_prompt_builder import SystemPromptBuilder
+from .task_result_tool import TaskResultTool
 from .think_tool import ThinkTool
 from .tool_result_router import (
     ToolResultRouter,
@@ -404,6 +405,7 @@ class AiAssistAgent:
 
         # Initialize think tool (planning/reasoning scratchpad)
         self.think_tool = ThinkTool()
+        self.task_result_tool = TaskResultTool()  # offered only while an AWL task runs
 
         # Initialize JSON query tool (requires jq)
         self.json_tools = JsonTools(filesystem_tools=self.filesystem_tools)
@@ -1244,6 +1246,8 @@ class AiAssistAgent:
             from .plan_mode import get_planning_tools
 
             source_tools = get_planning_tools(self.available_tools)
+        if self.task_result_tool.active:
+            source_tools = [*source_tools, *self.task_result_tool.get_tool_definitions()]
 
         jq_available = bool(self.json_tools.jq_path)
         api_tools = []
@@ -2879,6 +2883,8 @@ class AiAssistAgent:
                     result_text = await self.script_execution_tools.execute_tool(original_tool_name, arguments)
                 elif original_tool_name in think_tools:
                     result_text = await self.think_tool.execute_tool(original_tool_name, arguments)
+                elif original_tool_name == "finish_task":
+                    result_text = await self.task_result_tool.execute_tool(original_tool_name, arguments)
                 elif original_tool_name in json_tool_names:
                     result_text = await self.json_tools.execute_tool(original_tool_name, arguments)
                 elif original_tool_name in jev_tool_names:
