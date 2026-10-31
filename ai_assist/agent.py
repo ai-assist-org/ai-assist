@@ -2973,7 +2973,7 @@ class AiAssistAgent:
                 summary = await self.tool_result_router.collect_paginated_to_report(
                     server_name, original_tool_name, arguments, collect_to_report
                 )
-                self.audit_logger.log_tool_call(tool_name, arguments, summary, success=True)
+                self.audit_logger.log_tool_call(tool_name, arguments, summary, success=not summary.startswith("Error"))
                 return summary
             except Exception:
                 logger.exception("Error collecting paginated results for %s", tool_name)
@@ -2992,6 +2992,24 @@ class AiAssistAgent:
             else:
                 result_text = "Tool executed successfully with no output"
             result_text = self.redactor.redact(result_text)
+
+            # The server flagged a failed execution: hand it to the model as an error,
+            # never as data (no jq filter, KG storage or file/report redirection).
+            if result.is_error is True:
+                error_msg = f"Error: {original_tool_name} failed: {result_text}"
+                self.last_tool_calls.append(
+                    {
+                        "tool_name": tool_name,
+                        "server_name": server_name,
+                        "original_tool_name": original_tool_name,
+                        "arguments": arguments,
+                        "meta_params": meta_params_used,
+                        "result": error_msg,
+                        "timestamp": datetime.now(),
+                    }
+                )
+                self.audit_logger.log_tool_call(tool_name, arguments, error_msg, success=False)
+                return error_msg
 
             # Apply __jq_filter before recording/logging/KG storage so they reflect
             # what was actually returned to the model, not the pre-filter raw result.
