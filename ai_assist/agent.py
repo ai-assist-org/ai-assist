@@ -239,6 +239,10 @@ def _extract_date_range(question: str) -> tuple[datetime, datetime] | None:
     return None
 
 
+class QueryAPIError(Exception):
+    """The model API failed (or its stream stalled), so the query has no answer."""
+
+
 class AiAssistAgent:
     """AI Agent with MCP capabilities"""
 
@@ -1702,8 +1706,14 @@ class AiAssistAgent:
         max_turns: int = 100,
         progress_callback=None,
         max_time_seconds: int | None = None,
+        raise_on_api_error: bool = False,
     ) -> str:
-        """Collect the final answer from the shared streaming execution path."""
+        """Collect the final answer from the shared streaming execution path.
+
+        A model API failure is returned as its error message, like any other
+        error, unless ``raise_on_api_error`` is set: then it raises
+        ``QueryAPIError`` so the caller cannot mistake it for an answer.
+        """
         chunks: list[str] = []
         async with aclosing(
             self.query_streaming(
@@ -1720,6 +1730,8 @@ class AiAssistAgent:
                 elif event["type"] == "done":
                     return event["text"]
                 elif event["type"] == "error":
+                    if raise_on_api_error and event.get("api_error"):
+                        raise QueryAPIError(event["message"])
                     return event["message"]
                 elif event["type"] == "tool_use":
                     chunks.clear()
@@ -2243,6 +2255,7 @@ class AiAssistAgent:
                     self._record_query_event("model_stream_timeout", turn=turn + 1)
                     yield {
                         "type": "error",
+                        "api_error": True,
                         "message": "Model stream timed out waiting for progress. Please retry the query.",
                     }
                     return
@@ -2256,6 +2269,7 @@ class AiAssistAgent:
                         logger.warning("API overloaded: %s", error_msg)
                         yield {
                             "type": "error",
+                            "api_error": True,
                             "message": (
                                 "The API is currently overloaded (all retry attempts failed). "
                                 "This is a temporary capacity issue on the server side. "
@@ -2277,6 +2291,7 @@ class AiAssistAgent:
 
                         yield {
                             "type": "error",
+                            "api_error": True,
                             "message": (
                                 f"The context is too large.\n\n"
                                 f"Context breakdown (estimated):\n"
@@ -2295,21 +2310,24 @@ class AiAssistAgent:
                     elif isinstance(e, RateLimitError):
                         yield {
                             "type": "error",
+                            "api_error": True,
                             "message": f"API Rate Limit Error: {error_msg}\n\nPlease wait before retrying.",
                         }
                     elif isinstance(e, APIConnectionError):
                         yield {
                             "type": "error",
+                            "api_error": True,
                             "message": f"API Connection Error: {error_msg}\n\nCheck network connectivity and retry.",
                         }
                     elif isinstance(e, APIError):
                         yield {
                             "type": "error",
+                            "api_error": True,
                             "message": f"API Error: {error_msg}\n\nPlease check the error message and adjust your request accordingly.",
                         }
                     else:
                         logger.warning("API error: %s", error_msg)
-                        yield {"type": "error", "message": error_msg}
+                        yield {"type": "error", "message": error_msg, "api_error": True}
 
                     return
 

@@ -396,6 +396,8 @@ Validation warnings are reported in three places:
 
 # Failure Handling
 
+A task fails when its model call fails (API error such as a rate limit, or a stalled model stream): the error is never taken as the task's answer. Like any task failure, this stops the workflow unless the task has `@continue-on-failure`.
+
 ## @fail
 
 Aborts the workflow immediately with an error message.

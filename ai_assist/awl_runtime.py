@@ -617,6 +617,7 @@ class AWLRuntime:
                         max_turns=max_turns,
                         progress_callback=callback,
                         max_time_seconds=task.max_time,
+                        raise_on_api_error=True,
                     )
                 finally:
                     self._revoke_task_commands(*task_commands)
