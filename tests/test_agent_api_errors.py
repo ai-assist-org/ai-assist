@@ -1,6 +1,6 @@
 """Tests for agent API error handling."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from anthropic import APIConnectionError, BadRequestError, RateLimitError
@@ -232,3 +232,54 @@ async def test_non_api_error_still_returned_as_text_when_raising_requested():
         result = await agent.query("test query", max_turns=1, raise_on_api_error=True)
 
     assert result == "Maximum turns reached without final answer"
+
+
+@pytest.mark.asyncio
+async def test_action_fails_when_model_api_fails(tmp_path):
+    """A scheduled action whose model calls all fail must be recorded as failed."""
+    from ai_assist.action_engine import ActionEngine
+    from ai_assist.action_model import ActionDefinition
+    from ai_assist.state import StateManager
+
+    config = AiAssistConfig(anthropic_api_key="test-key", working_dirs=["/tmp"])
+    agent = AiAssistAgent(config=config)
+    state_manager = StateManager(state_dir=tmp_path / "state")
+    engine = ActionEngine(agent, state_manager)
+    action = ActionDefinition(name="daily-check", trigger={"type": "interval", "every": "1h"}, prompt="Check things")
+    error = _rate_limit_error()
+
+    with (
+        patch.object(agent.anthropic.messages, "create", side_effect=error),
+        patch.object(agent.anthropic.messages, "stream", side_effect=error),
+        patch("ai_assist.execution_helpers.NotificationDispatcher") as mock_nd,
+    ):
+        mock_nd.return_value.dispatch = AsyncMock()
+        result = await engine.execute_action(action)
+
+    assert result.success is False
+    assert "Rate Limit" in result.output
+    assert state_manager.get_monitor_state(engine._state_key(action)).last_results["last_success"] is False
+
+
+@pytest.mark.asyncio
+async def test_mcp_prompt_api_error_raised_when_requested():
+    from ai_assist.agent import QueryAPIError
+
+    config = AiAssistConfig(anthropic_api_key="test-key", working_dirs=["/tmp"])
+    agent = AiAssistAgent(config=config)
+    message = MagicMock(role="user")
+    message.content.text = "Write the daily report."
+    session = MagicMock()
+    session.get_prompt = AsyncMock(return_value=MagicMock(messages=[message]))
+    agent.sessions = {"srv": session}
+    agent.available_prompts = {"srv": {"report": MagicMock(arguments=None)}}
+    error = _rate_limit_error()
+
+    with (
+        patch.object(agent.anthropic.messages, "create", side_effect=error),
+        patch.object(agent.anthropic.messages, "stream", side_effect=error),
+    ):
+        with pytest.raises(QueryAPIError, match="Rate Limit"):
+            await agent.execute_mcp_prompt("srv", "report", max_turns=1, raise_on_api_error=True)
+        # Without the flag, the partial (here empty) response is still returned.
+        assert await agent.execute_mcp_prompt("srv", "report", max_turns=1) == ""

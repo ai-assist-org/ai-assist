@@ -80,7 +80,9 @@ class TestActionEngine:
         result = await engine.execute_action(action)
 
         assert result.success is True
-        mock_agent.execute_mcp_prompt.assert_called_once_with("dci", "rca", {"days": "1"}, max_turns=100)
+        mock_agent.execute_mcp_prompt.assert_called_once_with(
+            "dci", "rca", {"days": "1"}, max_turns=100, raise_on_api_error=True
+        )
 
     @pytest.mark.asyncio
     async def test_execute_builtin_kg_synthesis(self, engine, mock_agent):

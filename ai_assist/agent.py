@@ -2358,6 +2358,7 @@ class AiAssistAgent:
         arguments: dict[str, Any] | None = None,
         max_turns: int = 100,
         max_time_seconds: int | None = None,
+        raise_on_api_error: bool = False,
     ) -> str:
         """Execute an MCP prompt by retrieving it from the server and feeding it to Claude
 
@@ -2368,12 +2369,15 @@ class AiAssistAgent:
             max_turns: Maximum agentic turns
             max_time_seconds: Maximum wall-clock time in seconds. If None, inherits
                 remaining time from the outer query deadline when available.
+            raise_on_api_error: Raise ``QueryAPIError`` on a model API failure
+                instead of returning the partial response (see ``query``).
 
         Returns:
             Claude's response after executing the prompt instructions
 
         Raises:
             ValueError: If server/prompt not found or arguments invalid
+            QueryAPIError: If the model API failed and ``raise_on_api_error`` is set
         """
         # Validate server exists
         if server_name not in self.sessions:
@@ -2460,6 +2464,8 @@ class AiAssistAgent:
                     elif chunk.get("type") in ("error", "cancelled"):
                         if self.on_inner_execution:
                             self.on_inner_execution(chunk)
+                        if raise_on_api_error and chunk.get("api_error"):
+                            raise QueryAPIError(chunk["message"])
                         break
                     elif chunk.get("type") == "done":
                         break

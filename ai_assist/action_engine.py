@@ -49,10 +49,10 @@ class ActionEngine:
             elif action.is_mcp_prompt:
                 server, prompt_name = action.parse_mcp_prompt()
                 output = await self.agent.execute_mcp_prompt(
-                    server, prompt_name, action.prompt_arguments, max_turns=action.max_turns
+                    server, prompt_name, action.prompt_arguments, max_turns=action.max_turns, raise_on_api_error=True
                 )
             else:
-                output = await self.agent.query(prompt, max_turns=action.max_turns)
+                output = await self.agent.query(prompt, max_turns=action.max_turns, raise_on_api_error=True)
 
             evaluator = ConditionEvaluator()
             metadata = evaluator.extract_metadata(output)
