@@ -972,7 +972,7 @@ Do NOT compact if you still need the old tool results for your current task.
 
         try:
             # Execute the prompt using the agent's method
-            result = await self.agent.execute_mcp_prompt(server, prompt, prompt_arguments)
+            result = await self.agent.execute_mcp_prompt(server, prompt, prompt_arguments, raise_on_api_error=True)
 
             return json.dumps(
                 {

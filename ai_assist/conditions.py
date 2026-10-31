@@ -221,7 +221,7 @@ class ActionExecutor:
         """
 
         try:
-            await self.agent.query(prompt)
+            await self.agent.query(prompt, raise_on_api_error=True)
             logger.info("Created Google Doc: %s", title)
         except Exception as e:
             logger.exception("Error creating Google Doc: %s", e)

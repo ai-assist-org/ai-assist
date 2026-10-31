@@ -283,3 +283,43 @@ async def test_mcp_prompt_api_error_raised_when_requested():
             await agent.execute_mcp_prompt("srv", "report", max_turns=1, raise_on_api_error=True)
         # Without the flag, the partial (here empty) response is still returned.
         assert await agent.execute_mcp_prompt("srv", "report", max_turns=1) == ""
+
+
+def _status_error(cls, status: int, message: str):
+    mock_response = MagicMock(spec=Response)
+    mock_response.status_code = status
+    mock_response.headers = {"request-id": "test-request-id"}
+    return cls(message=message, response=mock_response, body={"error": {"message": message}})
+
+
+def _api_failures():
+    from anthropic import InternalServerError
+
+    return {
+        "rate_limit": _rate_limit_error(),
+        "overloaded": _status_error(InternalServerError, 529, "Overloaded"),
+        "context_too_large": _status_error(BadRequestError, 400, "prompt is too long: 250000 tokens"),
+        "connection": APIConnectionError(message="Connection reset", request=MagicMock()),
+        "server_error": _status_error(InternalServerError, 500, "Internal server error"),
+        "non_api_exception": BrokenPipeError(32, "Broken pipe"),
+        "stream_stalled": TimeoutError(),
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", list(_api_failures()))
+async def test_every_api_failure_message_is_recognized(kind):
+    """Interactive modes rely on is_api_error to keep failures out of conversation memory."""
+    from ai_assist.message_utils import is_api_error
+
+    config = AiAssistConfig(anthropic_api_key="test-key", working_dirs=["/tmp"])
+    agent = AiAssistAgent(config=config)
+    error = _api_failures()[kind]
+
+    with (
+        patch.object(agent.anthropic.messages, "create", side_effect=error),
+        patch.object(agent.anthropic.messages, "stream", side_effect=error),
+    ):
+        result = await agent.query("test query", max_turns=1)
+
+    assert is_api_error(result), result

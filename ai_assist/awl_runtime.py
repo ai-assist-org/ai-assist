@@ -1289,7 +1289,7 @@ class AWLRuntime:
             f"Has the success criterion been met? Respond with JSON:\n"
             f'{{"success_met": true/false, "reason": "brief explanation"}}'
         )
-        response = await self._agent.query(prompt, max_turns=1)
+        response = await self._agent.query(prompt, max_turns=1, raise_on_api_error=True)
         result = self._extract_exposed(response, ["success_met", "reason"])
 
         self._variables["_goal_success_met"] = result.get("success_met", False)

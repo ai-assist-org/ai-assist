@@ -33,10 +33,15 @@ def is_api_error(response: str) -> bool:
     Returns:
         True if the response is an API error message
     """
-    return (
-        response.startswith("API Error:")
-        or response.startswith("API Rate Limit Error:")
-        or response.startswith("API Connection Error:")
+    return response.startswith(
+        (
+            "API Error:",
+            "API Rate Limit Error:",
+            "API Connection Error:",
+            "The API is currently overloaded",
+            "The context is too large",
+            "Model stream timed out",
+        )
     )
 
 

@@ -2327,7 +2327,7 @@ class AiAssistAgent:
                         }
                     else:
                         logger.warning("API error: %s", error_msg)
-                        yield {"type": "error", "message": error_msg, "api_error": True}
+                        yield {"type": "error", "message": f"API Error: {error_msg}", "api_error": True}
 
                     return
 

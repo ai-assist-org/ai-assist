@@ -2023,6 +2023,12 @@ async def handle_plan_command(
             console.print("\n[yellow]No plan was generated.[/yellow]\n")
             return
 
+        from ai_assist.message_utils import is_api_error
+
+        if is_api_error(plan_text):
+            console.print("\n[yellow]No plan was generated (API error).[/yellow]\n")
+            return
+
         if conversation_memory:
             conversation_memory.add_exchange(f"/plan {task}", plan_text)
 
@@ -2049,7 +2055,7 @@ async def handle_plan_command(
             response = await query_with_feedback(
                 agent, execution_prompt, console, conversation_memory=conversation_memory, kg_context=kg_context
             )
-            if response and conversation_memory:
+            if response and conversation_memory and not is_api_error(response):
                 conversation_memory.add_exchange("(plan execution)", response)
             console.print()
             return
