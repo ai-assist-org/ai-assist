@@ -821,8 +821,8 @@ class AWLRuntime:
             f"Extract the requested information from the output above and return "
             f"ONLY a JSON block with these keys: {keys}\n"
             f"```json\n{{{example}}}\n```\n"
-            f"If a value is not present in the output, use your best judgement to "
-            f"infer it from context. Do NOT call any tools. Output nothing else."
+            f"If a value is not present in the output, use null: do not infer or guess it. "
+            f"Do NOT call any tools. Output nothing else."
         )
         logger.info("AWL task '%s': nudging for missing exposed vars: %s", task.task_id, missing_vars)
         console_print(f"    [~] nudging for missing vars: {missing_vars}")

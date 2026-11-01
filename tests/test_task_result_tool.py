@@ -117,3 +117,59 @@ async def test_agent_dispatches_tool_call():
     await agent._execute_tool("internal__finish_task", {"status": "failed", "reason": "token expired"})
 
     assert agent.task_result_tool.end(prev) == {"status": "failed", "reason": "token expired", "values": {}}
+
+
+def _text(text: str) -> dict:
+    return {"content": [{"type": "text", "text": text}], "stop_reason": "end_turn"}
+
+
+def _finish(arguments: dict) -> dict:
+    return {
+        "content": [{"type": "tool_use", "id": "toolu_finish", "name": "internal__finish_task", "input": arguments}],
+        "stop_reason": "tool_use",
+    }
+
+
+@pytest.mark.asyncio
+async def test_task_ending_without_finish_is_nudged_to_continue(make_replay_agent):
+    """The model narrates its next step and stops; the nudge makes it actually finish."""
+    agent = await make_replay_agent(
+        [
+            _text("All transcripts read. Now writing the final report."),
+            _finish({"status": "success", "values": {"brief_report": "brief-2026-11-01"}}),
+            _text("Report written."),
+        ]
+    )
+    prev = agent.task_result_tool.begin()
+
+    reply = await agent.query("You are executing task 'morning_brief'.")
+
+    assert reply == "Report written."
+    assert agent.task_result_tool.end(prev)["values"] == {"brief_report": "brief-2026-11-01"}
+
+
+@pytest.mark.asyncio
+async def test_finish_nudge_fires_only_once(make_replay_agent):
+    agent = await make_replay_agent([_text("Now writing the report."), _text("I am done.")])
+    prev = agent.task_result_tool.begin()
+
+    reply = await agent.query("You are executing task 't'.")
+
+    assert reply == "I am done."
+    assert agent.task_result_tool.end(prev) is None
+
+
+@pytest.mark.asyncio
+async def test_no_finish_nudge_outside_a_task(make_replay_agent):
+    agent = await make_replay_agent([_text("Here is your answer.")])
+
+    assert await agent.query("What time is it?") == "Here is your answer."
+
+
+@pytest.mark.asyncio
+async def test_no_finish_nudge_once_finish_was_called(make_replay_agent):
+    agent = await make_replay_agent([_finish({"status": "failed", "reason": "no data"}), _text("Stopping.")])
+    prev = agent.task_result_tool.begin()
+
+    assert await agent.query("You are executing task 't'.") == "Stopping."
+    assert agent.task_result_tool.end(prev)["status"] == "failed"

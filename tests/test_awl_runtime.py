@@ -2363,3 +2363,23 @@ async def test_task_prompt_asks_for_finish_tool(mock_agent, runtime):
     assert 'status="failed"' in with_expose
     assert "internal__finish_task" in without_expose
     assert 'status="failed"' in without_expose
+
+
+@pytest.mark.asyncio
+async def test_expose_nudge_does_not_ask_to_infer_values(mock_agent, runtime):
+    """A missing value must stay missing, not be guessed from narration."""
+    prompts = []
+
+    async def query(prompt, **kwargs):
+        prompts.append(prompt)
+        return "Now writing the final report." if len(prompts) == 1 else '```json\n{"brief_report": null}\n```'
+
+    mock_agent.query = AsyncMock(side_effect=query)
+    result = await runtime.execute(
+        WorkflowNode(body=[TaskNode(task_id="brief", goal="Write the brief.", expose=["brief_report"])])
+    )
+
+    nudge = prompts[1]
+    assert "best judgement" not in nudge
+    assert "null" in nudge
+    assert result.variables["brief_report"] is None

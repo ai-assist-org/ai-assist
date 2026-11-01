@@ -1987,6 +1987,7 @@ class AiAssistAgent:
             self._wrapup_nudge_fired = False
             self._loop_nudge_fired = False
             self._narration_nudge_fired = False
+            self._finish_nudge_fired = False
 
             # Store messages for introspection tools to access
             self._conversation_messages = messages
@@ -2216,6 +2217,29 @@ class AiAssistAgent:
                                         "message": "Agent stopped responding (no progress detected)",
                                     }
                                     return
+                                continue
+
+                            # An AWL task turn that ends without internal__finish_task is
+                            # often a model narrating its next step ("Now writing the
+                            # report.") and stopping: nudge once to continue or report.
+                            if (
+                                self.task_result_tool.active
+                                and not self.task_result_tool.reported
+                                and not self._finish_nudge_fired
+                            ):
+                                self._finish_nudge_fired = True
+                                logger.warning("Task turn ended without internal__finish_task; nudging to continue")
+                                messages.append(
+                                    {
+                                        "role": "user",
+                                        "content": (
+                                            "You ended your turn without calling internal__finish_task. If work "
+                                            "remains, continue it now; otherwise call internal__finish_task "
+                                            '(status "success" with the values, or "failed" with a reason).'
+                                        ),
+                                    }
+                                )
+                                no_progress_count = 0
                                 continue
 
                             if self.config.jev_verify_narration and not self._narration_nudge_fired:

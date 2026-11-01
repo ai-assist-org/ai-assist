@@ -23,6 +23,11 @@ class TaskResultTool:
     def active(self) -> bool:
         return self._active
 
+    @property
+    def reported(self) -> bool:
+        """Whether the current task has called internal__finish_task yet."""
+        return self._result is not None
+
     def begin(self) -> tuple[bool, dict[str, Any] | None]:
         """Start recording for a task; returns the previous state for ``end``."""
         previous = (self._active, self._result)
