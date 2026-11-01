@@ -2254,28 +2254,37 @@ class FilesystemTools:
             if is_sensitive_path(path):
                 return f"Error: {path} is a sensitive location (keys/credentials) the agent cannot access."
 
-        program_args = ", ".join(sorted(set(_program_running_arguments(command))))
-        if program_args:
-            if self.confirmation_callback is None:
-                return f"Error: {program_args} can run arbitrary programs; not allowed in non-interactive mode."
-            if not await self.confirmation_callback(f"Allow {program_args} (can run arbitrary programs): {command}"):
-                return f"Error: {program_args} rejected by user."
+        # These are extra confirmation gates for commands that were only *silently*
+        # auto-allowed (allowlist/builtins). When the command was explicitly
+        # user-approved or authorized by a user-started AWL script, was_auto_allowed
+        # is False and they are skipped — the user already signed off on it. Hard
+        # blocks (sensitive paths above, write-target checks below) always apply.
+        if was_auto_allowed:
+            program_args = ", ".join(sorted(set(_program_running_arguments(command))))
+            if program_args:
+                if self.confirmation_callback is None:
+                    return f"Error: {program_args} can run arbitrary programs; not allowed in non-interactive mode."
+                if not await self.confirmation_callback(
+                    f"Allow {program_args} (can run arbitrary programs): {command}"
+                ):
+                    return f"Error: {program_args} rejected by user."
 
-        hijacked = ", ".join(sorted(_program_hijacking_assignments(command)))
-        if hijacked:
-            if self.confirmation_callback is None:
-                return f"Error: Setting {hijacked} changes which program runs; not allowed in non-interactive mode."
-            if not await self.confirmation_callback(f"Set {hijacked} (changes which program runs): {command}"):
-                return f"Error: Setting {hijacked} rejected by user."
+            hijacked = ", ".join(sorted(_program_hijacking_assignments(command)))
+            if hijacked:
+                if self.confirmation_callback is None:
+                    return f"Error: Setting {hijacked} changes which program runs; not allowed in non-interactive mode."
+                if not await self.confirmation_callback(f"Set {hijacked} (changes which program runs): {command}"):
+                    return f"Error: Setting {hijacked} rejected by user."
 
         for cmd_name, path_or_marker in _extract_command_argument_paths(command, working_dir):
             pair_error = await self._validate_argument_pair(cmd_name, path_or_marker, command, was_auto_allowed)
             if pair_error:
                 return pair_error
 
-        interpreter_error = await self._check_code_interpreters(command)
-        if interpreter_error:
-            return interpreter_error
+        if was_auto_allowed:
+            interpreter_error = await self._check_code_interpreters(command)
+            if interpreter_error:
+                return interpreter_error
 
         return None
 

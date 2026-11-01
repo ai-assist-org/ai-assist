@@ -163,3 +163,66 @@ async def test_update_to_awl_prompt_requires_confirmation(tmp_path):
 
     assert "confirm" in result.lower()
     assert "x.awl" not in await tools.execute_tool("internal__list_actions", {})
+
+
+# --- AWL-authorized commands bypass the extra confirmation gates (not hard blocks) ---
+
+
+@pytest.mark.asyncio
+async def test_awl_authorized_git_config_runs_non_interactively(tmp_path, monkeypatch):
+    """A git-config/hooksPath command written in a user-started AWL script runs in /monitor."""
+    from ai_assist.config import AiAssistConfig
+    from ai_assist.filesystem_tools import FilesystemTools
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    import subprocess
+
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    tools = FilesystemTools(
+        AiAssistConfig(anthropic_api_key="t", allowed_commands=["git"], allowed_paths=[str(tmp_path)]),
+        load_user_config=False,
+    )
+    # No confirmation callback = non-interactive (monitor). git is awl-authorized:
+    tools.awl_authorized_commands = {"git"}
+
+    result = await tools.execute_tool("execute_command", {"command": f"git -C {repo} config core.hooksPath .githooks"})
+
+    assert not result.startswith("Error"), result
+
+
+@pytest.mark.asyncio
+async def test_awl_authorized_interpreter_runs_non_interactively(tmp_path):
+    from ai_assist.config import AiAssistConfig
+    from ai_assist.filesystem_tools import FilesystemTools
+
+    tools = FilesystemTools(
+        AiAssistConfig(anthropic_api_key="t", allowed_commands=["awk"], allowed_paths=[str(tmp_path)]),
+        load_user_config=False,
+    )
+    tools.awl_authorized_commands = {"awk"}
+
+    result = await tools.execute_tool("execute_command", {"command": "awk 'BEGIN{print 1}'"})
+
+    assert not result.startswith("Error"), result
+
+
+@pytest.mark.asyncio
+async def test_non_awl_git_config_still_gated(tmp_path):
+    """Without AWL authorization, git config set is still gated in /monitor."""
+    from ai_assist.config import AiAssistConfig
+    from ai_assist.filesystem_tools import FilesystemTools
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    import subprocess
+
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    tools = FilesystemTools(
+        AiAssistConfig(anthropic_api_key="t", allowed_commands=["git"], allowed_paths=[str(tmp_path)]),
+        load_user_config=False,
+    )
+
+    result = await tools.execute_tool("execute_command", {"command": f"git -C {repo} config core.hooksPath x"})
+
+    assert result.startswith("Error"), result
