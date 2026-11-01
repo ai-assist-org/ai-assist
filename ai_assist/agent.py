@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import re
+import ssl
 import time
 import uuid
 from contextlib import aclosing, asynccontextmanager, suppress
@@ -38,6 +39,7 @@ from .mlflow_tracing import end_span, record_query_trace, setup_mlflow, start_qu
 from .output import console_print
 from .plugins_loader import PluginsLoader
 from .plugins_manager import PluginsManager
+from .query_errors import QueryAPIError, QueryIncompleteError
 from .redaction import Redactor
 from .report_tools import ReportTools
 from .script_execution_tools import ScriptExecutionTools
@@ -74,6 +76,26 @@ logger = logging.getLogger(__name__)
 
 
 _STREAM_EXHAUSTED = object()
+
+# Waits before retrying a model turn whose stream dropped mid-reply; one entry
+# per retry. The SDK's own retries only cover failures before the response starts.
+_STREAM_RETRY_BACKOFF_SECONDS = (1, 3)
+
+
+def _is_transient_stream_error(exc: BaseException) -> bool:
+    """Whether ``exc`` (or an exception it wraps) is a dropped connection worth retrying.
+
+    Matches transport errors by class name so both httpx and its httpx2 fork
+    (used by the Anthropic SDK) are covered without importing either.
+    """
+    current: BaseException | None = exc
+    while current is not None:
+        if isinstance(current, ssl.SSLError | ConnectionError):
+            return True
+        if any(cls.__name__ == "TransportError" for cls in type(current).__mro__):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
 
 
 def _next_stream_event(iterator):
@@ -238,10 +260,6 @@ def _extract_date_range(question: str) -> tuple[datetime, datetime] | None:
         return _month_window(year, month)
 
     return None
-
-
-class QueryAPIError(Exception):
-    """The model API failed (or its stream stalled), so the query has no answer."""
 
 
 class AiAssistAgent:
@@ -1710,13 +1728,18 @@ class AiAssistAgent:
         max_turns: int = 100,
         progress_callback=None,
         max_time_seconds: int | None = None,
+        *,
         raise_on_api_error: bool = False,
+        raise_on_incomplete: bool = False,
     ) -> str:
         """Collect the final answer from the shared streaming execution path.
 
         A model API failure is returned as its error message, like any other
         error, unless ``raise_on_api_error`` is set: then it raises
         ``QueryAPIError`` so the caller cannot mistake it for an answer.
+        Likewise ``raise_on_incomplete`` raises ``QueryIncompleteError`` when the
+        query stops without a final answer for another reason (time or turn
+        limit, tool loop, no progress, refusal).
         """
         chunks: list[str] = []
         async with aclosing(
@@ -1736,6 +1759,8 @@ class AiAssistAgent:
                 elif event["type"] == "error":
                     if raise_on_api_error and event.get("api_error"):
                         raise QueryAPIError(event["message"])
+                    if raise_on_incomplete and not event.get("api_error"):
+                        raise QueryIncompleteError(event["message"])
                     return event["message"]
                 elif event["type"] == "tool_use":
                     chunks.clear()
@@ -1998,7 +2023,12 @@ class AiAssistAgent:
             if progress_callback:
                 progress_callback("thinking", 0, max_turns, None)
 
-            for turn in range(max_turns):
+            # A while loop (not range) so a dropped stream can redo the same turn
+            # without consuming the turn budget.
+            turn = -1
+            stream_retries = 0
+            while turn + 1 < max_turns:
+                turn += 1
                 self._record_query_event("turn_started", turn=turn + 1)
                 # Check time-based timeout (only when max_time_seconds is explicitly set)
                 if max_time_seconds:
@@ -2075,6 +2105,9 @@ class AiAssistAgent:
                 while total_chars > MAX_TOTAL_MESSAGE_CHARS and len(messages) > 2 and not thinking_block_present:
                     messages.pop(0)
                     total_chars = sum(len(str(m.get("content", ""))) for m in messages)
+
+                # A retry is only safe while this turn hasn't added to the conversation.
+                messages_before_turn = len(messages)
 
                 # The SDK stream is synchronous. Running each blocking operation
                 # in a worker keeps the event loop responsive to cancellation and
@@ -2288,6 +2321,24 @@ class AiAssistAgent:
                     }
                     return
                 except Exception as e:
+                    if (
+                        _is_transient_stream_error(e)
+                        and stream_retries < len(_STREAM_RETRY_BACKOFF_SECONDS)
+                        and len(messages) == messages_before_turn
+                    ):
+                        backoff = _STREAM_RETRY_BACKOFF_SECONDS[stream_retries]
+                        stream_retries += 1
+                        logger.warning(
+                            "Model stream dropped (%s); retrying turn %d (%d/%d)",
+                            e,
+                            turn + 1,
+                            stream_retries,
+                            len(_STREAM_RETRY_BACKOFF_SECONDS),
+                        )
+                        self._record_query_event("model_stream_retry", turn=turn + 1, detail=type(e).__name__)
+                        await asyncio.sleep(backoff)
+                        turn -= 1
+                        continue
                     logger.exception("Query execution failed")
                     self._record_query_event("query_error", turn=turn + 1, detail=type(e).__name__)
                     # Handle API errors

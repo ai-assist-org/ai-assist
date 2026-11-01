@@ -61,7 +61,7 @@ Both interactive and collected responses use the streaming agent loop in `agent.
 `query()` collects the final answer from `query_streaming()`; keep execution logic in
 the shared streaming path. Both entry points default to a 600-second time budget
 (`AI_ASSIST_QUERY_TIMEOUT`). Time spent waiting on an approval prompt (`pause_timeout()`)
-doesn't count. A model API failure comes back from `query()` as error text unless the caller passes `raise_on_api_error=True` (AWL tasks and scheduled actions do, also via `execute_mcp_prompt`), which raises `QueryAPIError` instead. An AWL script run from a tool call doesn't count against the enclosing
+doesn't count. A model API failure comes back from `query()` as error text unless the caller passes `raise_on_api_error=True` (AWL tasks and scheduled actions do, also via `execute_mcp_prompt`), which raises `QueryAPIError` instead. Similarly `raise_on_incomplete=True` (AWL tasks) raises `QueryIncompleteError` when the query stops without a final answer (time/turn limit, loop, no progress, refusal); both live in `query_errors.py`. A model turn whose stream drops mid-reply (transport/SSL/connection-reset error) is retried up to twice (`_STREAM_RETRY_BACKOFF_SECONDS`) without consuming the turn budget, but only if the turn hasn't added to the conversation yet. An AWL script run from a tool call doesn't count against the enclosing
 query either (`exempt_enclosing_queries_from_timeout()`): the script bounds itself per
 task, and its tasks keep their own budgets.
 

@@ -28,6 +28,7 @@ from .config import EFFORT_SETTINGS
 from .filesystem_tools import extract_command_names
 from .jev_client import JevError, jev_configured, jev_decide, noul, noul_probability
 from .output import console_print
+from .query_errors import QueryIncompleteError
 
 logger = logging.getLogger(__name__)
 
@@ -612,6 +613,7 @@ class AWLRuntime:
                     )
                 task_commands = self._authorize_task_commands(task)
                 previous_result_state = self._agent.task_result_tool.begin()
+                stopped_early: QueryIncompleteError | None = None
                 try:
                     response = await self._agent.query(
                         prompt,
@@ -619,7 +621,11 @@ class AWLRuntime:
                         progress_callback=callback,
                         max_time_seconds=task.max_time,
                         raise_on_api_error=True,
+                        raise_on_incomplete=True,
                     )
+                except QueryIncompleteError as e:
+                    stopped_early = e
+                    response = str(e)
                 finally:
                     reported = self._agent.task_result_tool.end(previous_result_state)
                     self._revoke_task_commands(*task_commands)
@@ -655,6 +661,9 @@ class AWLRuntime:
                 for line in details:
                     console_print(line)
 
+            # Out of time or turns: unfinished, unless the agent had already reported.
+            if stopped_early and not reported:
+                raise AWLRuntimeError(f"Task '{task.task_id}' stopped before finishing: {stopped_early}")
             if reported and reported["status"] == "failed":
                 raise AWLRuntimeError(f"Task '{task.task_id}' reported failure: {reported['reason']}")
             reported_values = {k: v for k, v in reported["values"].items() if k in task.expose} if reported else {}

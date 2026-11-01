@@ -405,6 +405,8 @@ During a task, and only then, the agent has an `internal__finish_task` tool. The
 - `status="success"` with `values` holding the task's `Expose:` variables. These are taken as is (method `finish_tool`); only keys missing from `values` go through the usual extraction (JSON block in the reply, nudge, report sections).
 - `status="failed"` with a `reason` when the goal could not be achieved (a required step failed, a tool returned an error, needed data is missing). The task then fails with that reason, exactly like any other task failure, instead of exposing empty values that later steps would take as real results.
 
+If the task runs out of time (`max_time`, default 600 s) or turns (`max_tool_calls`) before calling the tool, it fails as unfinished ("stopped before finishing"), even if part of its output is usable; give long tasks a larger `max_time`. If it had already called the tool, its report stands.
+
 If the agent ends its turn without calling the tool (typically narrating a next step, like "Now writing the report.", and stopping), it is nudged once to continue or report. If it still doesn't call it, the task behaves as before: success, with values extracted from its reply. A value that isn't in the reply stays unset (`None`) rather than being guessed.
 
 ## @fail

@@ -2383,3 +2383,49 @@ async def test_expose_nudge_does_not_ask_to_infer_values(mock_agent, runtime):
     assert "best judgement" not in nudge
     assert "null" in nudge
     assert result.variables["brief_report"] is None
+
+
+# --- Task limits: a task that runs out of time or turns is unfinished ---
+
+
+@pytest.mark.asyncio
+async def test_task_hitting_its_limit_without_finishing_fails(mock_agent, runtime):
+    from ai_assist.query_errors import QueryIncompleteError
+
+    async def query(prompt, **kwargs):
+        assert kwargs.get("raise_on_incomplete") is True
+        raise QueryIncompleteError("Task timeout after 600 seconds (max: 600s)")
+
+    mock_agent.query = AsyncMock(side_effect=query)
+    workflow = WorkflowNode(
+        body=[
+            TaskNode(task_id="candidates", goal="Build candidates.", expose=["candidates_path"]),
+            TaskNode(task_id="evaluate", goal="Evaluate ${candidates_path}."),
+        ]
+    )
+    result = await runtime.execute(workflow)
+
+    assert result.success is False
+    assert [o.status for o in result.task_outcomes] == ["failed"]
+    assert "stopped before finishing" in result.task_outcomes[0].summary
+    assert "Task timeout" in result.task_outcomes[0].summary
+    mock_agent.query.assert_called_once()  # no expose nudge, next task never ran
+
+
+@pytest.mark.asyncio
+async def test_task_hitting_its_limit_after_reporting_keeps_the_report(mock_agent, runtime):
+    from ai_assist.query_errors import QueryIncompleteError
+
+    async def query(prompt, **kwargs):
+        await mock_agent.task_result_tool.execute_tool(
+            "finish_task", {"status": "success", "values": {"candidates_path": "/tmp/c.md"}}
+        )
+        raise QueryIncompleteError("Maximum turns reached without final answer")
+
+    mock_agent.query = AsyncMock(side_effect=query)
+    result = await runtime.execute(
+        WorkflowNode(body=[TaskNode(task_id="candidates", goal="Build.", expose=["candidates_path"])])
+    )
+
+    assert result.success is True
+    assert result.variables["candidates_path"] == "/tmp/c.md"
