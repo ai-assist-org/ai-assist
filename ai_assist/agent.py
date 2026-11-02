@@ -179,6 +179,21 @@ def _meta_params_for_tool(tool_name: str, jq_available: bool) -> list[str]:
 # that never actually happened.
 _JQ_CLAIM_RE = re.compile(r"jq[\s_-]*filter|__jq_filter|\bjq\s+-|\|\s*jq\b", re.IGNORECASE)
 
+# Bounds on what the jev narration check sends: the question is about which
+# tools/commands were used, so the start of each call is enough.
+_NARRATION_CALL_CHARS = 300
+_NARRATION_MAX_CALLS = 40
+_NARRATION_REPLY_CHARS = 6_000
+
+
+def _bounded_text(text: str, limit: int) -> str:
+    """Keep the head and tail of ``text`` within ``limit`` characters."""
+    if len(text) <= limit:
+        return text
+    half = limit // 2
+    return f"{text[:half]}\n[... {len(text) - limit:,} characters omitted ...]\n{text[-half:]}"
+
+
 _NARRATION_NUDGE_MESSAGE = (
     "Your last answer describes using a command, filter, or tool that doesn't match your "
     "actual tool calls above. Revise your answer to accurately describe only what you actually did."
@@ -1621,9 +1636,9 @@ class AiAssistAgent:
             cleaned.append(cleaned_msg)
         return cleaned
 
-    async def _check_narration_consistency(self, final_text: str) -> str | None:
+    async def _check_narration_consistency(self, final_text: str, tool_calls: list[dict] | None = None) -> str | None:
         """Check whether the final response claims tool/filter usage that never
-        happened this query, per self.last_tool_calls.
+        happened this query, per ``tool_calls`` (default: self.last_tool_calls).
 
         Uses jev (fast, cheap, general — catches any tool/claim mismatch) when
         configured; otherwise falls back to a narrower keyword check covering the
@@ -1631,15 +1646,22 @@ class AiAssistAgent:
         applied). Returns a corrective nudge message, or None if the response
         looks consistent (or the check itself was inconclusive/unavailable).
         """
+        if tool_calls is None:
+            tool_calls = self.last_tool_calls
         if jev_configured(self.config):
-            calls_summary = (
-                "\n".join(
-                    f"- {tc['tool_name']}({tc.get('arguments', {})}) meta={tc.get('meta_params') or '(none)'}"
-                    for tc in self.last_tool_calls
+            recent = tool_calls[-_NARRATION_MAX_CALLS:]
+            lines = [
+                _bounded_text(
+                    f"- {tc['tool_name']}({tc.get('arguments', {})}) meta={tc.get('meta_params') or '(none)'}",
+                    _NARRATION_CALL_CHARS,
                 )
-                or "(no tool calls made)"
-            )
-            state = f"Tool calls made this query:\n{calls_summary}\n\nAgent's response:\n{final_text}"
+                for tc in recent
+            ]
+            if len(tool_calls) > len(recent):
+                lines.insert(0, f"({len(tool_calls) - len(recent)} earlier tool calls omitted)")
+            calls_summary = "\n".join(lines) or "(no tool calls made)"
+            reply = _bounded_text(final_text, _NARRATION_REPLY_CHARS)
+            state = f"Tool calls made this query:\n{calls_summary}\n\nAgent's response:\n{reply}"
             question = (
                 "The response may claim it used a specific command, tool, or filter (e.g. jq, "
                 "__jq_filter, grep) to process data. Judge ONLY by literal presence: does that exact "
@@ -1663,7 +1685,7 @@ class AiAssistAgent:
         if _JQ_CLAIM_RE.search(final_text):
             used_jq = any(
                 "__jq_filter" in (tc.get("meta_params") or {}) or "jq" in str(tc.get("arguments", {})).lower()
-                for tc in self.last_tool_calls
+                for tc in tool_calls
             )
             if not used_jq:
                 return _NARRATION_NUDGE_MESSAGE
@@ -2012,6 +2034,8 @@ class AiAssistAgent:
             self._wrapup_nudge_fired = False
             self._loop_nudge_fired = False
             self._narration_nudge_fired = False
+            # last_tool_calls is only cleared by the interactive UI; this query's calls start here.
+            query_tool_calls_start = len(self.last_tool_calls)
             self._finish_nudge_fired = False
 
             # Store messages for introspection tools to access
@@ -2276,7 +2300,9 @@ class AiAssistAgent:
                                 continue
 
                             if self.config.jev_verify_narration and not self._narration_nudge_fired:
-                                nudge = await self._check_narration_consistency(final_text)
+                                nudge = await self._check_narration_consistency(
+                                    final_text, self.last_tool_calls[query_tool_calls_start:]
+                                )
                                 if nudge:
                                     self._narration_nudge_fired = True
                                     logger.warning("Narration inconsistency detected; nudging to revise")
