@@ -226,3 +226,48 @@ async def test_non_awl_git_config_still_gated(tmp_path):
     result = await tools.execute_tool("execute_command", {"command": f"git -C {repo} config core.hooksPath x"})
 
     assert result.startswith("Error"), result
+
+
+# --- Confirmation Q&A is captured for the audit entry ---
+
+
+@pytest.mark.asyncio
+async def test_filesystem_records_command_confirmation(tmp_path):
+    from ai_assist.config import AiAssistConfig
+    from ai_assist.filesystem_tools import FilesystemTools
+
+    tools = FilesystemTools(
+        AiAssistConfig(anthropic_api_key="t", allowed_commands=["python3"], allowed_paths=[str(tmp_path)]),
+        load_user_config=False,
+    )
+
+    async def approve(_desc):
+        return True
+
+    tools.confirmation_callback = approve
+    await tools.execute_tool("execute_command", {"command": "python3 -c 'print(1)'"})
+
+    conf = tools.drain_confirmations()
+    assert conf and conf[0]["decision"] == "approved"
+    assert "python3" in conf[0]["question"]
+    assert tools.drain_confirmations() == []  # drained
+
+
+@pytest.mark.asyncio
+async def test_filesystem_records_path_denial(tmp_path, tmp_path_factory):
+    from ai_assist.config import AiAssistConfig
+    from ai_assist.filesystem_tools import FilesystemTools
+
+    outside = tmp_path_factory.mktemp("outside")
+    tools = FilesystemTools(
+        AiAssistConfig(anthropic_api_key="t", allowed_paths=[str(tmp_path)]), load_user_config=False
+    )
+
+    async def deny(_desc):
+        return False
+
+    tools.path_confirmation_callback = deny
+    await tools.execute_tool("write_file", {"path": str(outside / "x.txt"), "content": "x"})
+
+    conf = tools.drain_confirmations()
+    assert conf and conf[0]["decision"] == "denied" and conf[0]["kind"] == "path"

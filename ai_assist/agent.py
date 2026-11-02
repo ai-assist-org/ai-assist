@@ -2864,7 +2864,13 @@ class AiAssistAgent:
                 )
 
                 is_success = not (isinstance(result_text, str) and result_text.startswith("Error:"))
-                self.audit_logger.log_tool_call(tool_name, arguments, result_text, success=is_success)
+                self.audit_logger.log_tool_call(
+                    tool_name,
+                    arguments,
+                    result_text,
+                    success=is_success,
+                    confirmations=self.filesystem_tools.drain_confirmations(),
+                )
 
                 redirect = self.tool_result_router.handle_result_redirection(
                     result_text, save_to_file, write_to_report, append_to_report

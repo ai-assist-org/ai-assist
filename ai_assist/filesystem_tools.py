@@ -889,6 +889,17 @@ def is_startup_path(path: Path) -> bool:
 _VIRTUAL_FS_ROOTS = frozenset({"proc", "sys", "dev"})
 
 
+def audit_protected_dirs() -> list[Path]:
+    """ai-assist's own audit trail and logs: the agent may read but never write them."""
+    config_dir = get_config_dir()
+    return [config_dir / "audit", config_dir / "logs"]
+
+
+def is_audit_protected_path(path: Path) -> bool:
+    resolved = path.expanduser().resolve()
+    return any(_is_relative_to(resolved, d.resolve()) for d in audit_protected_dirs())
+
+
 def is_unwritable_system_path(path: Path) -> bool:
     resolved = path.expanduser().resolve()
     parts = resolved.parts
@@ -1339,6 +1350,7 @@ class FilesystemTools:
         self.confirmation_callback: Callable[[str], Awaitable[bool]] | None = None
         self.path_confirmation_callback: Callable[[str], Awaitable[bool]] | None = None
         self.awl_authorized_commands: set[str] = set()
+        self._confirmations: list[dict] = []
 
     def set_permission_mode(self, mode: str) -> str | None:
         """Set a session-only permission mode, returning an error if invalid."""
@@ -1459,6 +1471,9 @@ class FilesystemTools:
         Returns:
             Error message if path is not allowed, None if validation passes
         """
+        if for_write and is_audit_protected_path(Path(path_str)):
+            return f"Error: {path_str} is in ai-assist's audit/log area and cannot be written by the agent."
+
         if self.permission_mode == "autonomous":
             return None
 
@@ -1494,7 +1509,7 @@ class FilesystemTools:
             description = f"Access path: {resolved}"
             if reason:
                 description += f"\nReason: {reason}"
-            approved = await self.path_confirmation_callback(description)
+            approved = await self._ask_path(description)
             if approved:
                 return None
             return f"Error: Path access rejected by user: {resolved}"
@@ -1693,6 +1708,7 @@ class FilesystemTools:
         Returns:
             Tool result as string
         """
+        self._confirmations = []
         if tool_name == "read_file":
             return await self._read_file(arguments)
         elif tool_name == "search_in_file":
@@ -1710,13 +1726,40 @@ class FilesystemTools:
         else:
             return f"Error: Unknown filesystem tool: {tool_name}"
 
+    def _record_confirmation(self, kind: str, question: str, decision: str) -> None:
+        """Record a security prompt and its answer for the audit trail (see drain_confirmations)."""
+        self._confirmations.append({"kind": kind, "question": question[:500], "decision": decision})
+
+    def drain_confirmations(self) -> list[dict]:
+        """Return confirmation events since the last drain and clear the buffer."""
+        events, self._confirmations = self._confirmations, []
+        return events
+
+    async def _ask_command(self, description: str) -> bool:
+        """Invoke the command-approval callback and record the question + answer."""
+        if self.confirmation_callback is None:
+            self._record_confirmation("command", description, "auto-denied (non-interactive)")
+            return False
+        approved = bool(await self.confirmation_callback(description))
+        self._record_confirmation("command", description, "approved" if approved else "denied")
+        return approved
+
+    async def _ask_path(self, description: str) -> bool:
+        """Invoke the path-approval callback and record the question + answer."""
+        if self.path_confirmation_callback is None:
+            self._record_confirmation("path", description, "auto-denied (non-interactive)")
+            return False
+        approved = bool(await self.path_confirmation_callback(description))
+        self._record_confirmation("path", description, "approved" if approved else "denied")
+        return approved
+
     async def confirm(self, description: str) -> bool:
         """Ask the user to approve an action; refused when nobody can be asked."""
         if self.permission_mode == "autonomous":
             return True
         if self.confirmation_callback is None:
             return False
-        return await self.confirmation_callback(description)
+        return await self._ask_command(description)
 
     async def _check_confirmation(self, tool_full_name: str, description: str) -> str | None:
         """Check if a tool requires confirmation and prompt the user.
@@ -1734,7 +1777,7 @@ class FilesystemTools:
         if self.confirmation_callback is None:
             return None
 
-        approved = await self.confirmation_callback(description)
+        approved = await self._ask_command(description)
         if not approved:
             return f"Error: Action rejected by user: {description}"
 
@@ -2074,7 +2117,7 @@ class FilesystemTools:
 
             # Prompt for this specific segment
             if self.confirmation_callback is not None:
-                approved = await self.confirmation_callback(segment.strip())
+                approved = await self._ask_command(segment.strip())
                 if not approved:
                     return f"Error: Command '{segment.strip()}' was rejected by the user. Try a different approach or use only allowed commands: {', '.join(self.allowed_commands)}."
             else:
@@ -2282,16 +2325,14 @@ class FilesystemTools:
             if program_args:
                 if self.confirmation_callback is None:
                     return f"Error: {program_args} can run arbitrary programs; not allowed in non-interactive mode."
-                if not await self.confirmation_callback(
-                    f"Allow {program_args} (can run arbitrary programs): {command}"
-                ):
+                if not await self._ask_command(f"Allow {program_args} (can run arbitrary programs): {command}"):
                     return f"Error: {program_args} rejected by user."
 
             hijacked = ", ".join(sorted(_program_hijacking_assignments(command)))
             if hijacked:
                 if self.confirmation_callback is None:
                     return f"Error: Setting {hijacked} changes which program runs; not allowed in non-interactive mode."
-                if not await self.confirmation_callback(f"Set {hijacked} (changes which program runs): {command}"):
+                if not await self._ask_command(f"Set {hijacked} (changes which program runs): {command}"):
                     return f"Error: Setting {hijacked} rejected by user."
 
         for cmd_name, path_or_marker in _extract_command_argument_paths(command, working_dir):
@@ -2323,9 +2364,7 @@ class FilesystemTools:
         if is_write and _DYNAMIC_PATH_CHARS.intersection(path_or_marker):
             if self.confirmation_callback is None:
                 return f"Error: Cannot verify write target {path_or_marker} in non-interactive mode."
-            if not await self.confirmation_callback(
-                f"Write to a path computed at run time ({path_or_marker}): {command}"
-            ):
+            if not await self._ask_command(f"Write to a path computed at run time ({path_or_marker}): {command}"):
                 return f"Error: Write to {path_or_marker} rejected by user."
             return None
         if path_or_marker == "<dangerous-find>":
@@ -2362,7 +2401,7 @@ class FilesystemTools:
             # A bare interpreter on the allowlist is not enough to run arbitrary
             # code non-interactively; the specific invocation must be allowlisted.
             return f"Error: {cmd_name} {path_or_marker} execution is not allowed in non-interactive mode."
-        if not await self.confirmation_callback(f"{cmd_name} {path_or_marker.strip('<>')} execution: {command}"):
+        if not await self._ask_command(f"{cmd_name} {path_or_marker.strip('<>')} execution: {command}"):
             return f"Error: {cmd_name} {path_or_marker} execution rejected by user."
         return None
 
@@ -2423,7 +2462,7 @@ class FilesystemTools:
                 continue
             if self.confirmation_callback is None:
                 return f"Error: {name} runs arbitrary code and needs confirmation; not allowed non-interactively."
-            if not await self.confirmation_callback(f"{name} runs arbitrary code/package: {command}"):
+            if not await self._ask_command(f"{name} runs arbitrary code/package: {command}"):
                 return f"Error: {name} invocation rejected by user."
         return None
 
@@ -2589,6 +2628,12 @@ class FilesystemTools:
             timeout = min(timeout, 300)  # Max 5 minutes
 
         cmd_names = extract_command_names(command)
+
+        # The agent must never write its own audit trail/logs, in any mode (the
+        # legitimate writers use AuditLogger / the logging handler directly).
+        for _src, dest in _extract_command_argument_paths(command, working_dir):
+            if _src in _WRITE_TARGET_SOURCES and is_audit_protected_path(Path(dest)):
+                return f"Error: {dest} is in ai-assist's audit/log area and cannot be written by the agent."
 
         if working_dir and self.permission_mode == "auto" and not self._is_workspace_path(working_dir):
             return f"Error: Working directory is outside the auto-mode workspace: {working_dir}"

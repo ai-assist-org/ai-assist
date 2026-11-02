@@ -127,7 +127,7 @@ async def test_write_outside_allowed_paths_is_rejected(
         "cat > {w}/heredoc.txt <<'EOF'\nhello don't\n$(touch {w}/pwned)\nEOF",
         "x=$(grep x f); echo $x",
         "case x in x) echo match;; *) echo other;; esac",
-        "for ((i = 0; i < 2; i++)); do echo $i; done",
+        "for i in 0 1; do echo $i; done",
         "(cd {w} && grep x f)",
     ],
 )
@@ -160,10 +160,11 @@ async def test_code_running_builtin_allowed_after_confirmation(workdir):
 
 @pytest.mark.asyncio
 async def test_code_running_builtin_allowed_when_allowlisted(workdir):
-    tools = _tools(workdir, commands=("source",))
+    # "." (POSIX dot) is a code-running builtin like source, but portable to /bin/sh=dash (CI)
+    tools = _tools(workdir, commands=(".",))
     (workdir / "env.sh").write_text("echo sourced\n")
 
-    result = await tools.execute_tool("execute_command", {"command": "source ./env.sh"})
+    result = await tools.execute_tool("execute_command", {"command": ". ./env.sh"})
 
     assert "sourced" in result
 
@@ -763,3 +764,51 @@ async def test_awl_authorized_read_outside_allowed(workdir, tmp_path_factory):
     result = await tools.execute_tool("execute_command", {"command": f"cat {outside}/x.txt"})
 
     assert "ok-content" in result
+
+
+# --- The agent's own audit trail and logs are write-protected (reads allowed) ---
+
+
+def _audit_tools(tmp_path, monkeypatch, mode="manual"):
+    monkeypatch.setattr("ai_assist.filesystem_tools.get_config_dir", lambda: tmp_path / ".ai-assist")
+    (tmp_path / ".ai-assist" / "audit").mkdir(parents=True)
+    (tmp_path / ".ai-assist" / "logs").mkdir(parents=True)
+    (tmp_path / ".ai-assist" / "audit" / "tool_calls.jsonl").write_text("{}\n")
+    (tmp_path / ".ai-assist" / "logs" / "ai-assist.log").write_text("log\n")
+    config = AiAssistConfig(
+        anthropic_api_key="t",
+        permission_mode=mode,
+        allowed_commands=["cp", "tee", "cat", "grep"],
+        allowed_paths=[str(tmp_path)],
+    )
+    return FilesystemTools(config, load_user_config=False), tmp_path / ".ai-assist"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["manual", "auto", "autonomous"])
+async def test_audit_and_logs_write_blocked_all_modes(tmp_path, monkeypatch, mode):
+    monkeypatch.setenv("AI_ASSIST_SANDBOX", "true")  # allow autonomous mode
+    tools, cfg = _audit_tools(tmp_path, monkeypatch, mode)
+    audit = cfg / "audit" / "tool_calls.jsonl"
+    log = cfg / "logs" / "ai-assist.log"
+
+    for args in (
+        {"path": str(audit), "content": "TAMPERED"},
+        {"path": str(cfg / "audit" / "new.txt"), "content": "x"},
+    ):
+        assert (await tools.execute_tool("write_file", args)).startswith("Error")
+    for cmd in (f"cp {tmp_path}/src {audit}", f"echo x > {log}", f"echo x | tee {audit}"):
+        (tmp_path / "src").write_text("s")
+        await tools.execute_tool("execute_command", {"command": cmd})
+
+    assert audit.read_text() == "{}\n"
+    assert log.read_text() == "log\n"
+
+
+@pytest.mark.asyncio
+async def test_audit_and_logs_reads_allowed(tmp_path, monkeypatch):
+    tools, cfg = _audit_tools(tmp_path, monkeypatch)
+
+    result = await tools.execute_tool("execute_command", {"command": f"grep log {cfg}/logs/ai-assist.log"})
+
+    assert "log" in result and not result.startswith("Error")

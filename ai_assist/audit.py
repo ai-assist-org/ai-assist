@@ -35,6 +35,13 @@ class AuditLogger:
 
         audit_dir.mkdir(parents=True, exist_ok=True)
         self.log_file = audit_dir / "tool_calls.jsonl"
+        # Keep the audit trail readable only by the owner (it holds tool args/results)
+        try:
+            os.chmod(audit_dir, 0o700)
+            if self.log_file.exists():
+                os.chmod(self.log_file, 0o600)
+        except OSError:
+            logger.debug("Could not tighten audit permissions on %s", audit_dir)
 
     def _sanitize_value(self, value: str) -> str:
         """Remove secrets from a string value"""
@@ -58,6 +65,7 @@ class AuditLogger:
         arguments: dict,
         result: str,
         success: bool,
+        confirmations: list[dict] | None = None,
     ) -> None:
         """Append one JSON line to the audit log.
 
@@ -82,6 +90,8 @@ class AuditLogger:
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
             "pid": os.getpid(),
         }
+        if confirmations:
+            entry["confirmations"] = confirmations
 
         # Log to standard logger for log file visibility
         args_full = json.dumps(sanitized_args)

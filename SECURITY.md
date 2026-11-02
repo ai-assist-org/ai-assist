@@ -129,8 +129,23 @@ All tool calls are logged with:
 - Result text
 - Success/failure status
 - Timestamp
+- `confirmations`: for calls that prompted the user, the question shown and the
+  decision (`approved`/`denied`), so the audit entry is self-contained
 
 **Implementation:** `ai_assist/audit.py` — `AuditLogger`
+
+**Integrity:** the agent's own write tools (`write_file`, `edit_file`,
+`create_directory`, `__save_to_file`, and command writes via redirection /
+`cp` / `mv` / `tee` / `tar` …) can never write under `~/.ai-assist/audit/` or
+`~/.ai-assist/logs/`, in any permission mode including autonomous — so a
+hijacked agent cannot rewrite or delete its own trail. Reads are still allowed
+(e.g. an action that greps `ai-assist.log`). The legitimate writers
+(`AuditLogger`, the logging handler) write these files directly, not through the
+agent tools, so logging is unaffected. The audit directory is created `0700`.
+
+The decision is also logged to `ai-assist.log` (`Security prompt: …
+approved/denied by user`). **Known gap:** a permanent allowlist add ("always")
+is still not distinctly logged (it records as `approved`).
 
 ## 7. Source Citation / Grounding
 
