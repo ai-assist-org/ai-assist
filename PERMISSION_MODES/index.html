@@ -1204,20 +1204,27 @@ switch between modes for the current session.</p>
 <p><code>autonomous</code> is not a credential boundary. An autonomous agent can use every
 mount, credential, MCP server, and network capability enabled for its sandbox.
 Keep sandbox features minimal. Security configuration files
-(<code>allowed_commands.json</code>, <code>allowed_paths.json</code>, and <code>skill_env.json</code>) remain
-protected in every mode.</p>
+(<code>allowed_commands.json</code>, <code>allowed_paths.json</code>, <code>skill_env.json</code>,
+<code>mcp_servers.yaml</code>, <code>.env</code>, <code>schedules.json</code>, <code>event-schedules.json</code>, <code>installed-plugins.json</code>,
+<code>installed-skills.json</code>, <code>plugin-marketplaces.json</code>, <code>redact.json</code>, and
+<code>command_env.json</code>) remain protected in every mode.</p>
 <h2 id="what-auto-mode-permits">What auto mode permits<a class="headerlink" href="#what-auto-mode-permits" title="Permanent link">&para;</a></h2>
 <p>Auto mode permits these operations without an interactive approval prompt:</p>
 <ul>
 <li>Existing explicit command allowlist entries.</li>
-<li>Workspace-local built-in file reads, writes, edits, and directory creation.</li>
+<li>Workspace-local built-in file reads, writes, edits, and directory creation
+  (writes inside a <code>.git</code> directory always ask, in every mode but autonomous).</li>
 <li>Safe shell builtins: <code>cd</code>, <code>echo</code>, <code>false</code>, <code>pwd</code>, <code>printf</code>, <code>test</code>, <code>true</code>,
   and <code>[</code>. The target of <code>cd</code> is still path-validated.</li>
-<li>Read-only Git subcommands: <code>status</code>, <code>diff</code>, <code>log</code>, <code>show</code>, <code>branch</code>,
-  <code>rev-parse</code>, and <code>ls-files</code>. Only <code>git -C &lt;workspace-path&gt;</code> and
+<li>Read-only Git subcommands: <code>status</code>, <code>diff</code>, <code>log</code>, <code>show</code>, <code>branch</code>
+  (listing only), <code>rev-parse</code>, and <code>ls-files</code>, without <code>--output</code>,
+  <code>--ext-diff</code>, or <code>--textconv</code>. Only <code>git -C &lt;workspace-path&gt;</code> and
   <code>git --no-pager</code> are accepted as Git global options.</li>
 <li>Read-only GitHub CLI operations: <code>gh api</code> with the default method or explicit
-  <code>--method GET</code>, plus <code>gh pr view|list|status</code> and <code>gh run view|list</code>.</li>
+  <code>--method GET</code> and no <code>-f</code>/<code>-F</code>/<code>--field</code>/<code>--raw-field</code>/<code>--input</code>, plus
+  <code>gh pr view|list|status</code> and <code>gh run view|list</code>.</li>
+<li>Read-only <code>sqlite3</code> queries on <code>:memory:</code> or a workspace database, without
+  the <code>writefile</code>, <code>readfile</code>, or <code>edit</code> shell functions.</li>
 <li>Workspace-local test and static-analysis commands: <code>pytest</code>,
   <code>python -m pytest</code>, <code>python3 -m pytest</code>, <code>ruff</code>, <code>mypy</code>, and
   <code>black --check</code>.</li>

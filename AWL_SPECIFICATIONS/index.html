@@ -1291,10 +1291,13 @@ session model tracks that (so a config that defines only the AWL levels still
 runs on a sensible model). Set both explicitly to make them differ.</p>
 <p>Model environment values may include an effort suffix, for example
 <code>AI_ASSIST_MODEL=claude-sonnet-4-6:medium</code> or
-<code>AI_ASSIST_MODEL_HIGH=claude-opus-4-6:max</code>. A recognized suffix is removed from
-the model ID and becomes that model's default effort. Explicit
-<code>AI_ASSIST_EFFORT</code> and <code>--effort</code> values take precedence. Unrecognized suffixes
-are preserved as part of the model ID for custom providers.</p>
+<code>AI_ASSIST_MODEL_HIGH=claude-opus-4-6:max</code>. A recognized suffix (<code>low</code>, <code>medium</code>,
+<code>high</code>, <code>xhigh</code>, <code>max</code>, or <code>no</code>) is removed from the model ID and becomes that
+model's effort; <code>no</code> means send no effort, for a model that rejects the
+parameter. A tier (<code>AI_ASSIST_MODEL_LOW</code>/<code>_MEDIUM</code>/<code>_HIGH</code>) without its own suffix
+inherits the session effort; <code>:no</code> opts it out. Explicit <code>AI_ASSIST_EFFORT</code> and
+<code>--effort</code> values take precedence. Unrecognized suffixes are preserved as part of
+the model ID for custom providers.</p>
 <p>The value is validated at workflow load time. Any value other than <code>low</code>,
 <code>medium</code>, <code>high</code>, or <code>default</code> (including a concrete model id) fails the
 workflow before any task executes.</p>
@@ -1309,9 +1312,10 @@ Expose: rca_result
 @end</p>
 <h2 id="effort">effort=<level><a class="headerlink" href="#effort" title="Permanent link">&para;</a></h2>
 <p>An optional <code>effort</code> attribute overrides the configured request effort for one
-task. Valid values are <code>low</code>, <code>medium</code>, <code>high</code>, <code>xhigh</code>, and <code>max</code>; availability
-depends on the selected model and endpoint. A task without <code>effort=</code> inherits
-<code>AI_ASSIST_EFFORT</code> (or the provider default when unset). Effort does not change
+task. Valid values are <code>low</code>, <code>medium</code>, <code>high</code>, <code>xhigh</code>, <code>max</code>, and <code>no</code> (send no
+effort); availability depends on the selected model and endpoint. A task without
+<code>effort=</code> inherits its tier's effort suffix, or the session effort
+(<code>AI_ASSIST_EFFORT</code>), or the provider default when unset. Effort does not change
 the model's thinking mode.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>@task quick_lookup effort=low
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>Goal: Find the matching job.
@@ -1383,6 +1387,14 @@ Expose: config_entrypoint, config_parser
 Goal: Fetch the latest changes using <code>git -C /path/to/repo fetch origin master</code>.
 @end</p>
 <p>Commands in backticks are <strong>auto-authorized</strong> by the runtime: they are temporarily added to the allowed commands list for the duration of the workflow, so the user is not prompted for confirmation each time.</p>
+<p>This only applies to scripts the user started: <code>ai-assist /run</code>, and actions
+(<code>internal__create_action</code>) whose AWL prompt the user confirmed. When the agent
+runs a script itself (<code>introspection__execute_awl_script</code>), its commands go
+through the normal allowlist and confirmation.</p>
+<p>Commands are taken from the script text, never from interpolated values. A
+<code>${var}</code> may only choose a directory, with the script name written literally
+(<code>${tools_dir}/build.sh</code>), and its value must be a plain path (no spaces or
+shell syntax).</p>
 <p>Commands written without backticks will require manual authorization in interactive mode.</p>
 <hr />
 <h1 id="variables">Variables<a class="headerlink" href="#variables" title="Permanent link">&para;</a></h1>
