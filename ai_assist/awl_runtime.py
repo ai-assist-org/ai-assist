@@ -371,6 +371,8 @@ def validate_workflow_variables(workflow: WorkflowNode, initial_variables: set[s
                 _check_used(node.message, "@continue")
             elif isinstance(node, BreakNode):
                 _check_used(node.message, "@break")
+            elif isinstance(node, FailNode):
+                _check_used(node.message, "@fail")
 
     _walk(workflow.body)
     return warnings
@@ -508,7 +510,7 @@ class AWLRuntime:
         elif isinstance(node, NotifyNode):
             await self._execute_notify(node)
         elif isinstance(node, FailNode):
-            raise AWLRuntimeError(node.message)
+            raise AWLRuntimeError(self._expr.interpolate(node.message, self._variables))
         elif isinstance(node, ContinueNode):
             if self._loop_depth == 0:
                 raise AWLRuntimeError(f"@continue outside loop: {node.message}")

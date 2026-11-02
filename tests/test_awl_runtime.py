@@ -2429,3 +2429,19 @@ async def test_task_hitting_its_limit_after_reporting_keeps_the_report(mock_agen
 
     assert result.success is True
     assert result.variables["candidates_path"] == "/tmp/c.md"
+
+
+@pytest.mark.asyncio
+async def test_fail_message_interpolates_variables(runtime):
+    workflow = WorkflowNode(body=[FailNode(message="No valid channel under ${root} for ${ids}")])
+
+    with pytest.raises(AWLRuntimeError, match=r"^No valid channel under /data/transcripts for a,b$"):
+        await runtime.execute(workflow, variables={"root": "/data/transcripts", "ids": "a,b"})
+
+
+def test_validate_warns_on_undefined_variable_in_fail_message():
+    workflow = WorkflowNode(body=[FailNode(message="Nothing found under ${missing_root}")])
+
+    warnings = validate_workflow_variables(workflow)
+
+    assert warnings == ["@fail: variable 'missing_root' used before definition"]

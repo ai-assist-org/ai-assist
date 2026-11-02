@@ -427,8 +427,8 @@ Example — abort when a task did not produce the expected result:
   @fail Jira collection failed - aborting quarterly review
 @end
 
-The error is reported to the caller. Combine with `@if`/`@else` for conditional
-abort vs. alternative path.
+The error is reported to the caller, with `${var}` references in the message
+interpolated. Combine with `@if`/`@else` for conditional abort vs. alternative path.
 
 **Agent guidance**: When a task's upstream service is unavailable or returns an
 error, do NOT expose the expected variables — leave them unset. The script can
