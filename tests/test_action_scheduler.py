@@ -600,3 +600,35 @@ async def test_missed_once_action_archived_after_catch_up(scheduler, schedule_fi
     scheduler.engine.execute_action.assert_awaited_once()
     assert _once_actions(schedule_file) == []
     assert _archive(schedule_file)[0]["status"] == "completed"
+
+
+# --- Concurrent reloads must not orphan timers ---
+
+
+async def test_concurrent_reloads_leave_one_timer_per_action(mock_agent, state_manager, schedule_file):
+    _write(
+        schedule_file,
+        [{"name": "daily", "trigger": {"type": "schedule", "at": "8:00", "days": "weekdays"}, "prompt": "x"}],
+    )
+    s = ActionScheduler(mock_agent, state_manager, schedule_file)
+
+    async def sleep_forever(target):
+        await asyncio.Event().wait()
+
+    async def yield_to_others():
+        await asyncio.sleep(0.01)
+
+    s._sleep_until = sleep_forever
+    s._start_event_sources = yield_to_others
+    s._stop_event_sources = yield_to_others
+    await s.start()
+
+    try:
+        await asyncio.gather(*(s.reload() for _ in range(10)))
+        await asyncio.sleep(0)
+
+        live = [t for t in asyncio.all_tasks() if t.get_name() == "daily" and not t.done()]
+        assert len(live) == 1
+        assert [h.get_name() for h in s.timer_handles].count("daily") == 1
+    finally:
+        await s.stop()

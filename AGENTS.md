@@ -202,7 +202,7 @@ Unified action system where everything is a **trigger + prompt**. Actions are st
 - **ActionDefinition** (`action_model.py`): unified model replacing `TaskDefinition` + `ScheduledAction`
 - **TriggerMatcher** (`action_model.py`): matches incoming events against event-based trigger configs
 - **ActionEngine** (`action_engine.py`): executes actions (natural language, MCP prompts, AWL, builtins) with event context
-- **ActionScheduler** (`action_scheduler.py`): unified scheduler for timer and event actions
+- **ActionScheduler** (`action_scheduler.py`): unified scheduler for timer and event actions. Edits to event-schedules.json hot-reload it: `FileWatchdog` collapses a burst of writes into one callback (debounce state lives on the loop thread; a running callback is never cancelled), and `reload()` is serialized by a lock, since overlapping reloads would leave untracked duplicate timers.
 - **ActionLoader** (`action_loader.py`): load/save `event-schedules.json`, auto-migration from old format
 - **ActionTools** (`action_tools.py`): agent CRUD tools for actions
 - **EventSource** ABC (`event_sources.py`): pluggable event sources (MQTT, D-Bus, file)

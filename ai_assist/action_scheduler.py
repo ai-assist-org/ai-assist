@@ -45,6 +45,7 @@ class ActionScheduler:
         self._executing: set[str] = set()
         self._last_completed: dict[str, float] = {}
         self._self_write_time: float = 0.0
+        self._reload_lock = asyncio.Lock()  # concurrent reloads would orphan timers
         self._resume_event = asyncio.Event()
 
     def load_actions(self) -> list[ActionDefinition]:
@@ -89,6 +90,10 @@ class ActionScheduler:
         if time.monotonic() - self._self_write_time < 2.0:
             return
 
+        async with self._reload_lock:
+            await self._reload_locked()
+
+    async def _reload_locked(self) -> None:
         logger.info("Reloading actions...")
 
         await self._stop_event_sources()

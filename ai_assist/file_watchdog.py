@@ -155,7 +155,8 @@ class _DebounceHandler(FileSystemEventHandler):
         self.callback = callback
         self.debounce_seconds = debounce_seconds
         self.loop = loop
-        self._debounce_task: asyncio.Task | None = None
+        self._debounce_task: asyncio.Task | None = None  # latest task, for cancel_pending
+        self._waiting_task: asyncio.Task | None = None  # task still in its debounce wait
         self._last_mtime: float = target_file.stat().st_mtime if target_file.exists() else 0.0
 
     def on_modified(self, event: FileSystemEvent) -> None:
@@ -202,22 +203,30 @@ class _DebounceHandler(FileSystemEventHandler):
 
     def _trigger_debounced(self) -> None:
         """Trigger callback after debounce period."""
-        # Cancel existing debounce task
-        if self._debounce_task and not self._debounce_task.done():
-            self._debounce_task.cancel()
-
-        # Schedule new debounce task in the event loop
-        # Use call_soon_threadsafe since observer runs in separate thread
+        # Runs in the observer thread: hand off to the loop thread, which owns the
+        # tasks. Checking the task here would race with its creation, letting a
+        # burst of events schedule one callback each.
         self.loop.call_soon_threadsafe(self._schedule_callback)
 
     def _schedule_callback(self) -> None:
-        """Schedule callback in event loop (must be called from loop thread)."""
-        self._debounce_task = self.loop.create_task(self._debounced_callback())
+        """Restart the debounce wait (must be called from loop thread).
+
+        Only a task still waiting is cancelled; a callback already running is left
+        to finish, and this new task runs it again afterwards.
+        """
+        if self._waiting_task and not self._waiting_task.done():
+            self._waiting_task.cancel()
+        self._debounce_task = self._waiting_task = self.loop.create_task(self._debounced_callback())
 
     async def _debounced_callback(self) -> None:
         """Wait for debounce period then call callback."""
         try:
             await asyncio.sleep(self.debounce_seconds)
+        except asyncio.CancelledError:
+            return
+        if self._waiting_task is asyncio.current_task():
+            self._waiting_task = None
+        try:
             await self.callback()
         except asyncio.CancelledError:
             pass
