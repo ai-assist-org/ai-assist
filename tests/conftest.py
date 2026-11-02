@@ -5,6 +5,27 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+# Variables through which git commands find a repository other than the one in
+# their working directory. Git exports GIT_DIR to its hooks (from a linked
+# worktree, the worktree's git dir), so a test run from a commit hook would
+# otherwise let a scratch `git init` re-initialize the real repository as bare.
+_GIT_REPO_ENV_VARS = (
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_COMMON_DIR",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_NAMESPACE",
+)
+
+
+@pytest.fixture(autouse=True)
+def isolate_git_env(monkeypatch):
+    """Keep git commands run by tests out of the repository being tested."""
+    for var in _GIT_REPO_ENV_VARS:
+        monkeypatch.delenv(var, raising=False)
+
 
 @pytest.fixture(autouse=True)
 def isolate_config_dir(tmp_path, monkeypatch):
