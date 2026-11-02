@@ -161,7 +161,6 @@ register_command(CommandDef("/kg-asof", "Show knowledge graph state at a point i
 register_command(CommandDef("/kg-late", "Show stale knowledge graph entities", mode="cli"))
 register_command(CommandDef("/kg-changes", "Show recent knowledge graph changes", mode="cli"))
 register_command(CommandDef("/kg-show", "Show knowledge graph entity details", mode="cli"))
-register_command(CommandDef("/cleanup-actions", "Clean up old action records", mode="cli"))
 register_command(CommandDef("/sandbox", "Manage sandbox environments", mode="cli", args="<subcommand>"))
 register_command(CommandDef("/service", "Manage persistent service", mode="cli", args="<subcommand>"))
 

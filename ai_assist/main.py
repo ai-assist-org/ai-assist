@@ -861,7 +861,6 @@ async def main_async():
     event_schedules_file = get_config_dir() / "event-schedules.json"
     action_loader = ActionLoader(event_schedules_file)
     action_loader.migrate_from_old_format(get_config_dir() / "schedules.json")
-    action_loader.migrate_scheduled_actions(get_config_dir() / "scheduled-actions.json")
     action_loader.ensure_defaults()
 
     # Parse command - must start with /
@@ -891,7 +890,6 @@ async def main_async():
     kg_commands = ["kg-stats", "kg-asof", "kg-late", "kg-changes", "kg-show", "kg-viz"]
     identity_commands = ["identity-show", "identity-init"]
     state_commands = ["status", "clear-cache"]
-    action_commands = ["cleanup-actions"]
     eval_commands = ["eval-stats", "cost"]
     service_commands = ["service"]
     sandbox_commands = ["sandbox"]
@@ -899,7 +897,6 @@ async def main_async():
         kg_commands
         + identity_commands
         + state_commands
-        + action_commands
         + eval_commands
         + service_commands
         + sandbox_commands
@@ -988,7 +985,6 @@ async def main_async():
                 print("  /kg-show <id>      - Show entity details with context")
                 print("  /kg-viz            - Visualize knowledge graph in browser")
                 print("  /awl-viz [script]  - Visualize an AWL workflow in browser")
-                print("  /cleanup-actions   - Archive old completed/failed actions")
                 print("  /eval-stats        - Show evaluation metrics from query traces")
                 print("  /cost [period]     - Show token cost summary (e.g. /cost 7d)")
                 print("  /sandbox <sub> [name] [args]  - Manage sandboxed instances")
@@ -1117,15 +1113,6 @@ async def main_async():
             elif command == "cost":
                 period = sys.argv[2] if len(sys.argv) > 2 else None
                 cost_command(period)
-            elif command == "cleanup-actions":
-                from .scheduled_actions import ScheduledActionManager
-
-                action_file = get_config_dir() / "scheduled-actions.json"
-                manager = ScheduledActionManager(action_file, agent=None)
-                await manager.load_actions()
-
-                archived = await manager.cleanup_old_actions(max_age_days=7)
-                print(f"✓ Archived {archived} old actions")
             # Sandbox commands
             elif command == "sandbox":
                 from .sandbox import handle_sandbox_command

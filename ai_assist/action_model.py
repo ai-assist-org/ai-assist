@@ -29,6 +29,8 @@ class ActionDefinition(BaseModel):
     conditions: list[dict[str, Any]] = Field(default_factory=list)
     notify: bool = False
     notification_channels: list[str] = Field(default_factory=lambda: ["console"])
+    # A plain reminder: notify with the prompt text, without running the agent.
+    reminder: bool = False
     created_by: str | None = None
     created_at: datetime | None = None
     status: str | None = None
@@ -138,6 +140,7 @@ class ActionDefinition(BaseModel):
             conditions=data.get("conditions", []),
             notify=data.get("notify", False),
             notification_channels=data.get("notification_channels", ["console"]),
+            reminder=data.get("reminder", False),
             created_by=data.get("created_by"),
             created_at=datetime.fromisoformat(data["created_at"]) if data.get("created_at") else None,
             status=data.get("status"),
@@ -161,6 +164,8 @@ class ActionDefinition(BaseModel):
             d["notify"] = self.notify
         if self.notification_channels != ["console"]:
             d["notification_channels"] = self.notification_channels
+        if self.reminder:
+            d["reminder"] = True
         if self.created_by is not None:
             d["created_by"] = self.created_by
         if self.created_at is not None:

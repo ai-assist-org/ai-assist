@@ -281,37 +281,6 @@ class TestMigration:
         assert actions[0].trigger["and"] == "18:00"
         assert actions[0].trigger["days"] == "weekdays"
 
-    def test_migrate_scheduled_actions(self, tmp_path):
-        old_actions_file = tmp_path / "scheduled-actions.json"
-        new_file = tmp_path / "event-schedules.json"
-
-        old_data = {
-            "version": "1.0",
-            "actions": [
-                {
-                    "id": "act-001",
-                    "prompt": "Check deploy",
-                    "scheduled_at": "2026-05-07T14:00:00",
-                    "created_at": "2026-05-07T10:00:00",
-                    "created_by": "agent",
-                    "status": "pending",
-                    "execute_query": True,
-                    "notify": True,
-                },
-            ],
-        }
-        old_actions_file.write_text(json.dumps(old_data))
-
-        loader = ActionLoader(new_file)
-        loader.migrate_scheduled_actions(old_actions_file)
-
-        actions = loader.load_actions()
-        assert len(actions) == 1
-        assert actions[0].trigger_type == "once"
-        assert actions[0].trigger["at"] == "2026-05-07T14:00:00"
-        assert actions[0].created_by == "agent"
-        assert actions[0].status == "pending"
-
     def test_migration_skips_already_present(self, tmp_path):
         old_schedules = tmp_path / "schedules.json"
         new_file = tmp_path / "event-schedules.json"

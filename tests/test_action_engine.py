@@ -235,3 +235,25 @@ async def test_actions_run_without_a_time_limit(engine, mock_agent):
     await engine.execute_action(_make_action())
 
     assert mock_agent.query.call_args.kwargs["max_time_seconds"] == NO_TIME_LIMIT
+
+
+@pytest.mark.asyncio
+async def test_reminder_action_notifies_without_a_model_call(engine, mock_agent):
+    action = _make_action(prompt="Time to stretch", reminder=True, notify=True)
+
+    with patch("ai_assist.action_engine.NotificationDispatcher") as mock_nd:
+        mock_nd.return_value.dispatch = AsyncMock(return_value={})
+        result = await engine.execute_action(action)
+
+    assert result.success is True
+    assert result.output == "Time to stretch"
+    mock_agent.query.assert_not_called()
+    notification = mock_nd.return_value.dispatch.call_args[0][0]
+    assert notification.message == "Time to stretch"
+
+
+def test_reminder_flag_round_trips():
+    action = _make_action(prompt="Time to stretch", reminder=True)
+
+    assert ActionDefinition.from_dict(action.to_dict()).reminder is True
+    assert "reminder" not in _make_action().to_dict()

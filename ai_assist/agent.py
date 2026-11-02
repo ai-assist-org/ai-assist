@@ -438,7 +438,7 @@ class AiAssistAgent:
         # Initialize schedule action tools (one-shot future actions)
         from ai_assist.schedule_action_tools import ScheduleActionTools
 
-        self.schedule_action_tools = ScheduleActionTools(self)
+        self.schedule_action_tools = ScheduleActionTools(self.action_tools)
 
         # Initialize goal tools (autonomous agent goals via AWL)
         from ai_assist.goal_tools import GoalTools

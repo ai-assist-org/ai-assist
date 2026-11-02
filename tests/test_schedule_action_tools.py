@@ -4,6 +4,8 @@ from datetime import datetime, timedelta
 
 import pytest
 
+from ai_assist.action_loader import ActionLoader
+from ai_assist.action_tools import ActionTools
 from ai_assist.schedule_action_tools import parse_time_spec
 
 
@@ -146,15 +148,11 @@ class TestScheduleActionErrorMessage:
     """Test error messages from schedule_action"""
 
     @pytest.mark.asyncio
-    async def test_invalid_format_returns_helpful_error(self):
+    async def test_invalid_format_returns_helpful_error(self, tmp_path):
         """Invalid time format returns error with supported formats"""
         from ai_assist.schedule_action_tools import ScheduleActionTools
 
-        # Mock agent
-        class MockAgent:
-            pass
-
-        tools = ScheduleActionTools(MockAgent())
+        tools = ScheduleActionTools(ActionTools(schedules_file=tmp_path / "event-schedules.json"))
 
         result = await tools.schedule_action(
             prompt="Test reminder",
@@ -174,14 +172,11 @@ class TestScheduleActionErrorMessage:
         assert "Supported formats:" in result
 
     @pytest.mark.asyncio
-    async def test_empty_time_spec_returns_error(self):
+    async def test_empty_time_spec_returns_error(self, tmp_path):
         """Empty time specification returns error"""
         from ai_assist.schedule_action_tools import ScheduleActionTools
 
-        class MockAgent:
-            pass
-
-        tools = ScheduleActionTools(MockAgent())
+        tools = ScheduleActionTools(ActionTools(schedules_file=tmp_path / "event-schedules.json"))
 
         result = await tools.schedule_action(
             prompt="Test reminder",
@@ -191,3 +186,71 @@ class TestScheduleActionErrorMessage:
 
         assert "Error: Could not parse time specification" in result
         assert "Supported formats:" in result
+
+
+class TestScheduleActionCreatesActions:
+    """internal__schedule_action creates one-time actions in event-schedules.json"""
+
+    @pytest.fixture
+    def schedules_file(self, tmp_path):
+        return tmp_path / "event-schedules.json"
+
+    @pytest.fixture
+    def tools(self, schedules_file):
+        from ai_assist.schedule_action_tools import ScheduleActionTools
+
+        return ScheduleActionTools(ActionTools(schedules_file=schedules_file))
+
+    @pytest.mark.asyncio
+    async def test_query_action_written_to_event_schedules(self, tools, schedules_file):
+        result = await tools.schedule_action(
+            prompt="Check unread emails", time_spec="in 2 hours", description="Email check", execute_query=True
+        )
+
+        assert result.startswith("✓ Scheduled")
+        [action] = ActionLoader(schedules_file).load_actions()
+        assert action.trigger_type == "once"
+        assert action.prompt == "Check unread emails"
+        assert action.reminder is False
+        assert action.notify is True
+        assert action.notification_channels == ["desktop", "file"]
+        assert action.created_by == "agent"
+        assert action.status == "pending"
+        at = datetime.fromisoformat(action.trigger["at"])
+        assert abs((at - (datetime.now() + timedelta(hours=2))).total_seconds()) < 60
+        assert action.name.startswith("Email check")
+
+    @pytest.mark.asyncio
+    async def test_simple_reminder_is_a_reminder_action(self, tools, schedules_file):
+        await tools.schedule_action(prompt="Time to stretch", time_spec="in 30 minutes")
+
+        [action] = ActionLoader(schedules_file).load_actions()
+        assert action.reminder is True
+        assert action.prompt == "Time to stretch"
+
+    @pytest.mark.asyncio
+    async def test_create_report_adds_report_instruction(self, tools, schedules_file):
+        await tools.schedule_action(
+            prompt="Summarize open PRs", time_spec="in 1 hour", execute_query=True, create_report=True
+        )
+
+        [action] = ActionLoader(schedules_file).load_actions()
+        assert action.prompt.startswith("Summarize open PRs")
+        assert "report" in action.prompt.lower()
+
+    @pytest.mark.asyncio
+    async def test_notify_false_is_silent(self, tools, schedules_file):
+        await tools.schedule_action(prompt="Refresh cache", time_spec="in 1 hour", execute_query=True, notify=False)
+
+        [action] = ActionLoader(schedules_file).load_actions()
+        assert action.notify is False
+
+    @pytest.mark.asyncio
+    async def test_same_description_at_different_times_gets_unique_names(self, tools, schedules_file):
+        await tools.schedule_action(prompt="Weekly report", time_spec="in 1 hour", description="Weekly report for X")
+        await tools.schedule_action(prompt="Weekly report", time_spec="in 2 days", description="Weekly report for X")
+
+        names = [a.name for a in ActionLoader(schedules_file).load_actions()]
+        assert len(names) == 2
+        assert len(set(names)) == 2
+        assert all(n.startswith("Weekly report for X") for n in names)

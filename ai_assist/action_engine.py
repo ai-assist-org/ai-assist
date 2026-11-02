@@ -43,7 +43,9 @@ class ActionEngine:
             if event_context is not None:
                 prompt = self._build_prompt_with_event(prompt, event_context)
 
-            if prompt == "__builtin__:kg_synthesis":
+            if action.reminder:
+                output = action.prompt
+            elif prompt == "__builtin__:kg_synthesis":
                 output = await self.agent._run_synthesis_from_kg()
             elif prompt.endswith(".awl"):
                 output = await self._run_awl_script(action, prompt)

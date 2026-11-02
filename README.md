@@ -594,31 +594,15 @@ The agent intelligently decides how to execute scheduled actions:
 - "Tell me what's in my Gmail inbox" → Query via agent, notify with results
 - "Check failed jobs and save report" → Query via agent, save to report
 
-**View scheduled actions:**
+**View scheduled actions** (one-time actions live in `event-schedules.json` with the other actions):
 ```bash
-cat ~/.ai-assist/scheduled-actions.json
+jq '.actions[] | select(.trigger.type == "once")' ~/.ai-assist/event-schedules.json
 ```
 
 **View notification history:**
 ```bash
 tail -f ~/.ai-assist/notifications.log
 ```
-
-**Managing Scheduled Actions:**
-
-Completed and failed actions older than 7 days are automatically archived to `~/.ai-assist/scheduled-actions-archive.jsonl`.
-
-```bash
-# Manual cleanup
-uv run ai-assist /cleanup-actions
-
-# View archive
-cat ~/.ai-assist/scheduled-actions-archive.jsonl | jq
-```
-
-**File Structure:**
-- `scheduled-actions.json` - Active and recent (≤7 days) actions
-- `scheduled-actions-archive.jsonl` - Historical actions (>7 days old)
 
 **⚠️ Important:** The `/monitor` process must be running for scheduled actions to execute:
 ```bash

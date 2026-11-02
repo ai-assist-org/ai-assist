@@ -96,48 +96,6 @@ class ActionLoader:
         self._save_json(data)
         logger.info("Migrated %d action(s) from %s", len(new_actions), old_schedules_file)
 
-    def migrate_scheduled_actions(self, old_actions_file: Path) -> None:
-        if not old_actions_file.exists():
-            return
-
-        try:
-            with open(old_actions_file) as f:
-                old_data = json.load(f)
-        except json.JSONDecodeError, OSError:
-            logger.exception("Failed to read old scheduled actions file for migration")
-            return
-
-        data = self._load_json()
-        existing_prompts = {
-            (a.get("prompt"), a.get("trigger", {}).get("at"))
-            for a in data.get("actions", [])
-            if a.get("trigger", {}).get("type") == "once"
-        }
-        count = 0
-
-        for old_action in old_data.get("actions", []):
-            if old_action.get("status") in ("completed", "failed"):
-                continue
-            key = (old_action["prompt"], old_action["scheduled_at"])
-            if key in existing_prompts:
-                continue
-            action = {
-                "name": old_action.get("description") or old_action.get("prompt", "")[:50],
-                "trigger": {"type": "once", "at": old_action["scheduled_at"]},
-                "prompt": old_action["prompt"],
-                "enabled": True,
-                "notify": old_action.get("notify", True),
-                "created_by": old_action.get("created_by"),
-                "created_at": old_action.get("created_at"),
-                "status": old_action.get("status", "pending"),
-            }
-            data.setdefault("actions", []).append(action)
-            count += 1
-
-        if count > 0:
-            self._save_json(data)
-            logger.info("Migrated %d scheduled action(s) from %s", count, old_actions_file)
-
     @staticmethod
     def _convert_old_task(task_data: dict[str, Any]) -> dict[str, Any] | None:
         interval = task_data.get("interval", "")
