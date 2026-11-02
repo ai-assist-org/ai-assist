@@ -7,12 +7,17 @@ Provides three defense layers against MCP-related attacks:
 """
 
 import difflib
+import fcntl
 import hashlib
 import json
 import logging
+import os
 import re
 import secrets
+import tempfile
 import unicodedata
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -234,13 +239,37 @@ class ToolDefinitionRegistry:
             return {}
         return data if isinstance(data, dict) else {}
 
+    @contextmanager
+    def _locked(self) -> Iterator[None]:
+        """Hold an exclusive lock across a read-modify-write of the file.
+
+        The monitor service and an interactive session normally share the file.
+        """
+        if self._path is None:
+            yield
+            return
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        with open(self._path.with_name(f"{self._path.name}.lock"), "w") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock, fcntl.LOCK_UN)
+
     def _save(self) -> None:
         if self._path is None:
             return
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self._path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(self._servers, indent=2, sort_keys=True))
-        tmp.replace(self._path)
+        # A unique temporary file per write: another process may be saving too.
+        fd, tmp_name = tempfile.mkstemp(dir=self._path.parent, prefix=f"{self._path.name}.", suffix=".tmp")
+        tmp = Path(tmp_name)
+        try:
+            with os.fdopen(fd, "w") as f:
+                f.write(json.dumps(self._servers, indent=2, sort_keys=True))
+            tmp.replace(self._path)
+        except BaseException:
+            tmp.unlink(missing_ok=True)
+            raise
 
     @staticmethod
     def _definition(tool: dict) -> dict:
@@ -252,6 +281,8 @@ class ToolDefinitionRegistry:
         Each pending change is {"tool": tool, "change": "added"|"modified",
         "previous": recorded definition or None}. Removed tools need no review.
         """
+        if self._path is not None:
+            self._servers = self._load()  # pick up approvals made by another process
         known = self._servers.get(server)
         if known is None:
             self.approve(server, tools)
@@ -271,10 +302,13 @@ class ToolDefinitionRegistry:
 
     def approve(self, server: str, tools: list[dict]) -> None:
         """Record tool definitions as approved for a server."""
-        known = self._servers.setdefault(server, {})
-        for tool in tools:
-            known[tool.get("name", "")] = self._definition(tool)
-        self._save()
+        with self._locked():
+            if self._path is not None:
+                self._servers = self._load()  # merge into what other processes saved
+            known = self._servers.setdefault(server, {})
+            for tool in tools:
+                known[tool.get("name", "")] = self._definition(tool)
+            self._save()
 
 
 def describe_tool_change(change: dict) -> str:
