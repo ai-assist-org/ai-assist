@@ -900,9 +900,19 @@ def is_unwritable_system_path(path: Path) -> bool:
     return True
 
 
+# Secret-bearing filenames blocked wherever they live (not just under $HOME)
+_SECRET_FILENAMES = frozenset({".netrc", ".pgpass", ".git-credentials"})
+
+
+def _is_secret_filename(name: str) -> bool:
+    return name in _SECRET_FILENAMES or name == ".env" or name.startswith(".env.") or name.startswith(".env")
+
+
 def is_sensitive_path(path: Path) -> bool:
     """Whether a path is (inside) a credential location the agent may never access."""
     resolved = path.expanduser().resolve()
+    if _is_secret_filename(resolved.name):
+        return True
     parts = resolved.parts
     for location in _CREDENTIAL_LOCATIONS:
         size = len(location)
@@ -911,13 +921,15 @@ def is_sensitive_path(path: Path) -> bool:
     return any(_is_relative_to(resolved, location.resolve()) for location in sensitive_locations())
 
 
-def _command_path_candidates(command: str, cwd: str | None = None) -> list[Path]:
-    """Every word of a command line interpreted as a path (also NAME=value values).
+def _command_path_candidates(command: str, cwd: str | None = None) -> list[tuple[str, Path]]:
+    """Every word of a command line as (raw_value, resolved_path).
 
     $VARS, ~ and globs are expanded as the shell would, and relative paths are
-    resolved against cwd and earlier cd targets.
+    resolved against cwd and earlier cd targets. raw_value is the pre-expansion
+    token, so callers can tell a real path (``/x``, ``~/x``, ``a/b``) from a
+    bare word that merely resolves under the cwd (e.g. a grep pattern).
     """
-    candidates: list[Path] = []
+    candidates: list[tuple[str, Path]] = []
     effective_cwd = Path(cwd).expanduser() if cwd else Path.cwd()
     for segment in _split_shell_commands(command):
         lexer = shlex.shlex(segment, posix=True, punctuation_chars=True)
@@ -932,12 +944,18 @@ def _command_path_candidates(command: str, cwd: str | None = None) -> list[Path]
                     continue
                 expanded = os.path.expanduser(os.path.expandvars(value))
                 if any(c in expanded for c in "*?["):
-                    candidates.extend(effective_cwd / match for match in glob.glob(expanded, root_dir=effective_cwd))
+                    candidates.extend((value, effective_cwd / m) for m in glob.glob(expanded, root_dir=effective_cwd))
                 else:
-                    candidates.append(effective_cwd / expanded)
+                    candidates.append((value, effective_cwd / expanded))
         if len(tokens) > 1 and tokens[0] == "cd":
             effective_cwd = effective_cwd / os.path.expanduser(os.path.expandvars(tokens[1]))
     return candidates
+
+
+def _looks_like_path(raw: str) -> bool:
+    """Whether a raw argument is written as a filesystem path (not a bare word/pattern)."""
+    expanded = os.path.expanduser(os.path.expandvars(raw))
+    return expanded.startswith(("/", "~", "./", "../")) or "/" in expanded
 
 
 # git options that write files or run configured programs, even for read commands
@@ -2250,7 +2268,7 @@ class FilesystemTools:
         Returns:
             Error message if blocked, None if allowed
         """
-        for path in _command_path_candidates(command, working_dir):
+        for _raw, path in _command_path_candidates(command, working_dir):
             if is_sensitive_path(path):
                 return f"Error: {path} is a sensitive location (keys/credentials) the agent cannot access."
 
@@ -2280,6 +2298,11 @@ class FilesystemTools:
             pair_error = await self._validate_argument_pair(cmd_name, path_or_marker, command, was_auto_allowed)
             if pair_error:
                 return pair_error
+
+        if was_auto_allowed:
+            read_error = await self._check_read_paths(command, working_dir)
+            if read_error:
+                return read_error
 
         if was_auto_allowed:
             interpreter_error = await self._check_code_interpreters(command)
@@ -2341,6 +2364,56 @@ class FilesystemTools:
             return f"Error: {cmd_name} {path_or_marker} execution is not allowed in non-interactive mode."
         if not await self.confirmation_callback(f"{cmd_name} {path_or_marker.strip('<>')} execution: {command}"):
             return f"Error: {cmd_name} {path_or_marker} execution rejected by user."
+        return None
+
+    async def _check_read_paths(self, command: str, working_dir: str | None) -> str | None:
+        """Path-like file arguments must be within the allowlist to read.
+
+        Shell readers (cat, grep, head, cp source, ...) would otherwise read any
+        file regardless of allowed_paths, defeating the read confinement that the
+        internal read_file tool enforces. Only genuine file arguments are checked:
+        the command word, option flags, env assignments, redirect targets, and
+        device/virtual paths are skipped, and bare words (e.g. a grep pattern)
+        are not treated as files. Write targets are validated separately. An empty
+        allowlist keeps reads unrestricted.
+        """
+        # Paths already validated by _extract_command_argument_paths (find search paths,
+        # write targets, cd, script paths) are skipped here to avoid a second prompt.
+        handled = {
+            str((Path(working_dir).expanduser() if working_dir else Path.cwd()) / val)
+            for name, val in _extract_command_argument_paths(command, working_dir)
+            if not val.startswith("<")
+        }
+        effective_cwd = Path(working_dir).expanduser() if working_dir else Path.cwd()
+        for segment in _split_shell_commands(command):
+            try:
+                tokens = shlex.split(segment)
+            except ValueError:
+                tokens = segment.split()
+            idx = 0
+            while idx < len(tokens) and ENV_VAR_PATTERN.match(tokens[idx]):
+                idx += 1
+            idx = _strip_transparent_wrappers(tokens, idx)
+            if idx < len(tokens) and _resolve_command_token(tokens[idx]) in PRIVILEGE_WRAPPERS:
+                idx += 1
+            # skip the command word itself; validate only its arguments
+            for tok in tokens[idx + 1 :]:
+                if tok.startswith("-") or _SHELL_REDIRECT.match(tok) or not _looks_like_path(tok):
+                    continue
+                expanded = os.path.expanduser(os.path.expandvars(tok))
+                resolved = effective_cwd / expanded
+                if (
+                    is_unwritable_system_path(resolved)
+                    or str(resolved) in handled
+                    or str(resolved.resolve()) in handled
+                    or str(resolved.resolve()) in _HARMLESS_REDIRECT_TARGETS
+                ):
+                    continue
+                path_error = await self._validate_path(str(resolved), reason=command)
+                if path_error:
+                    return f"Error: reading {resolved} is not allowed. {path_error}"
+            if len(tokens) > idx + 1 and tokens[idx] == "cd":
+                effective_cwd = effective_cwd / os.path.expanduser(os.path.expandvars(tokens[idx + 1]))
         return None
 
     async def _check_code_interpreters(self, command: str) -> str | None:

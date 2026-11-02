@@ -145,7 +145,7 @@ async def test_allowlisted_command_executes_directly():
     config = AiAssistConfig(anthropic_api_key="test")
     tools = FilesystemTools(config, load_user_config=False)
 
-    result = await tools.execute_tool("execute_command", {"command": "ls /tmp"})
+    result = await tools.execute_tool("execute_command", {"command": "ls /tmp/ai-assist"})
 
     assert "Error" not in result or "not found" not in result.lower()
     assert "not allowed" not in result.lower()
@@ -243,7 +243,7 @@ async def test_allowlist_checks_first_token():
     tools = FilesystemTools(config, load_user_config=False)
 
     # Bare allowlisted command should work
-    result = await tools.execute_tool("execute_command", {"command": "ls /tmp"})
+    result = await tools.execute_tool("execute_command", {"command": "ls /tmp/ai-assist"})
     assert "not allowed" not in result.lower()
 
     # Full path is NOT matched by bare allowlist entry — different binary could live there
@@ -251,7 +251,7 @@ async def test_allowlist_checks_first_token():
     assert "not allowed" in result.lower() or "not in the allowed" in result.lower()
 
     # Pipe with allowlisted first command should work (shell constructs preserved)
-    result = await tools.execute_tool("execute_command", {"command": "ls /tmp | grep test"})
+    result = await tools.execute_tool("execute_command", {"command": "ls /tmp/ai-assist | grep test"})
     assert "not allowed" not in result.lower()
 
     # Non-allowlisted command is still blocked
@@ -274,7 +274,7 @@ async def test_full_path_allowlist_requires_exact_match():
         anthropic_api_key="test", allowed_commands=list(config.allowed_commands) + ["/usr/bin/ls"]
     )
     tools_full = FilesystemTools(config_full, load_user_config=False)
-    result = await tools_full.execute_tool("execute_command", {"command": "/usr/bin/ls /tmp"})
+    result = await tools_full.execute_tool("execute_command", {"command": "/usr/bin/ls /tmp/ai-assist"})
     assert "not allowed" not in result.lower()
 
     # But a different path to the same basename is still blocked

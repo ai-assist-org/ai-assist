@@ -671,3 +671,95 @@ async def test_tar_unzip_destination_outside_blocked(workdir, tmp_path_factory, 
     result = await tools.execute_tool("execute_command", {"command": command.format(w=workdir, out=out)})
 
     assert result.startswith("Error"), result
+
+
+# --- Reads via shell commands must respect the path allowlist (#1) ---
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cat {out}/data.txt",
+        "head {out}/data.txt",
+        "grep X {out}/data.txt",
+        "cut -c1 {out}/data.txt",
+        "base64 {out}/data.txt",
+        "cp {out}/data.txt dest.txt",
+        "wc -l {out}/data.txt",
+    ],
+)
+async def test_shell_read_outside_allowlist_blocked(workdir, tmp_path_factory, monkeypatch, command):
+    monkeypatch.chdir(workdir)
+    outside = tmp_path_factory.mktemp("secret")
+    (outside / "data.txt").write_text("SECRET-XYZ")
+    config = AiAssistConfig(
+        anthropic_api_key="test",
+        allowed_commands=["cat", "head", "grep", "cut", "base64", "cp", "wc"],
+        allowed_paths=[str(workdir)],
+    )
+    tools = FilesystemTools(config, load_user_config=False)
+
+    result = await tools.execute_tool("execute_command", {"command": command.format(out=outside)})
+
+    assert result.startswith("Error"), result
+    assert "SECRET-XYZ" not in result
+
+
+@pytest.mark.asyncio
+async def test_shell_read_inside_allowlist_ok(workdir):
+    (workdir / "data.txt").write_text("hello-data")
+    tools = FilesystemTools(
+        AiAssistConfig(anthropic_api_key="test", allowed_commands=["cat"], allowed_paths=[str(workdir)]),
+        load_user_config=False,
+    )
+
+    result = await tools.execute_tool("execute_command", {"command": f"cat {workdir}/data.txt"})
+
+    assert "hello-data" in result
+
+
+@pytest.mark.asyncio
+async def test_grep_pattern_not_treated_as_path(workdir, monkeypatch):
+    monkeypatch.chdir(workdir)
+    (workdir / "f.txt").write_text("find-me\n")
+    tools = FilesystemTools(
+        AiAssistConfig(anthropic_api_key="test", allowed_commands=["grep"], allowed_paths=[str(workdir)]),
+        load_user_config=False,
+    )
+
+    result = await tools.execute_tool("execute_command", {"command": "grep find-me f.txt"})
+
+    assert "find-me" in result
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("name", [".env~", ".env.bak", ".env.local"])
+async def test_env_backups_are_sensitive(workdir, monkeypatch, name):
+    monkeypatch.chdir(workdir)
+    (workdir / name).write_text("JEV_API_KEY=secret")
+    tools = FilesystemTools(
+        AiAssistConfig(anthropic_api_key="test", allowed_commands=["cat"], allowed_paths=[str(workdir)]),
+        load_user_config=False,
+    )
+
+    result = await tools.execute_tool("execute_command", {"command": f"cat {name}"})
+
+    assert result.startswith("Error"), result
+    assert "secret" not in result
+
+
+@pytest.mark.asyncio
+async def test_awl_authorized_read_outside_allowed(workdir, tmp_path_factory):
+    # A user-started AWL script may read its own data outside the allowlist without prompts
+    outside = tmp_path_factory.mktemp("data")
+    (outside / "x.txt").write_text("ok-content")
+    tools = FilesystemTools(
+        AiAssistConfig(anthropic_api_key="test", allowed_commands=["cat"], allowed_paths=[str(workdir)]),
+        load_user_config=False,
+    )
+    tools.awl_authorized_commands = {"cat"}
+
+    result = await tools.execute_tool("execute_command", {"command": f"cat {outside}/x.txt"})
+
+    assert "ok-content" in result

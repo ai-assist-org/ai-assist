@@ -216,6 +216,19 @@ every obfuscation. The robust class-defense is running commands in a
 process-level sandbox (e.g. bubblewrap/nsjail) confined to the workspace — see
 the container sandbox (section on Permission Modes) for the supported isolation.
 
+### Reads through shell commands
+
+Path-like file arguments to commands (`cat`, `grep`, `head`, `cut`, `wc`,
+`base64`, `cp` source, ...) are validated against the allowlist as reads, the
+same confinement the `read_file` tool enforces — otherwise a shell reader could
+read any file regardless of `allowed_paths`, and a denied directory could be
+sidestepped with `cat` on a file inside it. Only genuine path arguments are
+checked (the command word, flags, env assignments, redirects, device paths, and
+bare words like a `grep` pattern are not). An empty allowlist keeps reads
+unrestricted (backwards compatible); AWL-authorized and user-approved commands
+skip the check. `.env`, `.env.*`, `.env~` and other secret-bearing filenames are
+treated as sensitive wherever they live.
+
 ### Kernel / virtual filesystems
 
 Writing `/proc`, `/sys`, or `/dev` is refused for every write path (file tools,

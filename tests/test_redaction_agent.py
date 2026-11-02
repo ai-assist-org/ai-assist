@@ -38,7 +38,7 @@ async def test_mcp_tool_result_is_redacted(agent):
 
 @pytest.mark.asyncio
 async def test_internal_tool_result_is_redacted(agent, tmp_path):
-    secret_file = tmp_path / ".env"
+    secret_file = tmp_path / "service-config.txt"
     secret_file.write_text(f"TEST_SERVICE_TOKEN={SECRET}\n")
 
     result = await agent._execute_tool("internal__read_file", {"path": str(secret_file)})
