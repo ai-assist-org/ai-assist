@@ -599,6 +599,8 @@ The agent intelligently decides how to execute scheduled actions:
 jq '.actions[] | select(.trigger.type == "once")' ~/.ai-assist/event-schedules.json
 ```
 
+Once a one-time action has run (or its time passed more than 24 hours ago without running), it is moved to `~/.ai-assist/event-schedules-archive.jsonl`.
+
 **View notification history:**
 ```bash
 tail -f ~/.ai-assist/notifications.log

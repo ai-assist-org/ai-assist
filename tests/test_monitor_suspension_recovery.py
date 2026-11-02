@@ -161,16 +161,20 @@ async def test_startup_catchup_runs_missed_once_action(mock_agent, schedule_file
         state_manager = StateManager(Path(tmpdir))
 
         scheduler = ActionScheduler(mock_agent, state_manager, schedule_file_with_once_action)
-        scheduler.load_actions()
+        # Raw load: load_actions() would archive this May action as expired by today's clock.
+        scheduler.actions = scheduler.loader.load_actions()
 
         now = datetime(2026, 5, 11, 11, 0, 0)
         await scheduler.run_missed_at_startup(now=now)
 
         mock_agent.query.assert_called_once()
-        # Verify it was marked completed in the file
+        # Once run, it moves from the schedule file to the archive
         reloaded = json.loads(schedule_file_with_once_action.read_text())
-        assert reloaded["actions"][0]["status"] == "completed"
-        assert reloaded["actions"][0]["executed_at"] is not None
+        assert reloaded["actions"] == []
+        archive = schedule_file_with_once_action.with_name("event-schedules-archive.jsonl")
+        [archived] = [json.loads(line) for line in archive.read_text().splitlines()]
+        assert archived["status"] == "completed"
+        assert archived["executed_at"] is not None
 
 
 @pytest.mark.asyncio
@@ -285,7 +289,8 @@ async def test_schedule_timer_skips_overdue_once_action(mock_agent, tmp_path):
     with tempfile.TemporaryDirectory() as tmpdir:
         state_manager = StateManager(Path(tmpdir))
         scheduler = ActionScheduler(mock_agent, state_manager, f)
-        scheduler.load_actions()
+        # Raw load: load_actions() would archive this overdue action before it is scheduled.
+        scheduler.actions = scheduler.loader.load_actions()
         scheduler.running = True
 
         action = scheduler.actions[0]
@@ -346,8 +351,8 @@ async def test_reload_does_not_cancel_executing_action(mock_agent, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_mark_once_completed_suppresses_reload(mock_agent, tmp_path):
-    """Test that _mark_once_completed sets self-write timestamp to suppress watchdog reload."""
+async def test_finish_once_suppresses_reload(mock_agent, tmp_path):
+    """Test that _finish_once sets self-write timestamp to suppress watchdog reload."""
     f = tmp_path / "event-schedules.json"
     data = {
         "version": "2.0",
@@ -366,10 +371,10 @@ async def test_mark_once_completed_suppresses_reload(mock_agent, tmp_path):
     with tempfile.TemporaryDirectory() as tmpdir:
         state_manager = StateManager(Path(tmpdir))
         scheduler = ActionScheduler(mock_agent, state_manager, f)
-        scheduler.load_actions()
+        scheduler.actions = scheduler.loader.load_actions()
 
         action = scheduler.actions[0]
-        scheduler._mark_once_completed(action)
+        scheduler._finish_once(action, success=True)
 
         # Self-write timestamp should be recent, causing reload to skip
         assert scheduler._self_write_time > 0
@@ -378,8 +383,9 @@ async def test_mark_once_completed_suppresses_reload(mock_agent, tmp_path):
         await scheduler.reload()
         scheduler.load_actions.assert_not_called()
 
-        reloaded = json.loads(f.read_text())
-        assert reloaded["actions"][0]["status"] == "completed"
+        assert json.loads(f.read_text())["actions"] == []
+        archive = f.with_name("event-schedules-archive.jsonl")
+        assert json.loads(archive.read_text().splitlines()[0])["status"] == "completed"
 
 
 @pytest.mark.asyncio

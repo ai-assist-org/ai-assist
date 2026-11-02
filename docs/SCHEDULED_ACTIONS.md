@@ -55,6 +55,12 @@ jq '.actions[] | select(.trigger.type == "once")' ~/.ai-assist/event-schedules.j
 
 Each one-time action is named after its description plus its scheduled time, so the same reminder can be scheduled again for another day.
 
+**Finished actions leave the schedule file:** once a one-time action has run, it is moved to `~/.ai-assist/event-schedules-archive.jsonl` (one JSON object per line, with `status`, `archived_at` and `archive_reason`: `completed`, `failed` or `expired`). An action whose time passed more than 24 hours ago without running (the `/monitor` process was down) can no longer run and is archived as `expired`.
+
+```bash
+jq -c '{name, status, archive_reason, archived_at}' ~/.ai-assist/event-schedules-archive.jsonl
+```
+
 **View notification history:**
 ```bash
 tail -f ~/.ai-assist/notifications.log

@@ -837,7 +837,7 @@ async def check(self) -> list[dict]:
 
 ### Scheduled Actions
 
-One-time future actions are `once` actions in `event-schedules.json`, created with `internal__schedule_action` (or `internal__create_action`) and run by the `/monitor` process's `ActionScheduler`. A simple reminder is stored with `"reminder": true`: `ActionEngine` notifies with the prompt text and makes no model call. Otherwise the prompt runs through the agent like any action.
+One-time future actions are `once` actions in `event-schedules.json`, created with `internal__schedule_action` (or `internal__create_action`) and run by the `/monitor` process's `ActionScheduler`. A simple reminder is stored with `"reminder": true`: `ActionEngine` notifies with the prompt text and makes no model call. Otherwise the prompt runs through the agent like any action. A one-time action that has run is moved (matched by name and time) to `event-schedules-archive.jsonl` with its `completed`/`failed` status; each (re)load also archives finished ones and those past due beyond the 24 h catch-up window (`expired`). See `ActionLoader.archive_actions`.
 
 ## Code Organization
 
