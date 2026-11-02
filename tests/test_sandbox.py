@@ -1,5 +1,6 @@
 """Tests for sandbox management module"""
 
+import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -8,6 +9,7 @@ import yaml
 
 from ai_assist.sandbox import (
     ALL_FEATURES,
+    DEFAULT_FEATURES,
     DEFAULT_IMAGE,
     SANDBOX_SUBDIRS,
     SANDBOX_TEMPLATE_FILES,
@@ -45,10 +47,20 @@ class TestBuildCompose:
         assert env["AI_ASSIST_SANDBOX"] == "true"
         assert env["AI_ASSIST_PERMISSION_MODE"] == "${AI_ASSIST_PERMISSION_MODE:-manual}"
 
-    def test_always_has_gcloud(self):
+    def test_no_gcloud_without_vertex(self):
         compose = _build_compose(set())
         volumes = compose["services"]["ai-assist"]["volumes"]
-        assert any("gcloud" in v for v in volumes)
+        assert not any("gcloud" in v for v in volumes)
+        assert "CLOUDSDK_CONFIG" not in compose["services"]["ai-assist"]["environment"]
+
+    def test_vertex_mounts_only_application_default_credentials(self):
+        compose = _build_compose({"vertex"})
+        volumes = [v for v in compose["services"]["ai-assist"]["volumes"] if "gcloud" in v]
+        assert volumes == [
+            "${HOME}/.config/gcloud/application_default_credentials.json"
+            ":/host-config/gcloud/application_default_credentials.json:ro,z"
+        ]
+        assert compose["services"]["ai-assist"]["environment"]["CLOUDSDK_CONFIG"] == "/host-config/gcloud"
 
     def test_always_has_workspace(self):
         compose = _build_compose(set())
@@ -188,8 +200,12 @@ class TestBuildCompose:
 
 
 class TestParseFeatures:
-    def test_none_returns_all(self):
-        assert _parse_features(None) == ALL_FEATURES
+    def test_none_returns_defaults(self):
+        assert _parse_features(None) == DEFAULT_FEATURES
+
+    def test_defaults_exclude_host_access_features(self):
+        assert not DEFAULT_FEATURES & {"ssh", "gpg", "gh", "dbus"}
+        assert DEFAULT_FEATURES <= ALL_FEATURES
 
     def test_single_feature(self):
         assert _parse_features("ssh") == {"ssh"}
@@ -267,6 +283,19 @@ class TestSandboxInit:
         config = tmp_path / "no-litellm" / "sandbox" / ".ai-assist" / "litellm_config.yaml"
         assert not config.exists()
 
+    def test_gh_feature_lets_commands_see_github_token(self, tmp_path):
+        with patch.dict("os.environ", {"AI_ASSIST_INSTANCES_DIR": str(tmp_path)}):
+            sandbox_init("with-gh", features={"gh"})
+
+        command_env = tmp_path / "with-gh" / "sandbox" / ".ai-assist" / "command_env.json"
+        assert json.loads(command_env.read_text()) == ["GITHUB_TOKEN"]
+
+    def test_no_command_env_without_gh(self, tmp_path):
+        with patch.dict("os.environ", {"AI_ASSIST_INSTANCES_DIR": str(tmp_path)}):
+            sandbox_init("no-gh", features={"git"})
+
+        assert not (tmp_path / "no-gh" / "sandbox" / ".ai-assist" / "command_env.json").exists()
+
     def test_refuses_existing(self, tmp_path):
         with patch.dict("os.environ", {"AI_ASSIST_INSTANCES_DIR": str(tmp_path)}):
             sandbox_init("test-instance")
@@ -309,7 +338,24 @@ class TestSandboxInit:
         volumes = compose["services"]["ai-assist"]["volumes"]
         assert not any(".ssh" in v for v in volumes)
         assert not any(".gnupg" in v for v in volumes)
+        assert not any("gcloud" in v for v in volumes)
+
+    def test_init_defaults(self, tmp_path):
+        with patch.dict("os.environ", {"AI_ASSIST_INSTANCES_DIR": str(tmp_path)}):
+            sandbox_init("defaults")
+
+        compose = yaml.safe_load((tmp_path / "defaults" / "compose.yaml").read_text())
+        volumes = compose["services"]["ai-assist"]["volumes"]
+        assert not any(".ssh" in v or "ssh-agent" in v or "dbus" in v or ".gnupg" in v for v in volumes)
         assert any("gcloud" in v for v in volumes)
+        assert "dci-mcp-server" in compose["services"]
+
+    @pytest.mark.parametrize("feature", ["ssh", "dbus", "gpg", "gh"])
+    def test_init_warns_about_host_access_features(self, tmp_path, capsys, feature):
+        with patch.dict("os.environ", {"AI_ASSIST_INSTANCES_DIR": str(tmp_path)}):
+            sandbox_init("risky", features={feature})
+
+        assert "warning" in capsys.readouterr().out.lower()
 
     def test_init_with_ssh_only(self, tmp_path):
         with patch.dict("os.environ", {"AI_ASSIST_INSTANCES_DIR": str(tmp_path)}):

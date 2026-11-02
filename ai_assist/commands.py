@@ -133,6 +133,9 @@ register_command(
 # --- MCP management (interactive-only) ---
 
 register_command(CommandDef("/mcp/restart", "Restart an MCP server", mode="interactive", args="<server>"))
+register_command(
+    CommandDef("/mcp/review", "Review and approve changed MCP tool definitions", mode="interactive", args="[server]")
+)
 
 # --- Commands available in both modes ---
 

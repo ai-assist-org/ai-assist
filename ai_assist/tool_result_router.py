@@ -114,11 +114,19 @@ class ToolResultRouter:
 
         if save_to_file:
             try:
-                output_path = Path(save_to_file).expanduser()
+                # Write to the resolved path so it matches what validation checked
+                # (callers run FilesystemTools.validate_write_target first), and
+                # only create parent dirs for that canonical path.
+                output_path = Path(save_to_file).expanduser().resolve()
                 output_path.parent.mkdir(parents=True, exist_ok=True)
                 output_path.write_text(result_text)
                 summary = f"Result saved to {save_to_file} ({len(result_text):,} bytes, {len(result_text.splitlines())} lines)"
-                logger.info("Saved tool result to file: %s (%d bytes)", save_to_file, len(result_text))
+                logger.info(
+                    "Saved tool result to file: %s (resolved: %s) (%d bytes)",
+                    save_to_file,
+                    output_path,
+                    len(result_text),
+                )
                 summaries.append(summary)
             except Exception:
                 logger.exception("Error saving result to %s", save_to_file)

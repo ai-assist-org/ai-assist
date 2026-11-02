@@ -20,6 +20,7 @@ from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.table import Table
+from rich.text import Text
 
 from .agent import AiAssistAgent
 from .commands import get_command_suggestion, is_valid_interactive_command
@@ -510,6 +511,42 @@ async def _handle_plugin_install(parts: list[str], agent: AiAssistAgent, console
     await _confirm_and_connect_plugin_servers(agent, console, server_names)
 
 
+# Control characters (except tab/newline) and invisible/bidi characters that can
+# overwrite, hide, or visually reorder text in the terminal
+_UNSAFE_DISPLAY_CHARS = re.compile("[\x00-\x08\x0b-\x1f\x7f-\x9f\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]")
+
+
+def _approval_detail_text(detail: str) -> Text:
+    """What an approval prompt shows: the complete text, no markup, control chars escaped."""
+    visible = _UNSAFE_DISPLAY_CHARS.sub(lambda m: m.group().encode("unicode_escape").decode(), detail)
+    return Text.assemble("  ", (visible, "bold"))
+
+
+async def _review_tool_changes(agent: AiAssistAgent, console: Console, server: str | None):
+    """Show changed MCP tool definitions and let the user approve them one by one."""
+    from .security import describe_tool_change
+
+    names = [server] if server else list(agent.pending_tool_changes)
+    names = [name for name in names if agent.pending_tool_changes.get(name)]
+    if not names:
+        console.print("[dim]No MCP tool changes to review[/dim]")
+        return
+    for name in names:
+        for change in list(agent.pending_tool_changes[name]):
+            tool_name = change["tool"]["name"]
+            # Server-provided text: print literally so it cannot hide parts of itself
+            console.print(_approval_detail_text(describe_tool_change(change)))
+            try:
+                answer = await asyncio.to_thread(input, f"Approve {tool_name}? [y/N]: ")
+            except EOFError, KeyboardInterrupt:
+                answer = "n"
+            if answer.strip().lower() in ("y", "yes"):
+                agent.approve_tool_changes(name, {tool_name})
+                console.print(f"[green]✓ {tool_name} approved[/green]")
+            else:
+                console.print(f"[dim]{tool_name} stays hidden[/dim]")
+
+
 async def _confirm_and_connect_plugin_servers(agent: AiAssistAgent, console: Console, server_names: list[str]):
     """Confirm and connect a plugin's bundled MCP servers (they launch processes)."""
     if not server_names:
@@ -521,7 +558,7 @@ async def _confirm_and_connect_plugin_servers(agent: AiAssistAgent, console: Con
     for name in server_names:
         cfg = agent.plugins_manager.plugin_mcp_servers.get(name)
         detail = cfg.url or f"{cfg.command} {' '.join(cfg.args)}".strip() if cfg else ""
-        console.print(f"  [bold]{name}[/bold]: {detail}")
+        console.print(Text.assemble("  ", (name, "bold"), ": "), _approval_detail_text(detail))
 
     try:
         answer = await asyncio.to_thread(input, "Connect these MCP servers now? [y/N]: ")
@@ -1053,12 +1090,8 @@ async def tui_interactive_mode(agent: AiAssistAgent, state_manager: StateManager
             watcher.stop()
 
         console.print(f"\n[yellow]{message}[/yellow]")
-        # Truncate very long commands for readability
-        if len(detail) > 200:
-            display_detail = detail[:200] + "..."
-        else:
-            display_detail = detail
-        console.print(f"  [bold]{display_detail}[/bold]")
+        # Show everything that will run, literally: no truncation, markup, or control chars
+        console.print(_approval_detail_text(detail))
         console.print()  # Blank line
         console.file.flush()  # Ensure Rich output is flushed before raw input
 
@@ -1236,6 +1269,11 @@ async def tui_interactive_mode(agent: AiAssistAgent, state_manager: StateManager
 
                     # Try plugin management commands: /plugin/install, /plugin/list, ...
                     if await handle_plugin_management_command(user_input, agent, console):
+                        continue
+
+                    if user_input.lower().startswith("/mcp/review"):
+                        parts = user_input.split(maxsplit=1)
+                        await _review_tool_changes(agent, console, parts[1].strip() if len(parts) > 1 else None)
                         continue
 
                     # Handle /mcp/restart before prompt command (which would parse it as /mcp/restart)

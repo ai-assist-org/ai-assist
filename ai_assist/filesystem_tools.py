@@ -1,6 +1,8 @@
 """Filesystem tools for ai-assist agent"""
 
+import glob
 import json
+import logging
 import os
 import re
 import shlex
@@ -10,9 +12,15 @@ from pathlib import Path
 from typing import Any
 
 from .config import AiAssistConfig, get_config_dir
+from .redaction import REDACT_CONFIG_FILE, filter_sensitive_env
+from .security import MCP_TOOL_DEFINITIONS_FILE
+
+logger = logging.getLogger(__name__)
 
 ALLOWED_COMMANDS_FILE = "allowed_commands.json"
 ALLOWED_PATHS_FILE = "allowed_paths.json"
+# Sensitive env var names execute_command may pass through (e.g. ["GITHUB_TOKEN"])
+COMMAND_ENV_FILE = "command_env.json"
 
 SHELL_BUILTINS = frozenset(
     {
@@ -99,7 +107,37 @@ SHELL_BUILTINS = frozenset(
 # command classification, so only inert builtins are safe to auto-approve.
 AUTO_SAFE_SHELL_BUILTINS = frozenset({"cd", "echo", "false", "pwd", "printf", "test", "true", "["})
 
-PYTHON_COMMANDS = frozenset({"python", "python3"})
+# python, python3, python3.12, ...
+_PYTHON_NAME = re.compile(r"^python(\d+(\.\d+)*)?$")
+
+
+def _python_invocation(args: list[str]) -> str | None:
+    """What a python command line runs: a script path, or a marker.
+
+    Markers: <inline-code> (-c), <module:NAME> (-m), <stdin> (-), and
+    <interactive> (no arguments). Handles combined short flags (-Ic, -Im) and
+    the options taking a value (-W, -X).
+    """
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg == "-":
+            return "<stdin>"
+        if not arg.startswith("-"):
+            return f"<script:{arg}>"
+        if not arg.startswith("--"):
+            for j, flag in enumerate(arg[1:], start=1):
+                rest = arg[j + 1 :]
+                if flag in "cm":
+                    value = rest or (args[i + 1] if i + 1 < len(args) else "")
+                    return "<inline-code>" if flag == "c" else f"<module:{value}>"
+                if flag in "WX":
+                    if not rest:
+                        i += 1  # the value is the next argument
+                    break
+        i += 1
+    return None if args else "<interactive>"
+
 
 # find primaries that run arbitrary commands or write/delete files. These
 # bypass the command allowlist (the executed program is find's argument, not a
@@ -108,7 +146,41 @@ FIND_DANGEROUS_PRIMARIES = frozenset(
     {"-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprintf", "-fprint", "-fprint0", "-fls"}
 )
 
-TRANSPARENT_WRAPPERS = frozenset({"env", "nohup", "nice", "ionice", "timeout", "stdbuf", "script", "xargs"})
+TRANSPARENT_WRAPPERS = frozenset(
+    {
+        "env",
+        "nohup",
+        "nice",
+        "ionice",
+        "timeout",
+        "stdbuf",
+        "script",
+        "xargs",
+        # Builtins and keywords that run the command following them
+        "command",
+        "builtin",
+        "exec",
+        "time",
+        "if",
+        "then",
+        "else",
+        "elif",
+        "do",
+        "while",
+        "until",
+        "!",
+        "{",
+    }
+)
+
+# Builtins that run code given as arguments or redirect later command lookups.
+# They need an allowlist entry or user confirmation like any external command.
+CODE_RUNNING_SHELL_BUILTINS = frozenset(
+    {"eval", "source", ".", "trap", "alias", "enable", "hash", "mapfile", "readarray", "coproc"}
+)
+
+# Builtins that run nothing by themselves: skipped by the allowlist check
+INERT_SHELL_BUILTINS = SHELL_BUILTINS - CODE_RUNNING_SHELL_BUILTINS - TRANSPARENT_WRAPPERS
 
 # Per-wrapper flags whose argument is a separate, possibly non-numeric token
 # (e.g. `xargs -I {} grep {}`), which the generic numeric-value rule would miss.
@@ -134,6 +206,17 @@ PROTECTED_CONFIG_FILES = frozenset(
         ALLOWED_COMMANDS_FILE,
         ALLOWED_PATHS_FILE,
         "skill_env.json",
+        # Files whose contents get executed or trusted at load time
+        "mcp_servers.yaml",
+        ".env",
+        "schedules.json",
+        "event-schedules.json",
+        MCP_TOOL_DEFINITIONS_FILE,
+        "installed-plugins.json",
+        "installed-skills.json",
+        "plugin-marketplaces.json",
+        REDACT_CONFIG_FILE,
+        COMMAND_ENV_FILE,
     }
 )
 
@@ -217,83 +300,257 @@ def _strip_transparent_wrappers(tokens: list[str], idx: int) -> int:
     return idx
 
 
-def _strip_shell_comments(command: str) -> str:
-    """Strip shell comments (# to end) outside of quotes.
+# Stands in for $(...), `...`, <(...) and >(...) in split segments: the
+# substituted commands are validated as separate segments, and the "$" marks
+# the value as unknown (e.g. for redirect targets).
+SUBSTITUTION_PLACEHOLDER = "$__substitution__"
+_HEREDOC_WORD_END = frozenset(" \t\n;|&<>()")
 
-    Respects single quotes, double quotes, and backslash escapes.
-    """
-    result: list[str] = []
-    in_single = False
-    in_double = False
-    i = 0
+
+def _find_closing_paren(command: str, start: int) -> int:
+    """Index of the ')' matching an already-open '(' (len(command) if none)."""
+    depth = 1
+    in_single = in_double = False
+    i = start
     while i < len(command):
         c = command[i]
-        if c == "\\" and not in_single and i + 1 < len(command):
-            result.append(c)
-            result.append(command[i + 1])
-            i += 2
-            continue
-        if c == "'" and not in_double:
-            in_single = not in_single
-        elif c == '"' and not in_single:
+        if in_single:
+            in_single = c != "'"
+        elif c == "\\":
+            i += 1
+        elif c == '"':
             in_double = not in_double
-        elif c == "#" and not in_single and not in_double:
-            break
-        result.append(c)
+        elif not in_double and c == "'":
+            in_single = True
+        elif not in_double and c == "(":
+            depth += 1
+        elif not in_double and c == ")":
+            depth -= 1
+            if depth == 0:
+                return i
         i += 1
-    return "".join(result)
+    return len(command)
 
 
-def _split_shell_commands(command: str) -> list[str]:
-    """Split command on shell operators (&&, ||, ;, |, &) outside of quotes."""
-    segments: list[str] = []
-    current: list[str] = []
-    in_single = False
-    in_double = False
-    i = 0
+def _find_backtick_end(command: str, start: int) -> int:
+    """Index of the closing backtick (len(command) if none)."""
+    i = start
     while i < len(command):
-        c = command[i]
-        if c == "\\" and not in_single and i + 1 < len(command):
-            current.append(c)
-            current.append(command[i + 1])
+        if command[i] == "\\":
             i += 2
             continue
-        if c == "'" and not in_double:
-            in_single = not in_single
+        if command[i] == "`":
+            return i
+        i += 1
+    return len(command)
+
+
+def _substitution_at(command: str, i: int, process: bool = False) -> tuple[list[str], int] | None:
+    """If a $(...), $((...)) or `...` starts at i, return (bodies, end index).
+
+    With process=True, <(...) and >(...) process substitutions are matched too.
+    """
+    if process and command[i] in "<>" and command.startswith("(", i + 1):
+        end = _find_closing_paren(command, i + 2)
+        return [command[i + 2 : end]], end + 1
+    if command[i] == "`":
+        end = _find_backtick_end(command, i + 1)
+        return [command[i + 1 : end]], end + 1
+    if command.startswith("$((", i):
+        end = _find_closing_paren(command, i + 2)
+        # Arithmetic itself runs nothing, but substitutions inside it do
+        return _scan_shell(command[i + 2 : end])[1], end + 1
+    if command.startswith("$(", i):
+        end = _find_closing_paren(command, i + 2)
+        return [command[i + 2 : end]], end + 1
+    return None
+
+
+def _heredoc_body_substitutions(body: str) -> list[str]:
+    """Substitutions in an unquoted heredoc body (quotes are literal there)."""
+    bodies: list[str] = []
+    i = 0
+    while i < len(body):
+        if body[i] == "\\":
+            i += 2
+            continue
+        found = _substitution_at(body, i)
+        if found:
+            bodies.extend(found[0])
+            i = found[1]
+        else:
+            i += 1
+    return bodies
+
+
+def _skip_heredoc_bodies(command: str, i: int, heredocs: list[tuple[str, bool, bool]], bodies: list[str]) -> int:
+    """Skip the bodies of pending heredocs starting at line index i.
+
+    Substitutions in bodies that expand are appended to bodies. Returns the
+    index of the first line after the last body.
+    """
+    for delimiter, expands, strip_tabs in heredocs:
+        body: list[str] = []
+        while i < len(command):
+            newline = command.find("\n", i)
+            line_end = len(command) if newline == -1 else newline
+            line = command[i:line_end]
+            i = line_end + 1
+            if (line.lstrip("\t") if strip_tabs else line) == delimiter:
+                break
+            body.append(line)
+        if expands:
+            bodies.extend(_heredoc_body_substitutions("\n".join(body)))
+    return i
+
+
+def _parse_heredoc_operator(command: str, i: int) -> tuple[int, str, bool, bool]:
+    """Parse `<<[-]WORD` at i. Returns (end, delimiter, body_expands, strip_tabs)."""
+    j = i + 2
+    strip_tabs = j < len(command) and command[j] == "-"
+    if strip_tabs:
+        j += 1
+    while j < len(command) and command[j] in " \t":
+        j += 1
+    word_start = j
+    in_quote = ""
+    while j < len(command) and (in_quote or command[j] not in _HEREDOC_WORD_END):
+        if in_quote:
+            if command[j] == in_quote:
+                in_quote = ""
+        elif command[j] in "'\"":
+            in_quote = command[j]
+        j += 1
+    word = command[word_start:j]
+    quoted = any(q in word for q in "'\"\\")
+    delimiter = word.replace("'", "").replace('"', "").replace("\\", "")
+    return j, delimiter, not quoted, strip_tabs
+
+
+def _scan_shell(command: str) -> tuple[list[str], list[str]]:
+    """Split a command line into simple-command segments.
+
+    Splits on ;, &&, ||, |, &, parentheses and newlines outside quotes; drops comments and
+    heredoc bodies; joins backslash-newline continuations. Command
+    substitutions are replaced by SUBSTITUTION_PLACEHOLDER and their bodies
+    returned separately (including those inside double quotes, $((...)) and
+    unquoted heredoc bodies), as (segments, substitution_bodies).
+    """
+    segments: list[str] = []
+    bodies: list[str] = []
+    current: list[str] = []
+    heredocs: list[tuple[str, bool, bool]] = []
+    in_single = in_double = False
+    # Inside a case statement, text up to the next ")" after "in" or ";;" is a
+    # pattern, not a command (outside a case, ";;" is a syntax error)
+    in_case_pattern = False
+    n = len(command)
+    i = 0
+
+    def flush() -> None:
+        nonlocal in_case_pattern
+        segment = "".join(current).strip()
+        current.clear()
+        if segment:
+            segments.append(segment)
+            words = segment.split()
+            in_case_pattern = words[0] == "case" and words[-1] == "in"
+
+    while i < n:
+        c = command[i]
+        if in_single:
+            in_single = c != "'"
             current.append(c)
-        elif c == '"' and not in_single:
-            in_double = not in_double
+            i += 1
+            continue
+        if c == "\\" and i + 1 < n:
+            if command[i + 1] != "\n":
+                current.append(command[i : i + 2])
+            i += 2
+            continue
+        found = _substitution_at(command, i, process=not in_double)
+        if found:
+            bodies.extend(found[0])
+            current.append(SUBSTITUTION_PLACEHOLDER)
+            i = found[1]
+            continue
+        if in_double:
+            in_double = c != '"'
             current.append(c)
-        elif not in_single and not in_double:
-            if c == ";":
-                segments.append("".join(current))
-                current = []
-            elif c == "|":
-                if i + 1 < len(command) and command[i + 1] == "|":
-                    segments.append("".join(current))
-                    current = []
-                    i += 1
-                else:
-                    segments.append("".join(current))
-                    current = []
-            elif c == "&":
-                if i + 1 < len(command) and command[i + 1] == "&":
-                    segments.append("".join(current))
-                    current = []
-                    i += 1
-                elif i > 0 and command[i - 1] == ">":
-                    current.append(c)
-                else:
-                    segments.append("".join(current))
-                    current = []
-            else:
+            i += 1
+            continue
+        nxt = command[i + 1] if i + 1 < n else ""
+        if c == "'":
+            in_single = True
+            current.append(c)
+        elif c == '"':
+            in_double = True
+            current.append(c)
+        elif c == "#" and (not current or current[-1][-1].isspace()):
+            newline = command.find("\n", i)
+            i = n if newline == -1 else newline
+            continue
+        elif command.startswith("<<", i) and not command.startswith("<<<", i):
+            end, delimiter, expands, strip_tabs = _parse_heredoc_operator(command, i)
+            heredocs.append((delimiter, expands, strip_tabs))
+            current.append(command[i:end])
+            i = end
+            continue
+        elif c == "\n":
+            flush()
+            i = _skip_heredoc_bodies(command, i + 1, heredocs, bodies)
+            heredocs.clear()
+            continue
+        elif c == "(" and nxt == "(":
+            # Arithmetic command ((...)): runs nothing, but substitutions inside it do
+            end = _find_closing_paren(command, i + 2)
+            bodies.extend(_scan_shell(command[i + 2 : end])[1])
+            flush()
+            i = end + 2
+            continue
+        elif c == ")" and in_case_pattern:
+            current.clear()
+            in_case_pattern = False
+        elif c == "|" and in_case_pattern:
+            current.append(c)
+        elif c == ";" and nxt in ";&" and nxt:
+            # ;; ;& ;;& end a case branch: a pattern or esac follows
+            flush()
+            in_case_pattern = True
+            i += 3 if command.startswith(";;&", i) else 2
+            continue
+        elif c in ";()":
+            # Parentheses end segments too: subshells and case patterns
+            flush()
+        elif c == "|":
+            flush()
+            if nxt in "|&" and nxt:
+                i += 1
+        elif c == "&":
+            if nxt == "&":
+                flush()
+                i += 1
+            elif nxt == ">" or (current and current[-1][-1] in "<>"):
                 current.append(c)
+            else:
+                flush()
         else:
             current.append(c)
         i += 1
-    if current:
-        segments.append("".join(current))
-    return [s.strip() for s in segments if s.strip()]
+    flush()
+    return segments, bodies
+
+
+def _split_shell_commands(command: str) -> list[str]:
+    """Split a command line into segments, including substituted commands.
+
+    See _scan_shell. Bodies of command substitutions are split recursively
+    and appended, so every command that would run is a segment.
+    """
+    segments, bodies = _scan_shell(command)
+    for body in bodies:
+        segments.extend(_split_shell_commands(body))
+    return segments
 
 
 def _is_safe_env_assignment(token: str) -> bool:
@@ -323,7 +580,7 @@ def _expand_shell_invocations(command: str, depth: int = 0) -> str:
     """
     if depth > _MAX_SHELL_NESTING:
         return SHELL_STDIN_MARKER
-    segments = _split_shell_commands(_strip_shell_comments(command))
+    segments = _split_shell_commands(command)
     expanded: list[str] = []
     changed = False
     for segment in segments:
@@ -371,12 +628,7 @@ def extract_command_names(command: str) -> list[str]:
     command substitution. Looks inside `bash -c` payloads and
     `bash <script>` invocations (see _expand_shell_invocations).
     """
-    command = _expand_shell_invocations(command)
-    stripped = _strip_shell_comments(command)
-    if not stripped.strip():
-        return []
-
-    segments = _split_shell_commands(stripped)
+    segments = _split_shell_commands(_expand_shell_invocations(command))
     commands: list[str] = []
 
     for segment in segments:
@@ -448,7 +700,7 @@ def _compute_segment_prefix(tokens: list[str]) -> str | None:
         return " ".join(prefix_parts) if prefix_parts else None
 
     cmd_name = _resolve_command_token(tokens[idx])
-    if cmd_name in SHELL_BUILTINS:
+    if cmd_name in INERT_SHELL_BUILTINS:
         return None
     prefix_parts.append(cmd_name)
     idx += 1
@@ -456,6 +708,9 @@ def _compute_segment_prefix(tokens: list[str]) -> str | None:
     saw_inline_flag = False
     while idx < len(tokens):
         token = tokens[idx]
+        if token == "-m" and _PYTHON_NAME.match(Path(cmd_name).name) and idx + 1 < len(tokens):
+            prefix_parts.extend(["-m", tokens[idx + 1]])
+            break
         if _SHELL_REDIRECT.match(token):
             idx += 1
             if idx < len(tokens):
@@ -480,12 +735,8 @@ def compute_allowlist_prefixes(command: str) -> list[str]:
     that contains a non-builtin command. Builtin-only segments (cd, echo, etc.)
     are skipped.
     """
-    stripped = _strip_shell_comments(command)
-    if not stripped.strip():
-        return []
-
     prefixes: list[str] = []
-    for segment in _split_shell_commands(stripped):
+    for segment in _split_shell_commands(command):
         try:
             tokens = shlex.split(segment)
         except ValueError:
@@ -506,7 +757,482 @@ def compute_allowlist_prefix(command: str) -> str | None:
     return prefixes[0] if prefixes else None
 
 
-def _extract_command_argument_paths(command: str) -> list[tuple[str, str]]:
+# Redirection operators that write to their target
+_WRITE_REDIRECTS = frozenset({">", ">>", ">|", "&>", "&>>", "<>", ">&"})
+# Redirect targets that are always fine to write
+_HARMLESS_REDIRECT_TARGETS = frozenset({"/dev/null", "/dev/stdout", "/dev/stderr", "/dev/tty"})
+# Marks a path the shell computes at run time ($VAR, globs, substitutions)
+_DYNAMIC_PATH_CHARS = frozenset("$`*?[")
+# Env vars whose value changes which program (or code) a command runs
+PROGRAM_HIJACKING_ENV_VARS = frozenset(
+    {
+        "PATH",
+        "BASH_ENV",
+        "ENV",
+        "IFS",
+        "PROMPT_COMMAND",
+        "SHELLOPTS",
+        "BASHOPTS",
+        "PS4",
+        "GIT_SSH",
+        "GIT_SSH_COMMAND",
+        "GIT_EXTERNAL_DIFF",
+        "GIT_PAGER",
+        "GIT_EDITOR",
+        "GIT_ASKPASS",
+        "SSH_ASKPASS",
+        "PAGER",
+        "EDITOR",
+        "VISUAL",
+        "PYTHONPATH",
+        "PYTHONSTARTUP",
+        "PYTHONHOME",
+        "NODE_OPTIONS",
+        "PERL5OPT",
+        "PERL5LIB",
+        "RUBYOPT",
+    }
+)
+_PROGRAM_HIJACKING_ENV_PREFIXES = ("LD_", "DYLD_", "GIT_CONFIG")
+_ASSIGNMENT = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\+?=")
+_ASSIGNING_BUILTINS = frozenset({"export", "declare", "typeset", "readonly", "local"})
+
+
+def _program_hijacking_assignments(command: str) -> set[str]:
+    """Names of PROGRAM_HIJACKING_ENV_VARS a command line assigns."""
+    names: set[str] = set()
+    for segment in _split_shell_commands(command):
+        try:
+            tokens = shlex.split(segment)
+        except ValueError:
+            tokens = segment.split()
+        idx = 0
+        while idx < len(tokens) and _ASSIGNMENT.match(tokens[idx]):
+            idx += 1
+        idx = _strip_transparent_wrappers(tokens, idx)
+        candidates = tokens[:idx]
+        if idx < len(tokens) and tokens[idx] in _ASSIGNING_BUILTINS:
+            candidates += tokens[idx + 1 :]
+        for token in candidates:
+            match = _ASSIGNMENT.match(token)
+            if match and (
+                match.group(1) in PROGRAM_HIJACKING_ENV_VARS
+                or match.group(1).startswith(_PROGRAM_HIJACKING_ENV_PREFIXES)
+            ):
+                names.add(match.group(1))
+    return names
+
+
+# Credential and key locations, matched under any home (yours, /root, other users)
+_CREDENTIAL_LOCATIONS = (
+    (".ssh",),
+    (".gnupg",),
+    (".aws",),
+    (".azure",),
+    (".config", "gcloud"),
+    (".config", "gh"),
+    (".kube",),
+    (".docker", "config.json"),
+    (".netrc",),
+    (".git-credentials",),
+    (".pgpass",),
+    (".password-store",),
+    (".local", "share", "keyrings"),
+)
+
+
+def sensitive_locations() -> list[Path]:
+    """ai-assist's own secrets; see also _CREDENTIAL_LOCATIONS, matched anywhere."""
+    config_dir = get_config_dir()
+    return [config_dir / ".env", config_dir / "mcp-oauth"]
+
+
+def startup_locations() -> list[Path]:
+    """Places whose contents run later, outside ai-assist (writes need confirmation)."""
+    home = Path.home()
+    rc_files = [
+        ".bashrc",
+        ".bash_profile",
+        ".bash_login",
+        ".bash_logout",
+        ".profile",
+        ".zshrc",
+        ".zshenv",
+        ".zprofile",
+        ".zlogin",
+        ".xprofile",
+        ".xinitrc",
+        ".xsession",
+        ".gitconfig",
+    ]
+    directories = [
+        ".local/bin",
+        "bin",
+        ".local/lib",
+        ".config/fish",
+        ".config/systemd/user",
+        ".config/autostart",
+        ".config/environment.d",
+        ".config/git",
+    ]
+    return [home / name for name in rc_files + directories]
+
+
+def is_startup_path(path: Path) -> bool:
+    resolved = path.expanduser().resolve()
+    return any(_is_relative_to(resolved, location.resolve()) for location in startup_locations())
+
+
+# Kernel / virtual filesystems: writing them controls the host
+# (/proc/sys/kernel/core_pattern, /proc/sysrq-trigger, /sys/kernel/uevent_helper,
+# /dev/mem, raw block devices). Reads are fine; writes are never allowed.
+_VIRTUAL_FS_ROOTS = frozenset({"proc", "sys", "dev"})
+
+
+def audit_protected_dirs() -> list[Path]:
+    """ai-assist's own audit trail and logs: the agent may read but never write them."""
+    config_dir = get_config_dir()
+    return [config_dir / "audit", config_dir / "logs"]
+
+
+def is_audit_protected_path(path: Path) -> bool:
+    resolved = path.expanduser().resolve()
+    return any(_is_relative_to(resolved, d.resolve()) for d in audit_protected_dirs())
+
+
+def is_unwritable_system_path(path: Path) -> bool:
+    resolved = path.expanduser().resolve()
+    parts = resolved.parts
+    if len(parts) < 2 or parts[1] not in _VIRTUAL_FS_ROOTS:
+        return False
+    # The usual harmless device targets stay writable
+    if str(resolved) in _HARMLESS_REDIRECT_TARGETS or str(resolved).startswith("/dev/fd/"):
+        return False
+    return True
+
+
+# Secret-bearing filenames blocked wherever they live (not just under $HOME)
+_SECRET_FILENAMES = frozenset({".netrc", ".pgpass", ".git-credentials"})
+
+
+def _is_secret_filename(name: str) -> bool:
+    return name in _SECRET_FILENAMES or name == ".env" or name.startswith(".env.") or name.startswith(".env")
+
+
+def is_sensitive_path(path: Path) -> bool:
+    """Whether a path is (inside) a credential location the agent may never access."""
+    resolved = path.expanduser().resolve()
+    if _is_secret_filename(resolved.name):
+        return True
+    parts = resolved.parts
+    for location in _CREDENTIAL_LOCATIONS:
+        size = len(location)
+        if any(parts[i : i + size] == location for i in range(len(parts) - size + 1)):
+            return True
+    return any(_is_relative_to(resolved, location.resolve()) for location in sensitive_locations())
+
+
+def _command_path_candidates(command: str, cwd: str | None = None) -> list[tuple[str, Path]]:
+    """Every word of a command line as (raw_value, resolved_path).
+
+    $VARS, ~ and globs are expanded as the shell would, and relative paths are
+    resolved against cwd and earlier cd targets. raw_value is the pre-expansion
+    token, so callers can tell a real path (``/x``, ``~/x``, ``a/b``) from a
+    bare word that merely resolves under the cwd (e.g. a grep pattern).
+    """
+    candidates: list[tuple[str, Path]] = []
+    effective_cwd = Path(cwd).expanduser() if cwd else Path.cwd()
+    for segment in _split_shell_commands(command):
+        lexer = shlex.shlex(segment, posix=True, punctuation_chars=True)
+        lexer.whitespace_split = True
+        try:
+            tokens = list(lexer)
+        except ValueError:
+            tokens = segment.split()
+        for token in tokens:
+            for value in (token, token.split("=", 1)[1] if "=" in token else ""):
+                if not value:
+                    continue
+                expanded = os.path.expanduser(os.path.expandvars(value))
+                if any(c in expanded for c in "*?["):
+                    candidates.extend((value, effective_cwd / m) for m in glob.glob(expanded, root_dir=effective_cwd))
+                else:
+                    candidates.append((value, effective_cwd / expanded))
+        if len(tokens) > 1 and tokens[0] == "cd":
+            effective_cwd = effective_cwd / os.path.expanduser(os.path.expandvars(tokens[1]))
+    return candidates
+
+
+def _looks_like_path(raw: str) -> bool:
+    """Whether a raw argument is written as a filesystem path (not a bare word/pattern)."""
+    expanded = os.path.expanduser(os.path.expandvars(raw))
+    return expanded.startswith(("/", "~", "./", "../")) or "/" in expanded
+
+
+# git options that write files or run configured programs, even for read commands
+_GIT_UNSAFE_READ_OPTIONS = frozenset({"--output", "--ext-diff", "--textconv"})
+# git branch options that only list (and those taking a value)
+_GIT_BRANCH_LIST_OPTIONS = frozenset(
+    {
+        "-a",
+        "--all",
+        "-r",
+        "--remotes",
+        "-v",
+        "-vv",
+        "--verbose",
+        "-l",
+        "--list",
+        "--show-current",
+        "--no-color",
+        "--color",
+        "--column",
+        "--no-column",
+        "--sort",
+        "--format",
+        "--contains",
+        "--no-contains",
+        "--merged",
+        "--no-merged",
+        "--points-at",
+        "--abbrev",
+        "--no-abbrev",
+        "-i",
+        "--ignore-case",
+    }
+)
+_GIT_BRANCH_FILTER_OPTIONS = frozenset({"--contains", "--no-contains", "--merged", "--no-merged", "--points-at"})
+_GH_API_BODY_OPTIONS = frozenset({"-f", "-F", "--field", "--raw-field", "--input"})
+# git global options and ssh options that make the command run another program
+_GIT_PROGRAM_OPTIONS = frozenset({"-c", "--config-env", "--exec-path"})
+_SSH_PROGRAM_OPTIONS = frozenset({"proxycommand", "localcommand", "permitlocalcommand", "knownhostscommand"})
+# git config forms that only read
+_GIT_CONFIG_READ_OPTIONS = frozenset(
+    {"--get", "--get-all", "--get-regexp", "--list", "-l", "--show-origin", "get", "list"}
+)
+
+
+def _program_running_arguments(command: str) -> list[str]:
+    """Describe git/ssh arguments in a command line that make it run other programs."""
+    found: list[str] = []
+    for segment in _split_shell_commands(command):
+        try:
+            tokens = shlex.split(segment)
+        except ValueError:
+            tokens = segment.split()
+        idx = 0
+        while idx < len(tokens) and _ASSIGNMENT.match(tokens[idx]):
+            idx += 1
+        idx = _strip_transparent_wrappers(tokens, idx)
+        if idx >= len(tokens):
+            continue
+        name, args = Path(tokens[idx]).name, tokens[idx + 1 :]
+        if name == "git":
+            i = 0
+            while i < len(args) and args[i].startswith("-"):
+                if args[i].split("=", 1)[0] in _GIT_PROGRAM_OPTIONS:
+                    found.append(f"git {args[i]}")
+                i += 2 if args[i] in ("-c", "-C", "--git-dir", "--work-tree", "--namespace") else 1
+            rest = args[i:]
+            if rest[:1] == ["config"]:
+                values = [arg for arg in rest[1:] if not arg.startswith("-")]
+                if not _GIT_CONFIG_READ_OPTIONS.intersection(rest[1:]) and len(values) >= 2:
+                    found.append("git config (set)")
+        elif name == "crontab":
+            # Anything but listing installs or removes scheduled jobs
+            if not args or any(arg != "-l" and not arg.startswith("-u") for arg in args):
+                found.append("crontab (install/remove jobs)")
+        elif name == "ssh":
+            for i, arg in enumerate(args):
+                if arg.startswith("-F"):
+                    found.append("ssh -F")
+                if arg == "-o" and i + 1 < len(args):
+                    option = args[i + 1]
+                elif arg.startswith("-o"):
+                    option = arg[2:]
+                else:
+                    continue
+                key = re.split(r"[=\s]", option, maxsplit=1)[0].lower()
+                if key in _SSH_PROGRAM_OPTIONS:
+                    found.append(f"ssh -o {key}")
+    return found
+
+
+# Commands that write a file given as an argument (not via redirection)
+_FILE_WRITE_COMMANDS = frozenset({"cp", "mv", "install", "tee", "dd", "ln"})
+
+# Interpreters/runners whose arguments are code, a script, or a package to run.
+# Allowlisting the bare name = allowlisting arbitrary code, so an invocation that
+# runs code needs confirmation unless the full invocation is explicitly allowlisted.
+_CODE_INTERPRETERS = frozenset({"awk", "gawk", "mawk", "nawk", "perl", "ruby", "uvx", "uv", "npx", "pipx"})
+# argv that only prints info and runs no user code
+_BENIGN_INTERPRETER_ARGS = frozenset({"--version", "-V", "--help", "-h", "version", "help"})
+
+
+def _interpreter_runs_code(name: str, args: list[str]) -> bool:
+    """Whether an interpreter/runner invocation executes arbitrary code or a package."""
+    if not args or _BENIGN_INTERPRETER_ARGS.intersection(args):
+        return False
+    if name in ("uv", "pipx"):
+        # only the sub-commands that execute a package/script
+        return args[0] in ("run", "tool")
+    return True
+
+
+_TAR_FLAG_LETTERS = set("cxtruvzjJafkpPhlmoswC")
+
+
+def _tar_write_targets(args: list[str]) -> list[str]:
+    """Destinations a tar invocation writes: the -f archive on create, the -C dir on extract."""
+    create = extract = False
+    file_val: str | None = None
+    cdir: str | None = None
+    expect: str | None = None
+    for arg in args:
+        if expect:
+            file_val, cdir = (arg, cdir) if expect == "f" else (file_val, arg)
+            expect = None
+            continue
+        if arg.startswith("--"):
+            if arg.startswith("--file="):
+                file_val = arg.split("=", 1)[1]
+            elif arg == "--file":
+                expect = "f"
+            elif arg.startswith("--directory="):
+                cdir = arg.split("=", 1)[1]
+            elif arg == "--directory":
+                expect = "C"
+            elif arg == "--create":
+                create = True
+            elif arg in ("--extract", "--get"):
+                extract = True
+            continue
+        flags = arg[1:] if arg.startswith("-") else arg
+        if flags and all(c in _TAR_FLAG_LETTERS for c in flags):
+            create = create or "c" in flags
+            extract = extract or "x" in flags
+            if "f" in flags:
+                expect = "f"
+            elif "C" in flags:
+                expect = "C"
+    targets: list[str] = []
+    if create and file_val:
+        targets.append(file_val)
+    if extract:
+        targets.append(cdir or ".")
+    return targets
+
+
+def _unzip_write_targets(args: list[str]) -> list[str]:
+    """Destination an unzip invocation extracts into (-d dir, else the cwd)."""
+    for i, arg in enumerate(args):
+        if arg == "-d" and i + 1 < len(args):
+            return [args[i + 1]]
+        if arg.startswith("-d") and len(arg) > 2:
+            return [arg[2:]]
+    return ["."]
+
+
+def _code_interpreter_invocations(command: str) -> list[tuple[str, list[str]]]:
+    """Find (name, args) for code-running interpreters in a command line (see _CODE_INTERPRETERS)."""
+    found: list[tuple[str, list[str]]] = []
+    for segment in _split_shell_commands(command):
+        try:
+            tokens = shlex.split(segment)
+        except ValueError:
+            tokens = segment.split()
+        idx = 0
+        while idx < len(tokens) and _ASSIGNMENT.match(tokens[idx]):
+            idx += 1
+        idx = _strip_transparent_wrappers(tokens, idx)
+        if idx >= len(tokens):
+            continue
+        name = Path(tokens[idx]).name
+        args = tokens[idx + 1 :]
+        if name in _CODE_INTERPRETERS and _interpreter_runs_code(name, args):
+            found.append((name, args))
+    return found
+
+
+def _file_write_destinations(name: str, args: list[str]) -> list[str]:
+    """Destination paths a file-copying command writes (see _FILE_WRITE_COMMANDS)."""
+    if name == "dd":
+        return [a[3:] for a in args if a.startswith("of=") and len(a) > 3]
+    if name == "tee":
+        return [a for a in args if not a.startswith("-")]
+    # cp, mv, install, ln: -t/--target-directory names the dest dir; else last positional
+    positionals: list[str] = []
+    target_dir: str | None = None
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg in ("-t", "--target-directory") and i + 1 < len(args):
+            target_dir = args[i + 1]
+            i += 2
+            continue
+        if arg.startswith("--target-directory="):
+            target_dir = arg.split("=", 1)[1]
+        elif not arg.startswith("-"):
+            positionals.append(arg)
+        i += 1
+    if target_dir is not None:
+        return [target_dir]
+    if name == "ln":
+        return [positionals[-1]] if positionals else []
+    return [positionals[-1]] if len(positionals) >= 2 else []
+
+
+# Pseudo command names under which _extract_command_argument_paths reports written files
+_WRITE_TARGET_SOURCES = frozenset({">", "sort", "yq", "write"})
+# find options that come before the search paths
+_FIND_LEADING_OPTIONS = frozenset({"-H", "-L", "-P"})
+
+
+def _redirect_write_targets(segment: str) -> list[str]:
+    """Files a segment's redirections write to (fd duplications excluded)."""
+    lexer = shlex.shlex(segment, posix=True, punctuation_chars=True)
+    lexer.whitespace_split = True
+    try:
+        tokens = list(lexer)
+    except ValueError:
+        return []
+    targets: list[str] = []
+    for op, target in zip(tokens, tokens[1:], strict=False):
+        if op not in _WRITE_REDIRECTS:
+            continue
+        if op == ">&" and (target.isdigit() or target == "-"):
+            continue
+        if target in _HARMLESS_REDIRECT_TARGETS or target.startswith("/dev/fd/"):
+            continue
+        targets.append(target)
+    return targets
+
+
+def _sort_output_paths(args: list[str]) -> list[str]:
+    paths: list[str] = []
+    for i, arg in enumerate(args):
+        if arg in ("-o", "--output") and i + 1 < len(args):
+            paths.append(args[i + 1])
+        elif arg.startswith("--output="):
+            paths.append(arg.split("=", 1)[1])
+        elif arg.startswith("-o") and not arg.startswith("--"):
+            paths.append(arg[2:])
+    return paths
+
+
+def _yq_inplace_paths(args: list[str]) -> list[str]:
+    inplace = any(
+        arg in ("--inplace", "-i") or (arg.startswith("-") and not arg.startswith("--") and "i" in arg[1:])
+        for arg in args
+    )
+    if not inplace:
+        return []
+    positional = [arg for arg in args if not arg.startswith("-")]
+    # First positional is the expression, unless it is the only one
+    return positional[1:] if len(positional) > 1 else positional
+
+
+def _extract_command_argument_paths(command: str, cwd: str | None = None) -> list[tuple[str, str]]:
     """Extract paths from command arguments that need validation.
 
     Returns list of (command_name, path_or_marker) tuples for commands whose
@@ -514,24 +1240,32 @@ def _extract_command_argument_paths(command: str) -> list[tuple[str, str]]:
     - cd <dir>: the target directory
     - find <paths...>: the search paths (before option flags)
     - python/python3 <script>: the script file path
+    - sort -o <file>, yq -i <files>: files written in place
+    - (">", target): files written by output redirections, for every command
 
-    Special markers for python:
+    Relative paths are resolved against cwd and earlier cd targets.
+
+    Special markers for python (see _python_invocation):
     - ("<inline-code>") for python -c
+    - ("<module:NAME>") for python -m NAME
     - ("<stdin>") for python -
     - ("<interactive>") for python with no arguments
 
     Shell invocations are expanded first (see _expand_shell_invocations).
     """
-    stripped = _strip_shell_comments(_expand_shell_invocations(command))
-    if not stripped.strip():
-        return []
-
-    segments = _split_shell_commands(stripped)
+    segments = _split_shell_commands(_expand_shell_invocations(command))
     results: list[tuple[str, str]] = []
     # Track cd targets so relative paths in later segments resolve correctly
-    effective_cwd: str | None = None
+    effective_cwd: str | None = cwd
+
+    def resolve(path: str) -> str:
+        if effective_cwd and not Path(path).expanduser().is_absolute():
+            return str(Path(effective_cwd) / path)
+        return path
 
     for segment in segments:
+        results.extend((">", resolve(target)) for target in _redirect_write_targets(segment))
+
         try:
             tokens = shlex.split(segment)
         except ValueError:
@@ -540,10 +1274,11 @@ def _extract_command_argument_paths(command: str) -> list[tuple[str, str]]:
         if not tokens:
             continue
 
-        # Skip env var prefixes
+        # Skip env var prefixes and wrappers (env find ..., nice find ...)
         idx = 0
         while idx < len(tokens) and ENV_VAR_PATTERN.match(tokens[idx]):
             idx += 1
+        idx = _strip_transparent_wrappers(tokens, idx)
 
         if idx >= len(tokens):
             continue
@@ -554,46 +1289,39 @@ def _extract_command_argument_paths(command: str) -> list[tuple[str, str]]:
         if cmd_name == "cd" and args:
             target = args[0]
             if target != "-":
-                results.append(("cd", target))
-                effective_cwd = target
+                results.append(("cd", resolve(target)))
+                effective_cwd = resolve(target)
 
         elif cmd_name == "find":
             if any(arg in FIND_DANGEROUS_PRIMARIES for arg in args):
                 results.append(("find", "<dangerous-find>"))
-            for arg in args:
+            i = 0
+            while i < len(args) and (args[i] in _FIND_LEADING_OPTIONS or args[i].startswith(("-D", "-O"))):
+                i += 2 if args[i] == "-D" else 1
+            for arg in args[i:]:
                 if arg.startswith("-") or arg.startswith("(") or arg == "!":
                     break
-                path = arg
-                if effective_cwd and not Path(path).is_absolute():
-                    path = str(Path(effective_cwd) / path)
-                results.append(("find", path))
+                results.append(("find", resolve(arg)))
 
-        elif cmd_name in PYTHON_COMMANDS:
-            i = 0
-            found = False
-            while i < len(args):
-                arg = args[i]
-                if arg == "-c":
-                    results.append((cmd_name, "<inline-code>"))
-                    found = True
-                    break
-                elif arg == "-m":
-                    found = True
-                    break
-                elif arg == "-":
-                    results.append((cmd_name, "<stdin>"))
-                    found = True
-                    break
-                elif arg.startswith("-"):
-                    i += 1
-                    continue
-                else:
-                    results.append((cmd_name, arg))
-                    found = True
-                    break
-                i += 1
-            if not found and not args:
-                results.append((cmd_name, "<interactive>"))
+        elif cmd_name == "sort":
+            results.extend(("sort", resolve(path)) for path in _sort_output_paths(args))
+
+        elif cmd_name == "yq":
+            results.extend(("yq", resolve(path)) for path in _yq_inplace_paths(args))
+
+        elif cmd_name in _FILE_WRITE_COMMANDS:
+            results.extend(("write", resolve(dest)) for dest in _file_write_destinations(cmd_name, args))
+
+        elif cmd_name == "tar":
+            results.extend(("write", resolve(dest)) for dest in _tar_write_targets(args))
+
+        elif cmd_name == "unzip":
+            results.extend(("write", resolve(dest)) for dest in _unzip_write_targets(args))
+
+        elif _PYTHON_NAME.match(cmd_name):
+            invocation = _python_invocation(args)
+            if invocation:
+                results.append((cmd_name, invocation))
 
     return results
 
@@ -622,6 +1350,7 @@ class FilesystemTools:
         self.confirmation_callback: Callable[[str], Awaitable[bool]] | None = None
         self.path_confirmation_callback: Callable[[str], Awaitable[bool]] | None = None
         self.awl_authorized_commands: set[str] = set()
+        self._confirmations: list[dict] = []
 
     def set_permission_mode(self, mode: str) -> str | None:
         """Set a session-only permission mode, returning an error if invalid."""
@@ -653,7 +1382,8 @@ class FilesystemTools:
                 if not isinstance(cmd, str) or len(cmd) <= 1:
                     continue
                 first_word = cmd.split()[0]
-                if first_word in SHELL_BUILTINS:
+                # Keep code-running builtins: an allowlist entry is how users allow them
+                if first_word in SHELL_BUILTINS - CODE_RUNNING_SHELL_BUILTINS:
                     continue
                 if cmd not in self.allowed_commands:
                     self.allowed_commands.append(cmd)
@@ -724,7 +1454,7 @@ class FilesystemTools:
                 return True
         return False
 
-    async def _validate_path(self, path_str: str, reason: str | None = None) -> str | None:
+    async def _validate_path(self, path_str: str, reason: str | None = None, for_write: bool = False) -> str | None:
         """Validate that a path is within allowed directories.
         Falls back to path_confirmation_callback if path is blocked.
 
@@ -732,31 +1462,54 @@ class FilesystemTools:
             path_str: The path to validate.
             reason: Optional context (e.g. the triggering command) shown to the
                 user in the approval prompt to explain why the path is needed.
+            for_write: True when the path will be written. Writes never use the
+                "no allowlist = unrestricted" escape hatch that reads do: with
+                restrictions disabled, a write outside the workspace still needs
+                confirmation (denied non-interactively), so a hijacked model
+                cannot silently write anywhere the OS permits.
 
         Returns:
             Error message if path is not allowed, None if validation passes
         """
-        if self.permission_mode == "autonomous" or not self._path_restrictions_enabled:
+        if for_write and is_audit_protected_path(Path(path_str)):
+            return f"Error: {path_str} is in ai-assist's audit/log area and cannot be written by the agent."
+
+        if self.permission_mode == "autonomous":
             return None
+
+        if is_sensitive_path(Path(path_str)):
+            return f"Error: {path_str} is a sensitive location (keys/credentials) the agent cannot access."
+
+        if for_write and is_unwritable_system_path(Path(path_str)):
+            return f"Error: {path_str} is a kernel/virtual filesystem (/proc, /sys, /dev) and cannot be written."
 
         if self.permission_mode == "auto" and self._is_workspace_path(path_str):
             return None
 
-        resolved = Path(path_str).expanduser().resolve()
-
-        for allowed in self.allowed_paths:
-            try:
-                resolved.relative_to(allowed)
+        if not self._path_restrictions_enabled:
+            # Reads are unrestricted when no allowlist is configured (backwards
+            # compat). Writes are not: only the workspace is allowed silently,
+            # anything else falls through to confirmation / non-interactive deny.
+            if not for_write:
                 return None
-            except ValueError:
-                continue
+            if self._is_workspace_path(path_str):
+                return None
+        else:
+            resolved = Path(path_str).expanduser().resolve()
+            for allowed in self.allowed_paths:
+                try:
+                    resolved.relative_to(allowed)
+                    return None
+                except ValueError:
+                    continue
 
-        # Path not in allowlist — try interactive approval
+        # Path not in allowlist (or a write outside it with no allowlist) — try approval
+        resolved = Path(path_str).expanduser().resolve()
         if self.path_confirmation_callback is not None:
             description = f"Access path: {resolved}"
             if reason:
                 description += f"\nReason: {reason}"
-            approved = await self.path_confirmation_callback(description)
+            approved = await self._ask_path(description)
             if approved:
                 return None
             return f"Error: Path access rejected by user: {resolved}"
@@ -955,6 +1708,7 @@ class FilesystemTools:
         Returns:
             Tool result as string
         """
+        self._confirmations = []
         if tool_name == "read_file":
             return await self._read_file(arguments)
         elif tool_name == "search_in_file":
@@ -972,6 +1726,41 @@ class FilesystemTools:
         else:
             return f"Error: Unknown filesystem tool: {tool_name}"
 
+    def _record_confirmation(self, kind: str, question: str, decision: str) -> None:
+        """Record a security prompt and its answer for the audit trail (see drain_confirmations)."""
+        self._confirmations.append({"kind": kind, "question": question[:500], "decision": decision})
+
+    def drain_confirmations(self) -> list[dict]:
+        """Return confirmation events since the last drain and clear the buffer."""
+        events, self._confirmations = self._confirmations, []
+        return events
+
+    async def _ask_command(self, description: str) -> bool:
+        """Invoke the command-approval callback and record the question + answer."""
+        if self.confirmation_callback is None:
+            self._record_confirmation("command", description, "auto-denied (non-interactive)")
+            return False
+        approved = bool(await self.confirmation_callback(description))
+        self._record_confirmation("command", description, "approved" if approved else "denied")
+        return approved
+
+    async def _ask_path(self, description: str) -> bool:
+        """Invoke the path-approval callback and record the question + answer."""
+        if self.path_confirmation_callback is None:
+            self._record_confirmation("path", description, "auto-denied (non-interactive)")
+            return False
+        approved = bool(await self.path_confirmation_callback(description))
+        self._record_confirmation("path", description, "approved" if approved else "denied")
+        return approved
+
+    async def confirm(self, description: str) -> bool:
+        """Ask the user to approve an action; refused when nobody can be asked."""
+        if self.permission_mode == "autonomous":
+            return True
+        if self.confirmation_callback is None:
+            return False
+        return await self._ask_command(description)
+
     async def _check_confirmation(self, tool_full_name: str, description: str) -> str | None:
         """Check if a tool requires confirmation and prompt the user.
 
@@ -988,7 +1777,7 @@ class FilesystemTools:
         if self.confirmation_callback is None:
             return None
 
-        approved = await self.confirmation_callback(description)
+        approved = await self._ask_command(description)
         if not approved:
             return f"Error: Action rejected by user: {description}"
 
@@ -1135,7 +1924,7 @@ class FilesystemTools:
         if not path:
             return "Error: path parameter is required"
 
-        path_error = await self._validate_path(path)
+        path_error = await self._validate_path(path, for_write=True)
         if path_error:
             return path_error
 
@@ -1204,8 +1993,7 @@ class FilesystemTools:
         Returns an empty list if all commands are allowed, or a list of
         rejected command names.
         """
-        stripped = _strip_shell_comments(_expand_shell_invocations(full_command))
-        segments = _split_shell_commands(stripped)
+        segments = _split_shell_commands(_expand_shell_invocations(full_command))
         rejected: list[str] = []
 
         for segment in segments:
@@ -1232,7 +2020,7 @@ class FilesystemTools:
                 continue
 
             cmd_name = _resolve_command_token(tokens[idx])
-            if cmd_name in SHELL_BUILTINS:
+            if cmd_name in INERT_SHELL_BUILTINS:
                 continue
 
             # Build the effective token list for matching (preserve full paths)
@@ -1280,8 +2068,7 @@ class FilesystemTools:
             return None
 
         # Per-segment validation
-        stripped = _strip_shell_comments(_expand_shell_invocations(full_command))
-        segments = _split_shell_commands(stripped)
+        segments = _split_shell_commands(_expand_shell_invocations(full_command))
 
         for segment in segments:
             try:
@@ -1313,7 +2100,7 @@ class FilesystemTools:
                         return f"Error: cd target path is not allowed. {path_error}"
                 continue
 
-            if cmd_name in SHELL_BUILTINS:
+            if cmd_name in INERT_SHELL_BUILTINS:
                 continue
 
             # Check if this segment is prefix-allowed
@@ -1330,7 +2117,7 @@ class FilesystemTools:
 
             # Prompt for this specific segment
             if self.confirmation_callback is not None:
-                approved = await self.confirmation_callback(segment.strip())
+                approved = await self._ask_command(segment.strip())
                 if not approved:
                     return f"Error: Command '{segment.strip()}' was rejected by the user. Try a different approach or use only allowed commands: {', '.join(self.allowed_commands)}."
             else:
@@ -1353,7 +2140,7 @@ class FilesystemTools:
         if re.search(r"(?:^|\s)(?:curl|wget|ssh|scp|rsync)(?:\s|$)", command):
             return False
 
-        segments = _split_shell_commands(_strip_shell_comments(command))
+        segments = _split_shell_commands(command)
         if not segments:
             return False
         return all(self._is_auto_segment_safe(segment) for segment in segments)
@@ -1420,8 +2207,7 @@ class FilesystemTools:
             return False
         return index == len(args)
 
-    @staticmethod
-    def _is_auto_sqlite_read_safe(args: list[str]) -> bool:
+    def _is_auto_sqlite_read_safe(self, args: list[str]) -> bool:
         """Allow a single read-only SQLite query with display-only options."""
         display_options = {"-header", "-noheader", "-column", "-csv", "-json", "-line", "-list", "-tabs"}
         index = 0
@@ -1430,11 +2216,17 @@ class FilesystemTools:
         if len(args) - index != 2:
             return False
 
+        database = args[index]
+        if database != ":memory:" and not self._is_workspace_path(database):
+            return False
+
         query = args[index + 1].strip()
         if ";" in query or not re.match(r"(?:select\b|with\b|explain\s+select\b)", query, re.IGNORECASE):
             return False
+        # writefile/readfile/edit are sqlite3 shell functions touching arbitrary files
         return not re.search(
-            r"\b(?:alter|attach|create|delete|detach|drop|insert|load_extension|pragma|replace|update|vacuum)\b",
+            r"\b(?:alter|attach|create|delete|detach|drop|insert|load_extension|pragma|replace|update|vacuum"
+            r"|writefile|readfile|edit|fts3_tokenizer)\b",
             query,
             re.IGNORECASE,
         )
@@ -1447,17 +2239,43 @@ class FilesystemTools:
                 continue
             if flag != "--no-pager":
                 return False
-        return bool(args) and args[0] in {"status", "diff", "log", "show", "branch", "rev-parse", "ls-files"}
+        if not args or args[0] not in {"status", "diff", "log", "show", "branch", "rev-parse", "ls-files"}:
+            return False
+        # --output writes a file; --ext-diff/--textconv run configured programs
+        if any(arg.split("=", 1)[0] in _GIT_UNSAFE_READ_OPTIONS for arg in args[1:]):
+            return False
+        return args[0] != "branch" or self._is_git_branch_listing(args[1:])
+
+    @staticmethod
+    def _is_git_branch_listing(args: list[str]) -> bool:
+        """`git branch` only lists branches: no names to create, delete, or move."""
+        index = 0
+        while index < len(args):
+            arg = args[index]
+            if arg in _GIT_BRANCH_FILTER_OPTIONS:
+                index += 2
+                continue
+            if not arg.startswith("-") or arg.split("=", 1)[0] not in _GIT_BRANCH_LIST_OPTIONS:
+                return False
+            index += 1
+        return True
 
     @staticmethod
     def _is_auto_gh_safe(args: list[str]) -> bool:
         if not args:
             return False
         if args[0] == "api":
-            if "--method" not in args:
-                return True
-            index = args.index("--method")
-            return index + 1 < len(args) and args[index + 1].upper() == "GET"
+            for index, arg in enumerate(args):
+                if arg in ("-X", "--method"):
+                    if index + 1 >= len(args) or args[index + 1].upper() != "GET":
+                        return False
+                elif arg.startswith(("-X", "--method=")):
+                    if arg.removeprefix("-X").removeprefix("--method=").upper() != "GET":
+                        return False
+                elif arg.split("=", 1)[0] in _GH_API_BODY_OPTIONS or arg.startswith(("-f", "-F")):
+                    # Fields and request bodies make gh send a POST
+                    return False
+            return True
         return args[:2] in (["pr", "view"], ["pr", "list"], ["pr", "status"], ["run", "view"], ["run", "list"])
 
     def _has_outside_workspace_path(self, args: list[str]) -> bool:
@@ -1468,7 +2286,9 @@ class FilesystemTools:
                 return True
         return False
 
-    async def _validate_command_arguments(self, command: str, was_auto_allowed: bool) -> str | None:
+    async def _validate_command_arguments(
+        self, command: str, was_auto_allowed: bool, working_dir: str | None = None
+    ) -> str | None:
         """Validate path arguments and parameters for specific commands.
 
         Checks:
@@ -1476,6 +2296,8 @@ class FilesystemTools:
         - python/python3: script paths must be within allowed directories;
           -c (inline code), stdin, and interactive mode require confirmation
           when the command was auto-allowed via allowlist
+        - files written by redirections, sort -o and yq -i: must be within
+          allowed directories; paths computed at run time need confirmation
 
         Note: cd path validation is handled by _check_command_allowed to
         avoid double-prompting.
@@ -1489,34 +2311,225 @@ class FilesystemTools:
         Returns:
             Error message if blocked, None if allowed
         """
-        pairs = _extract_command_argument_paths(command)
+        for _raw, path in _command_path_candidates(command, working_dir):
+            if is_sensitive_path(path):
+                return f"Error: {path} is a sensitive location (keys/credentials) the agent cannot access."
 
-        for cmd_name, path_or_marker in pairs:
-            if cmd_name == "cd":
-                continue
-            if path_or_marker == "<dangerous-find>":
-                return (
-                    "Error: find with -exec/-execdir/-ok/-okdir/-delete/-fprintf is not allowed "
-                    "(these run arbitrary commands or modify files, bypassing the command allowlist)."
-                )
-            if path_or_marker in ("<inline-code>", "<stdin>", "<interactive>"):
-                if not was_auto_allowed:
-                    continue
-                if self.confirmation_callback is not None:
-                    desc = f"{cmd_name} {path_or_marker.strip('<>')} execution: {command}"
-                    approved = await self.confirmation_callback(desc)
-                    if not approved:
-                        return f"Error: {cmd_name} {path_or_marker} execution rejected by user."
-                elif path_or_marker == "<interactive>":
-                    return f"Error: {cmd_name} {path_or_marker} execution is not allowed in non-interactive mode."
-                elif cmd_name not in self.allowed_commands:
-                    return f"Error: {cmd_name} {path_or_marker} execution is not allowed in non-interactive mode."
-            else:
-                path_error = await self._validate_path(path_or_marker, reason=command)
-                if path_error:
-                    return f"Error: {cmd_name} target path is not allowed. {path_error}"
+        # These are extra confirmation gates for commands that were only *silently*
+        # auto-allowed (allowlist/builtins). When the command was explicitly
+        # user-approved or authorized by a user-started AWL script, was_auto_allowed
+        # is False and they are skipped — the user already signed off on it. Hard
+        # blocks (sensitive paths above, write-target checks below) always apply.
+        if was_auto_allowed:
+            program_args = ", ".join(sorted(set(_program_running_arguments(command))))
+            if program_args:
+                if self.confirmation_callback is None:
+                    return f"Error: {program_args} can run arbitrary programs; not allowed in non-interactive mode."
+                if not await self._ask_command(f"Allow {program_args} (can run arbitrary programs): {command}"):
+                    return f"Error: {program_args} rejected by user."
+
+            hijacked = ", ".join(sorted(_program_hijacking_assignments(command)))
+            if hijacked:
+                if self.confirmation_callback is None:
+                    return f"Error: Setting {hijacked} changes which program runs; not allowed in non-interactive mode."
+                if not await self._ask_command(f"Set {hijacked} (changes which program runs): {command}"):
+                    return f"Error: Setting {hijacked} rejected by user."
+
+        for cmd_name, path_or_marker in _extract_command_argument_paths(command, working_dir):
+            pair_error = await self._validate_argument_pair(cmd_name, path_or_marker, command, was_auto_allowed)
+            if pair_error:
+                return pair_error
+
+        if was_auto_allowed:
+            read_error = await self._check_read_paths(command, working_dir)
+            if read_error:
+                return read_error
+
+        if was_auto_allowed:
+            interpreter_error = await self._check_code_interpreters(command)
+            if interpreter_error:
+                return interpreter_error
 
         return None
+
+    async def _validate_argument_pair(
+        self, cmd_name: str, path_or_marker: str, command: str, was_auto_allowed: bool
+    ) -> str | None:
+        """Validate one (command, path-or-marker) pair from _extract_command_argument_paths."""
+        if cmd_name == "cd":
+            return None
+        is_write = cmd_name in _WRITE_TARGET_SOURCES
+        if is_write and (git_error := await self._check_code_location_write(path_or_marker)):
+            return git_error
+        if is_write and _DYNAMIC_PATH_CHARS.intersection(path_or_marker):
+            if self.confirmation_callback is None:
+                return f"Error: Cannot verify write target {path_or_marker} in non-interactive mode."
+            if not await self._ask_command(f"Write to a path computed at run time ({path_or_marker}): {command}"):
+                return f"Error: Write to {path_or_marker} rejected by user."
+            return None
+        if path_or_marker == "<dangerous-find>":
+            return (
+                "Error: find with -exec/-execdir/-ok/-okdir/-delete/-fprintf is not allowed "
+                "(these run arbitrary commands or modify files, bypassing the command allowlist)."
+            )
+        is_module = path_or_marker.startswith("<module:")
+        is_script = path_or_marker.startswith("<script:")
+        if is_script:
+            read_error = await self._validate_path(path_or_marker[len("<script:") : -1], reason=command)
+            if read_error:
+                return f"Error: {cmd_name} target path is not allowed. {read_error}"
+        if is_module or is_script or path_or_marker in ("<inline-code>", "<stdin>", "<interactive>"):
+            return await self._gate_code_execution(cmd_name, path_or_marker, command, was_auto_allowed)
+        path_error = await self._validate_path(path_or_marker, reason=command, for_write=is_write)
+        if path_error:
+            return f"Error: {cmd_name} target path is not allowed. {path_error}"
+        return None
+
+    async def _gate_code_execution(
+        self, cmd_name: str, path_or_marker: str, command: str, was_auto_allowed: bool
+    ) -> str | None:
+        """Confirm-gate python -c / -m / script / stdin / REPL execution."""
+        if not was_auto_allowed:
+            return None
+        if path_or_marker.startswith("<module:") and self._is_python_module_allowlisted(cmd_name, path_or_marker[8:-1]):
+            return None
+        if path_or_marker.startswith("<script:") and self._is_invocation_allowlisted(
+            [cmd_name, path_or_marker[len("<script:") : -1]]
+        ):
+            return None
+        if self.confirmation_callback is None:
+            # A bare interpreter on the allowlist is not enough to run arbitrary
+            # code non-interactively; the specific invocation must be allowlisted.
+            return f"Error: {cmd_name} {path_or_marker} execution is not allowed in non-interactive mode."
+        if not await self._ask_command(f"{cmd_name} {path_or_marker.strip('<>')} execution: {command}"):
+            return f"Error: {cmd_name} {path_or_marker} execution rejected by user."
+        return None
+
+    async def _check_read_paths(self, command: str, working_dir: str | None) -> str | None:
+        """Path-like file arguments must be within the allowlist to read.
+
+        Shell readers (cat, grep, head, cp source, ...) would otherwise read any
+        file regardless of allowed_paths, defeating the read confinement that the
+        internal read_file tool enforces. Only genuine file arguments are checked:
+        the command word, option flags, env assignments, redirect targets, and
+        device/virtual paths are skipped, and bare words (e.g. a grep pattern)
+        are not treated as files. Write targets are validated separately. An empty
+        allowlist keeps reads unrestricted.
+        """
+        # Paths already validated by _extract_command_argument_paths (find search paths,
+        # write targets, cd, script paths) are skipped here to avoid a second prompt.
+        handled = {
+            str((Path(working_dir).expanduser() if working_dir else Path.cwd()) / val)
+            for name, val in _extract_command_argument_paths(command, working_dir)
+            if not val.startswith("<")
+        }
+        effective_cwd = Path(working_dir).expanduser() if working_dir else Path.cwd()
+        for segment in _split_shell_commands(command):
+            try:
+                tokens = shlex.split(segment)
+            except ValueError:
+                tokens = segment.split()
+            idx = 0
+            while idx < len(tokens) and ENV_VAR_PATTERN.match(tokens[idx]):
+                idx += 1
+            idx = _strip_transparent_wrappers(tokens, idx)
+            if idx < len(tokens) and _resolve_command_token(tokens[idx]) in PRIVILEGE_WRAPPERS:
+                idx += 1
+            # skip the command word itself; validate only its arguments
+            for tok in tokens[idx + 1 :]:
+                if tok.startswith("-") or _SHELL_REDIRECT.match(tok) or not _looks_like_path(tok):
+                    continue
+                expanded = os.path.expanduser(os.path.expandvars(tok))
+                resolved = effective_cwd / expanded
+                if (
+                    is_unwritable_system_path(resolved)
+                    or str(resolved) in handled
+                    or str(resolved.resolve()) in handled
+                    or str(resolved.resolve()) in _HARMLESS_REDIRECT_TARGETS
+                ):
+                    continue
+                path_error = await self._validate_path(str(resolved), reason=command)
+                if path_error:
+                    return f"Error: reading {resolved} is not allowed. {path_error}"
+            if len(tokens) > idx + 1 and tokens[idx] == "cd":
+                effective_cwd = effective_cwd / os.path.expanduser(os.path.expandvars(tokens[idx + 1]))
+        return None
+
+    async def _check_code_interpreters(self, command: str) -> str | None:
+        """Confirm-gate interpreters/runners that execute arbitrary code or packages."""
+        for name, iargs in _code_interpreter_invocations(command):
+            if self._is_invocation_allowlisted([name, *iargs]):
+                continue
+            if self.confirmation_callback is None:
+                return f"Error: {name} runs arbitrary code and needs confirmation; not allowed non-interactively."
+            if not await self._ask_command(f"{name} runs arbitrary code/package: {command}"):
+                return f"Error: {name} invocation rejected by user."
+        return None
+
+    def _is_invocation_allowlisted(self, tokens: list[str]) -> bool:
+        """Whether a multi-token allowlist entry explicitly permits this invocation."""
+        return any(
+            len(parts) >= 2 and tokens[: len(parts)] == parts
+            for parts in (entry.split() for entry in self.allowed_commands)
+        )
+
+    @staticmethod
+    def _load_command_env_allowlist() -> set[str]:
+        """Sensitive env var names the user allows execute_command to see."""
+        path = get_config_dir() / COMMAND_ENV_FILE
+        if not path.exists():
+            return set()
+        try:
+            with open(path) as f:
+                return {name for name in json.load(f) if isinstance(name, str)}
+        except json.JSONDecodeError, OSError, TypeError:
+            logger.exception("Ignoring unreadable %s", path)
+            return set()
+
+    def _is_python_module_allowlisted(self, python: str, module: str) -> bool:
+        """Whether an allowlist entry names this module explicitly (e.g. "python3 -m pytest")."""
+        invocation = [python, "-m", module]
+        return any(
+            len(parts) >= 2 and invocation[: len(parts)] == parts
+            for parts in (entry.split() for entry in self.allowed_commands)
+        )
+
+    async def _check_code_location_write(self, path: str) -> str | None:
+        """Writes where code runs later, outside ai-assist, need confirmation.
+
+        That is inside a .git directory (hooks, config) and startup locations
+        (shell rc files, ~/.local/bin, systemd user units, ...).
+        """
+        if self.permission_mode == "autonomous":
+            return None
+        resolved = Path(path).expanduser().resolve()
+        if ".git" in resolved.parts:
+            what = "git internals (git runs hooks and programs configured there)"
+        elif is_startup_path(resolved):
+            what = "a startup location (code there runs later, outside ai-assist)"
+        else:
+            return None
+        if await self.confirm(f"Modify {what}: {path}"):
+            return None
+        return f"Error: Writing to {path} requires user confirmation: it is {what.split(' (')[0]}."
+
+    async def validate_write_target(self, path: str) -> str | None:
+        """Run the internal__write_file checks on a path the agent wants to write.
+
+        Returns an error message if the write is not allowed, None otherwise.
+        """
+        if self._is_protected_config(path):
+            return f"Error: {Path(path).name} is a protected security config file and cannot be modified by the agent."
+
+        path_error = await self._validate_path(path, for_write=True)
+        if path_error:
+            return path_error
+
+        git_error = await self._check_code_location_write(path)
+        if git_error:
+            return git_error
+
+        return await self._check_confirmation("internal__write_file", f"Write file: {path}")
 
     async def _write_file(self, args: dict) -> str:
         """Write content to a file"""
@@ -1528,16 +2541,9 @@ class FilesystemTools:
         if content is None:
             return "Error: content parameter is required"
 
-        if self._is_protected_config(path):
-            return f"Error: {Path(path).name} is a protected security config file and cannot be modified by the agent."
-
-        path_error = await self._validate_path(path)
-        if path_error:
-            return path_error
-
-        confirm_error = await self._check_confirmation("internal__write_file", f"Write file: {path}")
-        if confirm_error:
-            return confirm_error
+        write_error = await self.validate_write_target(path)
+        if write_error:
+            return write_error
 
         try:
             path_obj = Path(path).expanduser()
@@ -1564,7 +2570,8 @@ class FilesystemTools:
             return f"Error: {Path(path).name} is a protected security config file and cannot be modified by the agent."
 
         for check in (
-            await self._validate_path(path),
+            await self._validate_path(path, for_write=True),
+            await self._check_code_location_write(path),
             await self._check_confirmation("internal__edit_file", f"Edit file: {path}"),
         ):
             if check:
@@ -1606,6 +2613,11 @@ class FilesystemTools:
             protected_path = f"{config_dir}/{protected}"
             if protected_path in command or f"~/.ai-assist/{protected}" in command:
                 return f"Error: {protected} is a protected security config file and cannot be modified by the agent."
+        for cmd_name, path in _extract_command_argument_paths(command, working_dir):
+            if cmd_name in _WRITE_TARGET_SOURCES and self._is_protected_config(path):
+                return (
+                    f"Error: {Path(path).name} is a protected security config file and cannot be modified by the agent."
+                )
 
         # In interactive mode (confirmation_callback set), no timeout -- the user
         # can press Escape to interrupt like any normal interaction.
@@ -1616,6 +2628,12 @@ class FilesystemTools:
             timeout = min(timeout, 300)  # Max 5 minutes
 
         cmd_names = extract_command_names(command)
+
+        # The agent must never write its own audit trail/logs, in any mode (the
+        # legitimate writers use AuditLogger / the logging handler directly).
+        for _src, dest in _extract_command_argument_paths(command, working_dir):
+            if _src in _WRITE_TARGET_SOURCES and is_audit_protected_path(Path(dest)):
+                return f"Error: {dest} is in ai-assist's audit/log area and cannot be written by the agent."
 
         if working_dir and self.permission_mode == "auto" and not self._is_workspace_path(working_dir):
             return f"Error: Working directory is outside the auto-mode workspace: {working_dir}"
@@ -1647,7 +2665,9 @@ class FilesystemTools:
         # AWL-authorized commands skip the extra inline-code confirmation
         arg_error = None
         if self.permission_mode != "autonomous":
-            arg_error = await self._validate_command_arguments(command, was_auto_allowed and not awl_confirmed)
+            arg_error = await self._validate_command_arguments(
+                command, was_auto_allowed and not awl_confirmed, working_dir
+            )
         if arg_error:
             return arg_error
 
@@ -1661,7 +2681,14 @@ class FilesystemTools:
             # shell=True is required for shell command execution with pipes, redirects, etc.
             # Commands are validated through allowlists and confirmation callbacks above
             result = subprocess.run(  # nosec B602
-                command, shell=True, cwd=cwd, capture_output=True, text=True, timeout=timeout, check=False
+                command,
+                shell=True,
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                check=False,
+                env=filter_sensitive_env(os.environ, allowed=self._load_command_env_allowlist()),
             )
 
             output = f"Command: {command}\n"

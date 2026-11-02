@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from .config import get_config_dir
+from .redaction import SECRET_PATTERN_SOURCES
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +18,7 @@ SECRET_PATTERNS = re.compile(
     r"|xoxb-[a-zA-Z0-9-]+|xoxp-[a-zA-Z0-9-]+"
     r"|eyJ[a-zA-Z0-9_-]+\.eyJ[a-zA-Z0-9_-]+"  # JWTs
     r"|(?=[a-zA-Z0-9+]*[A-Z+])(?=[a-zA-Z0-9+]*[0-9+])[a-zA-Z0-9+]{40,}={0,2})"  # Base64 keys (must contain uppercase AND digit/+), excludes hex SHAs and CamelCase identifiers
+    + "".join(f"|(?:{p})" for p in SECRET_PATTERN_SOURCES)  # Same formats as LLM-bound redaction
 )
 
 SECRET_KEY_PATTERNS = {"api_key", "token", "secret", "password", "credential", "auth"}
@@ -33,6 +35,13 @@ class AuditLogger:
 
         audit_dir.mkdir(parents=True, exist_ok=True)
         self.log_file = audit_dir / "tool_calls.jsonl"
+        # Keep the audit trail readable only by the owner (it holds tool args/results)
+        try:
+            os.chmod(audit_dir, 0o700)
+            if self.log_file.exists():
+                os.chmod(self.log_file, 0o600)
+        except OSError:
+            logger.debug("Could not tighten audit permissions on %s", audit_dir)
 
     def _sanitize_value(self, value: str) -> str:
         """Remove secrets from a string value"""
@@ -56,6 +65,7 @@ class AuditLogger:
         arguments: dict,
         result: str,
         success: bool,
+        confirmations: list[dict] | None = None,
     ) -> None:
         """Append one JSON line to the audit log.
 
@@ -80,6 +90,8 @@ class AuditLogger:
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
             "pid": os.getpid(),
         }
+        if confirmations:
+            entry["confirmations"] = confirmations
 
         # Log to standard logger for log file visibility
         args_full = json.dumps(sanitized_args)

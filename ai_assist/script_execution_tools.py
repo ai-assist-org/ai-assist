@@ -6,6 +6,7 @@ import subprocess
 from pathlib import Path
 
 from .config import get_config_dir
+from .redaction import filter_sensitive_env
 
 SKILL_ENV_FILE = "skill_env.json"
 
@@ -335,34 +336,13 @@ class ScriptExecutionTools:
         Returns:
             Filtered environment dict
         """
-        SENSITIVE_PATTERNS = [
-            "API_KEY",
-            "TOKEN",
-            "SECRET",
-            "PASSWORD",
-            "CREDENTIALS",
-            "ANTHROPIC_",
-            "GOOGLE_",
-            "AWS_",
-            "AZURE_",
-            "GITHUB_TOKEN",
-            "JIRA_",
-        ]
-
         # Load skill-specific env var allowlist
         allowed_env_vars: set[str] = set()
         if skill_name:
             skill_env_config = self._load_skill_env_config()
             allowed_env_vars = set(skill_env_config.get(skill_name, []))
 
-        safe_env = {}
-        for key, value in os.environ.items():
-            # Allow if explicitly permitted for this skill
-            if key in allowed_env_vars:
-                safe_env[key] = value
-            # Otherwise skip if key contains any sensitive pattern
-            elif not any(pattern in key.upper() for pattern in SENSITIVE_PATTERNS):
-                safe_env[key] = value
+        safe_env = filter_sensitive_env(os.environ, allowed=allowed_env_vars)
 
         # Ensure PATH is available
         safe_env["PATH"] = os.environ.get("PATH", "/usr/bin:/bin")

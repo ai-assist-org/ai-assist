@@ -10,12 +10,12 @@ from ai_assist.filesystem_tools import (
     ALLOWED_PATHS_FILE,
     PRIVILEGE_WRAPPERS,
     SHELL_BUILTINS,
+    SUBSTITUTION_PLACEHOLDER,
     TRANSPARENT_WRAPPERS,
     FilesystemTools,
     _extract_command_argument_paths,
     _is_safe_env_assignment,
     _split_shell_commands,
-    _strip_shell_comments,
     compute_allowlist_prefix,
     compute_allowlist_prefixes,
     extract_command_names,
@@ -145,7 +145,7 @@ async def test_allowlisted_command_executes_directly():
     config = AiAssistConfig(anthropic_api_key="test")
     tools = FilesystemTools(config, load_user_config=False)
 
-    result = await tools.execute_tool("execute_command", {"command": "ls /tmp"})
+    result = await tools.execute_tool("execute_command", {"command": "ls /tmp/ai-assist"})
 
     assert "Error" not in result or "not found" not in result.lower()
     assert "not allowed" not in result.lower()
@@ -243,7 +243,7 @@ async def test_allowlist_checks_first_token():
     tools = FilesystemTools(config, load_user_config=False)
 
     # Bare allowlisted command should work
-    result = await tools.execute_tool("execute_command", {"command": "ls /tmp"})
+    result = await tools.execute_tool("execute_command", {"command": "ls /tmp/ai-assist"})
     assert "not allowed" not in result.lower()
 
     # Full path is NOT matched by bare allowlist entry — different binary could live there
@@ -251,7 +251,7 @@ async def test_allowlist_checks_first_token():
     assert "not allowed" in result.lower() or "not in the allowed" in result.lower()
 
     # Pipe with allowlisted first command should work (shell constructs preserved)
-    result = await tools.execute_tool("execute_command", {"command": "ls /tmp | grep test"})
+    result = await tools.execute_tool("execute_command", {"command": "ls /tmp/ai-assist | grep test"})
     assert "not allowed" not in result.lower()
 
     # Non-allowlisted command is still blocked
@@ -274,7 +274,7 @@ async def test_full_path_allowlist_requires_exact_match():
         anthropic_api_key="test", allowed_commands=list(config.allowed_commands) + ["/usr/bin/ls"]
     )
     tools_full = FilesystemTools(config_full, load_user_config=False)
-    result = await tools_full.execute_tool("execute_command", {"command": "/usr/bin/ls /tmp"})
+    result = await tools_full.execute_tool("execute_command", {"command": "/usr/bin/ls /tmp/ai-assist"})
     assert "not allowed" not in result.lower()
 
     # But a different path to the same basename is still blocked
@@ -870,28 +870,32 @@ def test_all_skill_paths_added_to_allowed_paths(tmp_path):
 # --- Phase 10: Smart command parsing ---
 
 
-class TestStripShellComments:
-    """Tests for _strip_shell_comments()"""
+class TestShellComments:
+    """Comments are dropped by _split_shell_commands()"""
 
     def test_no_comment(self):
-        assert _strip_shell_comments("ls /tmp") == "ls /tmp"
+        assert _split_shell_commands("ls /tmp") == ["ls /tmp"]
 
     def test_full_line_comment(self):
-        assert _strip_shell_comments("# this is a comment").strip() == ""
+        assert _split_shell_commands("# this is a comment") == []
 
     def test_inline_comment(self):
-        result = _strip_shell_comments("ls /tmp # list files")
-        assert "ls /tmp" in result
-        assert "list files" not in result
+        assert _split_shell_commands("ls /tmp # list files") == ["ls /tmp"]
+
+    def test_comment_ends_at_newline(self):
+        assert _split_shell_commands("ls # list\nrm x") == ["ls", "rm x"]
 
     def test_hash_in_double_quotes(self):
-        assert _strip_shell_comments('echo "hello # world"') == 'echo "hello # world"'
+        assert _split_shell_commands('echo "hello # world"') == ['echo "hello # world"']
 
     def test_hash_in_single_quotes(self):
-        assert _strip_shell_comments("echo 'foo # bar'") == "echo 'foo # bar'"
+        assert _split_shell_commands("echo 'foo # bar'") == ["echo 'foo # bar'"]
 
     def test_escaped_hash(self):
-        assert _strip_shell_comments("echo hello \\# world") == "echo hello \\# world"
+        assert _split_shell_commands("echo hello \\# world") == ["echo hello \\# world"]
+
+    def test_hash_inside_word_is_not_a_comment(self):
+        assert _split_shell_commands("echo a#b") == ["echo a#b"]
 
 
 class TestSplitShellCommands:
@@ -939,6 +943,27 @@ class TestSplitShellCommands:
     def test_background_ampersand_still_splits(self):
         result = _split_shell_commands("cmd1 & cmd2")
         assert len(result) == 2
+
+    def test_newline_splits(self):
+        assert _split_shell_commands("ls\npwd") == ["ls", "pwd"]
+
+    def test_line_continuation_joins(self):
+        assert _split_shell_commands("grep x \\\n  f") == ["grep x   f"]
+
+    def test_combined_stdout_stderr_redirect_not_split(self):
+        assert _split_shell_commands("ls &> out") == ["ls &> out"]
+
+    def test_substitution_bodies_become_segments(self):
+        assert _split_shell_commands('grep "$(id -u)" f') == [f'grep "{SUBSTITUTION_PLACEHOLDER}" f', "id -u"]
+
+    def test_single_quotes_prevent_substitution(self):
+        assert _split_shell_commands("echo '$(id)'") == ["echo '$(id)'"]
+
+    def test_quoted_heredoc_body_is_skipped(self):
+        assert _split_shell_commands("cat <<'EOF'\n$(id)\nEOF\nls") == ["cat <<'EOF'", "ls"]
+
+    def test_unquoted_heredoc_body_substitutions_checked(self):
+        assert _split_shell_commands("cat <<EOF\nuser $(id)\nEOF") == ["cat <<EOF", "id"]
 
 
 class TestIsSafeEnvAssignment:
@@ -1267,20 +1292,20 @@ class TestExtractCommandArgumentPaths:
 
     def test_python_script(self):
         result = _extract_command_argument_paths("python3 /tmp/script.py")
-        assert ("python3", "/tmp/script.py") in result
+        assert ("python3", "<script:/tmp/script.py>") in result
 
     def test_python_script_with_args(self):
         result = _extract_command_argument_paths("python script.py --verbose")
-        assert ("python", "script.py") in result
+        assert ("python", "<script:script.py>") in result
 
     def test_python_c_flag(self):
         result = _extract_command_argument_paths("python3 -c 'print(1)'")
         assert ("python3", "<inline-code>") in result
 
     def test_python_m_flag(self):
-        """python -m module is safe, no path to validate"""
+        """python -m runs a module's code: reported like inline code"""
         result = _extract_command_argument_paths("python3 -m pytest")
-        assert result == []
+        assert result == [("python3", "<module:pytest>")]
 
     def test_python_no_args(self):
         result = _extract_command_argument_paths("python3")
@@ -1321,7 +1346,7 @@ class TestExtractCommandArgumentPaths:
 
     def test_python_with_option_flags(self):
         result = _extract_command_argument_paths("python3 -u script.py")
-        assert ("python3", "script.py") in result
+        assert ("python3", "<script:script.py>") in result
 
 
 # --- Integration tests for command argument path validation ---
@@ -1425,14 +1450,18 @@ async def test_python_script_allowed_path(tmp_path):
     )
     tools = FilesystemTools(config, load_user_config=False)
 
+    # Running a script is arbitrary code: it needs confirmation even inside an allowed path.
+    async def approve(_desc):
+        return True
+
+    tools.confirmation_callback = approve
     result = await tools.execute_tool("execute_command", {"command": f"python3 {script}"})
-    assert "not allowed" not in result.lower()
     assert "ok" in result
 
 
 @pytest.mark.asyncio
-async def test_python_c_allowed_in_non_interactive_when_allowlisted(tmp_path):
-    """python -c is allowed in non-interactive mode when python is in allowlist"""
+async def test_python_c_denied_non_interactive_even_when_python_allowlisted(tmp_path):
+    """A bare python3 allowlist entry is NOT enough to run -c non-interactively."""
     config = AiAssistConfig(
         anthropic_api_key="test",
         allowed_commands=["python3"],
@@ -1442,8 +1471,8 @@ async def test_python_c_allowed_in_non_interactive_when_allowlisted(tmp_path):
     # No confirmation_callback set = non-interactive
 
     result = await tools.execute_tool("execute_command", {"command": "python3 -c 'print(1)'"})
-    assert "not allowed" not in result.lower()
-    assert "1" in result
+    assert result.startswith("Error")
+    assert "not allowed in non-interactive" in result
 
 
 @pytest.mark.asyncio
@@ -2086,3 +2115,43 @@ async def test_shell_c_disallowed_payload_blocked_on_execute(tmp_path, monkeypat
     )
     assert "not in the allowed" in result.lower() or "not allowed" in result.lower()
     assert not marker.exists()
+
+
+def _printenv_tools(tmp_path):
+    config = AiAssistConfig(anthropic_api_key="test", allowed_commands=["printenv"], allowed_paths=[str(tmp_path)])
+    return FilesystemTools(config, load_user_config=False)
+
+
+@pytest.mark.asyncio
+async def test_execute_command_strips_secret_env_vars(tmp_path, monkeypatch):
+    monkeypatch.setenv("TEST_SERVICE_TOKEN", "hidden-from-commands")
+    monkeypatch.setenv("TEST_PLAIN_SETTING", "visible-to-commands")
+    tools = _printenv_tools(tmp_path)
+
+    result = await tools.execute_tool("execute_command", {"command": "printenv"})
+
+    assert "hidden-from-commands" not in result
+    assert "visible-to-commands" in result
+
+
+@pytest.mark.asyncio
+async def test_execute_command_passes_allowlisted_secret(tmp_path, monkeypatch, isolate_config_dir):
+    monkeypatch.setenv("TEST_SERVICE_TOKEN", "allowed-for-commands")
+    (isolate_config_dir / "command_env.json").write_text(json.dumps(["TEST_SERVICE_TOKEN"]))
+    tools = _printenv_tools(tmp_path)
+
+    result = await tools.execute_tool("execute_command", {"command": "printenv TEST_SERVICE_TOKEN"})
+
+    assert "allowed-for-commands" in result
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("name", ["redact.json", "command_env.json"])
+async def test_redaction_configs_are_protected(tmp_path, isolate_config_dir, name):
+    config = AiAssistConfig(anthropic_api_key="test", allowed_paths=[str(isolate_config_dir)])
+    tools = FilesystemTools(config, load_user_config=False)
+
+    result = await tools.execute_tool("write_file", {"path": str(isolate_config_dir / name), "content": "{}"})
+
+    assert "protected" in result
+    assert not (isolate_config_dir / name).exists()

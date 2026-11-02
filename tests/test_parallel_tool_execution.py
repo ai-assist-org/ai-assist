@@ -65,7 +65,7 @@ class TestExecuteToolsConcurrently:
 
         assert len(results) == 1
         assert results[0]["tool_use_id"] == "1"
-        assert results[0]["content"] == "result-internal__think"
+        assert "\nresult-internal__think\n" in results[0]["content"]
         assert not loop_detected
 
     @pytest.mark.asyncio
@@ -117,8 +117,8 @@ class TestExecuteToolsConcurrently:
         results, _ = await agent._execute_tools_concurrently(blocks)
 
         assert len(results) == 2
-        # Both should have the same result (cached)
-        assert results[0]["content"] == results[1]["content"]
+        # Both should have the same result (cached); markers differ per call
+        assert results[0]["content"].splitlines()[1:-1] == results[1]["content"].splitlines()[1:-1]
         # Only one actual execution
         assert call_count == 1
         assert agent._duplicate_tool_call_count == 1
@@ -158,9 +158,9 @@ class TestExecuteToolsConcurrently:
         results, _ = await agent._execute_tools_concurrently(blocks)
 
         assert results[0]["tool_use_id"] == "1"
-        assert results[0]["content"] == "result-slow_tool"
+        assert "\nresult-slow_tool\n" in results[0]["content"]
         assert results[1]["tool_use_id"] == "2"
-        assert results[1]["content"] == "result-fast_tool"
+        assert "\nresult-fast_tool\n" in results[1]["content"]
 
     @pytest.mark.asyncio
     async def test_loop_detection(self, agent):

@@ -16,22 +16,29 @@ switch between modes for the current session.
 `autonomous` is not a credential boundary. An autonomous agent can use every
 mount, credential, MCP server, and network capability enabled for its sandbox.
 Keep sandbox features minimal. Security configuration files
-(`allowed_commands.json`, `allowed_paths.json`, and `skill_env.json`) remain
-protected in every mode.
+(`allowed_commands.json`, `allowed_paths.json`, `skill_env.json`,
+`mcp_servers.yaml`, `.env`, `schedules.json`, `event-schedules.json`, `installed-plugins.json`,
+`installed-skills.json`, `plugin-marketplaces.json`, `redact.json`, and
+`command_env.json`) remain protected in every mode.
 
 ## What auto mode permits
 
 Auto mode permits these operations without an interactive approval prompt:
 
 - Existing explicit command allowlist entries.
-- Workspace-local built-in file reads, writes, edits, and directory creation.
+- Workspace-local built-in file reads, writes, edits, and directory creation
+  (writes inside a `.git` directory always ask, in every mode but autonomous).
 - Safe shell builtins: `cd`, `echo`, `false`, `pwd`, `printf`, `test`, `true`,
   and `[`. The target of `cd` is still path-validated.
-- Read-only Git subcommands: `status`, `diff`, `log`, `show`, `branch`,
-  `rev-parse`, and `ls-files`. Only `git -C <workspace-path>` and
+- Read-only Git subcommands: `status`, `diff`, `log`, `show`, `branch`
+  (listing only), `rev-parse`, and `ls-files`, without `--output`,
+  `--ext-diff`, or `--textconv`. Only `git -C <workspace-path>` and
   `git --no-pager` are accepted as Git global options.
 - Read-only GitHub CLI operations: `gh api` with the default method or explicit
-  `--method GET`, plus `gh pr view|list|status` and `gh run view|list`.
+  `--method GET` and no `-f`/`-F`/`--field`/`--raw-field`/`--input`, plus
+  `gh pr view|list|status` and `gh run view|list`.
+- Read-only `sqlite3` queries on `:memory:` or a workspace database, without
+  the `writefile`, `readfile`, or `edit` shell functions.
 - Workspace-local test and static-analysis commands: `pytest`,
   `python -m pytest`, `python3 -m pytest`, `ruff`, `mypy`, and
   `black --check`.

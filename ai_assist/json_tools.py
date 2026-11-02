@@ -90,7 +90,7 @@ class JsonTools:
         args.extend([filter_expr, file_path])
 
         try:
-            result = subprocess.run(args, capture_output=True, text=True, timeout=30, check=False)
+            result = subprocess.run(args, capture_output=True, text=True, timeout=30, check=False, env={})
         except subprocess.TimeoutExpired:
             return "jq error: query timed out after 30 seconds"
 
@@ -112,6 +112,7 @@ class JsonTools:
                 text=True,
                 timeout=30,
                 check=False,
+                env={},  # $ENV / env must not expose the agent's secrets
             )
         except subprocess.TimeoutExpired:
             return "jq error: filter timed out after 30 seconds"

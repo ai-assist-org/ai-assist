@@ -279,6 +279,16 @@ Goal: Fetch the latest changes using `git -C /path/to/repo fetch origin master`.
 
 Commands in backticks are **auto-authorized** by the runtime: they are temporarily added to the allowed commands list for the duration of the workflow, so the user is not prompted for confirmation each time.
 
+This only applies to scripts the user started: `ai-assist /run`, and actions
+(`internal__create_action`) whose AWL prompt the user confirmed. When the agent
+runs a script itself (`introspection__execute_awl_script`), its commands go
+through the normal allowlist and confirmation.
+
+Commands are taken from the script text, never from interpolated values. A
+`${var}` may only choose a directory, with the script name written literally
+(`${tools_dir}/build.sh`), and its value must be a plain path (no spaces or
+shell syntax).
+
 Commands written without backticks will require manual authorization in interactive mode.
 
 ---

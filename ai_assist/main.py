@@ -440,7 +440,8 @@ async def run_awl_script(agent: AiAssistAgent, script_path: str, variables: dict
 
     print(f"Running AWL workflow: {awl_path.name}{' (verbose)' if verbose else ''}")
     try:
-        await _run_awl(script_path, agent, variables=variables, verbose=verbose)
+        # Started by the user from the CLI: the script's commands are trusted
+        await _run_awl(script_path, agent, variables=variables, verbose=verbose, authorize_commands=True)
     except RuntimeError as e:
         print(f"\n{e}")
         sys.exit(1)

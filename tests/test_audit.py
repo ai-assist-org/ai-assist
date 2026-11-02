@@ -158,3 +158,28 @@ def test_audit_log_records_failures(logger, audit_dir):
 
     assert entry["success"] is False
     assert "Error" in entry["result_summary"]
+
+
+def test_log_tool_call_records_confirmations(tmp_path):
+    from ai_assist.audit import AuditLogger
+
+    logger = AuditLogger(audit_dir=tmp_path)
+    logger.log_tool_call(
+        "internal__execute_command",
+        {"command": "python3 -c 'print(1)'"},
+        "ran",
+        success=True,
+        confirmations=[{"kind": "command", "question": "python3 -c execution: ...", "decision": "approved"}],
+    )
+    entry = json.loads((tmp_path / "tool_calls.jsonl").read_text().strip())
+    assert entry["confirmations"][0]["decision"] == "approved"
+    assert "python3 -c" in entry["confirmations"][0]["question"]
+
+
+def test_log_tool_call_omits_confirmations_when_none(tmp_path):
+    from ai_assist.audit import AuditLogger
+
+    logger = AuditLogger(audit_dir=tmp_path)
+    logger.log_tool_call("x__y", {}, "ok", success=True)
+    entry = json.loads((tmp_path / "tool_calls.jsonl").read_text().strip())
+    assert "confirmations" not in entry

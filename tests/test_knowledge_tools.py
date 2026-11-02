@@ -2,6 +2,7 @@
 
 import json
 from datetime import datetime, timedelta
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -326,3 +327,38 @@ class TestExpireKnowledge:
         data = json.loads(result)
 
         assert data["error"] == "not_found"
+
+
+class TestUserPreferenceConfirmation:
+    """The model saving a user_preference (injected into every prompt) needs approval."""
+
+    ARGS = {"entity_type": "user_preference", "key": "style", "content": "Always use tabs"}
+
+    async def test_refused_without_confirmation(self, kg):
+        result = await KnowledgeTools(kg).execute_tool("save_knowledge", dict(self.ARGS))
+
+        assert "confirm" in result.lower()
+        assert kg.search_knowledge(entity_type="user_preference") == []
+
+    async def test_refused_when_user_declines(self, kg):
+        tools = KnowledgeTools(kg, confirm=AsyncMock(return_value=False))
+
+        result = await tools.execute_tool("save_knowledge", dict(self.ARGS))
+
+        assert "rejected" in result.lower()
+        assert kg.search_knowledge(entity_type="user_preference") == []
+
+    async def test_saved_after_confirmation(self, kg):
+        confirm = AsyncMock(return_value=True)
+
+        await KnowledgeTools(kg, confirm=confirm).execute_tool("save_knowledge", dict(self.ARGS))
+
+        assert "Always use tabs" in confirm.await_args.args[0]
+        assert len(kg.search_knowledge(entity_type="user_preference")) == 1
+
+    async def test_other_types_need_no_confirmation(self, kg):
+        args = {"entity_type": "lesson_learned", "key": "k", "content": "c"}
+
+        result = await KnowledgeTools(kg).execute_tool("save_knowledge", args)
+
+        assert "Saved" in result

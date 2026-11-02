@@ -8,11 +8,11 @@ ai-assist implements defense-in-depth with multiple security layers:
 
 1. **Prompt injection detection** — scans MCP tool results for injection patterns
 2. **Tool poisoning detection** — validates MCP tool descriptions for hidden instructions
-3. **Rug-pull detection** — detects tool definition changes after initial connection
+3. **Rug-pull detection** — holds back MCP tools whose definition changed until the user approves them
 4. **Script execution sandboxing** — constrains Agent Skills scripts
 5. **Tool argument validation** — validates inputs against JSON schemas
 6. **Audit logging** — records all tool calls for forensic analysis
-7. **Secret redaction** — filters sensitive environment variables
+7. **Secret redaction** — redacts secrets from tool results and filters sensitive environment variables
 8. **Command/path allowlists** — restricts filesystem and command access
 9. **Command argument validation** — validates paths in `cd`/`find` and parameters in `python`/`python3`
 10. **Plugin trust model** — untrusted plugin skills scanned; bundled MCP servers confirmed before connecting
@@ -32,17 +32,23 @@ Untrusted content entering the agent can contain adversarial instructions design
 - `delimiter_injection` — `</system>`, `[SYSTEM]`, `[INST]`, `<<SYS>>`
 
 **Behavior:**
-- Suspicious results are wrapped in `[UNTRUSTED_TOOL_OUTPUT_START]` / `[UNTRUSTED_TOOL_OUTPUT_END]` sentinel markers
+- Every tool result sent to the model (MCP, web, files, commands, scripts,
+  internal tools) and every MCP resource is wrapped in
+  `[UNTRUSTED_TOOL_OUTPUT_START id=X]` / `[UNTRUSTED_TOOL_OUTPUT_END id=X]`,
+  where `X` is random per call; marker text inside the content is defused, so
+  content cannot close the block early and add fake instructions
 - The system prompt instructs the model to treat marked content as raw data only
-- All detections are logged as warnings
+- Detection runs on NFKC-normalized text with zero-width characters removed;
+  a match adds a warning line inside the markers and is logged
 - Results are not blocked — the agent sees the data but is warned
+- Wrapping happens when the result is handed to the model, so `__jq_filter`,
+  `__save_to_file`, reports and the knowledge graph see the raw output
 
-**Scope:** All untrusted entry points are scanned:
-- MCP server tool results (`_execute_tool()`)
-- MCP prompt messages (`execute_mcp_prompt()`)
-- Agent Skill script output (`execute_skill_script`)
+**MCP prompts** (`execute_mcp_prompt()`) are instructions the user invoked, so
+they are only wrapped when detection matches.
 
-Internal tools (introspection, filesystem, reports, schedules, knowledge) are trusted and not scanned.
+Detection is a heuristic (homoglyphs or encodings evade it); the always-on
+markers are what tell the model where data starts and ends.
 
 ## 2. Tool & Content Poisoning Detection
 
@@ -70,20 +76,18 @@ Descriptions and instruction text from external sources can contain hidden instr
 
 ## 3. Rug-Pull Detection
 
-MCP servers can change their tool definitions after initial approval (rug-pull attack). ai-assist fingerprints tool definitions at connection time and checks for changes on reconnect.
+MCP servers can change their tool definitions after initial approval (rug-pull attack). ai-assist records the approved definition of every MCP tool and holds back any tool whose definition changes until the user approves it.
 
-**Module:** `ai_assist/security.py` — `ToolDefinitionRegistry`, `compute_tool_fingerprint()`
+**Module:** `ai_assist/security.py` — `ToolDefinitionRegistry`, `describe_tool_change()`
 
 **How it works:**
-1. When a server connects, each tool's `(name, description, input_schema)` is hashed (SHA-256)
-2. On server restart or reload, new definitions are compared against stored fingerprints
-3. Changes are classified as `modified`, `added`, or `removed`
-4. Warnings are printed and logged
+1. Every time a server connects (startup, automatic reconnect, `/mcp/restart`, config reload), `_register_server_tools()` compares each tool's `(name, description, input_schema)` with the recorded definition
+2. The first connection to a server is trusted and recorded (trust on first use)
+3. Modified and new tools are hidden from the model; unchanged tools stay available; removed tools simply disappear
+4. A warning is printed and logged; `/mcp/review [server]` shows a diff of each change and approves tools one by one
+5. In non-interactive runs (`/monitor`) changed tools stay hidden until approved in an interactive session
 
-**Integration points:**
-- `_run_server()` — registers fingerprints at initial connection
-- `restart_mcp_server()` — checks for changes after reconnect
-- `reload_mcp_servers()` — checks for changes after config reload
+Approved definitions are stored in `~/.ai-assist/mcp-tool-definitions.json`, a protected config file, so changes between runs (e.g. an MCP server update) are detected too. Deleting a server's entry from that file re-trusts it on the next connection.
 
 ## 4. Script Execution Sandboxing
 
@@ -125,8 +129,23 @@ All tool calls are logged with:
 - Result text
 - Success/failure status
 - Timestamp
+- `confirmations`: for calls that prompted the user, the question shown and the
+  decision (`approved`/`denied`), so the audit entry is self-contained
 
 **Implementation:** `ai_assist/audit.py` — `AuditLogger`
+
+**Integrity:** the agent's own write tools (`write_file`, `edit_file`,
+`create_directory`, `__save_to_file`, and command writes via redirection /
+`cp` / `mv` / `tee` / `tar` …) can never write under `~/.ai-assist/audit/` or
+`~/.ai-assist/logs/`, in any permission mode including autonomous — so a
+hijacked agent cannot rewrite or delete its own trail. Reads are still allowed
+(e.g. an action that greps `ai-assist.log`). The legitimate writers
+(`AuditLogger`, the logging handler) write these files directly, not through the
+agent tools, so logging is unaffected. The audit directory is created `0700`.
+
+The decision is also logged to `ai-assist.log` (`Security prompt: …
+approved/denied by user`). **Known gap:** a permanent allowlist add ("always")
+is still not distinctly logged (it records as `approved`).
 
 ## 7. Source Citation / Grounding
 
@@ -134,22 +153,154 @@ The system prompt requires every factual claim to cite the tool call that provid
 
 ## 8. Command Argument Validation
 
+### How command lines are split
+
+Before any allowlist or argument check, `_split_shell_commands()` splits a
+command line into every simple command that would run:
+
+- separators: `;`, `&&`, `||`, `|`, `&`, newlines, parentheses (subshells,
+  `case` patterns); comments end at the newline; `\`-newline continues a line
+- `$(...)`, backticks, `<(...)` and `>(...)` (also inside double quotes,
+  `$((...))` and unquoted heredoc bodies) are checked as separate commands
+- quoted heredoc bodies (`<<'EOF'`) are skipped as data
+- keywords and builtins that run the next word (`if`, `then`, `do`, `!`, `{`,
+  `time`, `command`, `builtin`, `exec`, ...) are skipped, and the command after
+  them is checked
+- builtins that run code (`eval`, `source`/`.`, `trap`, `alias`, `enable`,
+  `hash`, `mapfile`/`readarray`, `coproc`) need an allowlist entry or
+  confirmation; other builtins (`echo`, `cd`, `export`, ...) are free
+
 Even when a command passes the allowlist check, its arguments may target restricted paths or execute arbitrary code. ai-assist inspects arguments for specific commands before execution.
 
 **Module:** `ai_assist/filesystem_tools.py` — `_extract_command_argument_paths()`, `_validate_command_arguments()`
 
-### Path validation for `cd` and `find`
+### Path validation for `cd`, `find` and written files
 
-When path restrictions are enabled (`allowed_paths` is non-empty), the path arguments of `cd` and `find` are validated against the same allowed directories used by filesystem tools.
+When path restrictions are enabled (`allowed_paths` is non-empty), the path arguments of `cd` and `find`, and the files a command writes, are validated against the same allowed directories used by filesystem tools.
 
 | Command | What is checked |
 |---------|-----------------|
 | `cd <dir>` | Target directory must be within allowed paths |
 | `find <paths...> [options]` | All search paths (before option flags) must be within allowed paths |
 
+| `find -H/-L/-P <paths...>` | Leading `find` options are skipped, then paths are checked |
+| `> file`, `>> file`, `2> file`, `&> file`, ... | Every output redirection target, for any command |
+| `sort -o file`, `yq -i ... file` | Files written in place |
+| `cp`/`mv`/`install`/`tee`/`dd`/`ln` destinations | The file(s) each writes (incl. `-t <dir>`, `dd of=`) |
+
 Path traversal is blocked: `cd /allowed/../../etc` is resolved before validation.
+Write targets the shell computes at run time (`> $HOME/x`, globs,
+substitutions) cannot be checked statically: they require confirmation and are
+rejected in non-interactive mode. Protected config files are refused as write
+targets in every permission mode. `/dev/null`, `/dev/stdout`, `/dev/stderr`,
+`/dev/tty` and `/dev/fd/*` are always allowed.
 
 `cd -` (previous directory) and `cd` with no arguments are not checked since they cannot be resolved statically.
+
+### Writes when no allowlist is configured
+
+An empty `allowed_paths` disables path restrictions for *reads* (backwards
+compatible), but not for *writes*: a write outside the workspace still requires
+confirmation and is refused non-interactively. So a hijacked model cannot use
+`__save_to_file`, `write_file`, `edit_file`, or `create_directory` to write
+anywhere the OS permits just because no allowlist is set. `__save_to_file`
+writes to the resolved (realpath) target, matching what was validated, and the
+audit log records both the original and resolved paths.
+
+### Interpreters and package runners
+
+Allowlisting an interpreter by bare name (`python3`, `awk`, `uvx`, ...) would
+otherwise be equivalent to allowlisting arbitrary code, since the code lives in
+the arguments and path checks can be sidestepped from inside it. So running
+code/scripts/packages needs confirmation (refused non-interactively) unless the
+*specific* invocation is explicitly allowlisted (e.g. `python3 -m pytest`,
+`python3 scripts/check.py`):
+
+- `python`/`python3`/`pythonX.Y`: `-c`, `-m <module>`, a script path, stdin,
+  and the REPL. `-m pytest` in the workspace stays auto-approved in auto mode.
+- `awk`/`gawk`/`mawk`/`nawk`, `perl`, `ruby`: a program or `-e`/`-f` body.
+- `uvx`, `uv run`/`uv tool`, `npx`, `pipx run`: run an arbitrary package.
+- `--version`/`--help` and similar info-only argv are not gated.
+
+`tar` (archive on `-c -f`, directory on `-x -C`) and `unzip -d` go through the
+same write-destination validation as `cp`/`mv`/`tee`/`dd`/`ln`.
+
+**Limitation:** this is defense against a hijacked model escalating through an
+allowlisted interpreter; it is not a sandbox. Content inspection cannot catch
+every obfuscation. The robust class-defense is running commands in a
+process-level sandbox (e.g. bubblewrap/nsjail) confined to the workspace — see
+the container sandbox (section on Permission Modes) for the supported isolation.
+
+### Reads through shell commands
+
+Path-like file arguments to commands (`cat`, `grep`, `head`, `cut`, `wc`,
+`base64`, `cp` source, ...) are validated against the allowlist as reads, the
+same confinement the `read_file` tool enforces — otherwise a shell reader could
+read any file regardless of `allowed_paths`, and a denied directory could be
+sidestepped with `cat` on a file inside it. Only genuine path arguments are
+checked (the command word, flags, env assignments, redirects, device paths, and
+bare words like a `grep` pattern are not). An empty allowlist keeps reads
+unrestricted (backwards compatible); AWL-authorized and user-approved commands
+skip the check. `.env`, `.env.*`, `.env~` and other secret-bearing filenames are
+treated as sensitive wherever they live.
+
+### Kernel / virtual filesystems
+
+Writing `/proc`, `/sys`, or `/dev` is refused for every write path (file tools,
+`__save_to_file`, redirections, `cp`/`mv`/`tee`/`dd`/`ln`) regardless of the
+allowlist — even `allowed_paths: ["/"]`. These control the host
+(`/proc/sys/kernel/core_pattern`, `/proc/sysrq-trigger`,
+`/sys/kernel/uevent_helper`, `/dev/mem`, raw block devices). Reading them
+(e.g. `/proc/cpuinfo`) is unaffected; `/dev/null`, `/dev/stdout`,
+`/dev/stderr`, `/dev/tty`, and `/dev/fd/*` remain writable.
+
+### Sensitive locations
+
+Commands and the built-in file tools can never touch credential and key
+locations, even inside allowed paths. They are matched under any home (yours,
+`/root`, other users), before any prompt or existence check: `.ssh`,
+`.gnupg`, `.aws`, `.azure`, `.config/gcloud`, `.config/gh`, `.kube`,
+`.docker/config.json`, `.netrc`, `.git-credentials`, `.pgpass`,
+`.password-store`, `.local/share/keyrings`, and `.env` / `mcp-oauth/` in the
+config dir. Every word of a command is checked after expanding `$VARS`,
+`~`, globs and earlier `cd` targets. This is best effort: a path the shell
+builds at run time (`find ~ | xargs cat`, `grep -r x ~`) is not caught, which
+is why tool results are also redacted (section 8b).
+
+### git and ssh options that run programs
+
+Even when `git` or `ssh` is allowlisted, `git -c`, `git --config-env`,
+`git --exec-path`, `git config <key> <value>`, `ssh -F`, and
+`ssh -o ProxyCommand/LocalCommand/PermitLocalCommand/KnownHostsCommand`
+require confirmation (rejected in non-interactive mode). Writes inside a
+`.git` directory (file tools, `__save_to_file`, redirections) also require
+confirmation, since git runs hooks and programs configured there.
+
+### Approval prompts
+
+Approval prompts show the complete command or description, as plain text:
+nothing is truncated, Rich markup is not interpreted, and control, invisible,
+and bidi characters are shown as escapes (`\x1b`, `\r`, `\u202e`), so the
+text cannot hide, overwrite, or reorder what will actually run.
+
+### Startup locations
+
+Writes to places whose contents run later, outside ai-assist, need
+confirmation even inside allowed paths (refused when nobody can be asked):
+shell startup files (`~/.bashrc`, `~/.profile`, `~/.zshrc`, ...),
+`~/.gitconfig`, `~/.config/git`, `~/.local/bin`, `~/bin`, `~/.local/lib`
+(`.pth` files run at every Python start), `~/.config/fish`,
+`~/.config/systemd/user`, `~/.config/autostart`, and
+`~/.config/environment.d`. The `crontab` command needs confirmation unless it
+only lists jobs (`crontab -l`). Reading these locations is unaffected.
+
+### Assignments that change which program runs
+
+Setting `PATH`, `LD_*`, `BASH_ENV`, `GIT_SSH_COMMAND`, `PYTHONPATH`,
+`NODE_OPTIONS` and similar variables (as a `VAR=value cmd` prefix, a bare
+assignment, via `env`, or with `export`/`declare`) would let an allowlisted
+name run another program. Such commands require confirmation and are rejected
+in non-interactive mode.
 
 ### Parameter validation for `python` / `python3`
 
@@ -161,9 +312,91 @@ Python commands receive additional scrutiny beyond the command allowlist:
 | `python3 -c "code"` | Blocked in non-interactive mode; requires confirmation in interactive mode |
 | `python3 -` (stdin) | Blocked in non-interactive mode; requires confirmation in interactive mode |
 | `python3` (no args) | Blocked in non-interactive mode; requires confirmation in interactive mode |
-| `python3 -m module` | Allowed (module execution, no path to validate) |
+| `python3 -m module` | Same as `-c` (a module runs code, and `-m` looks in the current directory first), unless an allowlist entry names the module (e.g. `python3 -m pytest`) |
+
+These checks apply to `python`, `python3`, and versioned names such as
+`python3.12`, and understand combined short flags (`-Ic`, `-Im`) and options
+taking a value (`-W`, `-X`). In auto mode, `python -m pytest` in the workspace
+is still approved automatically.
 
 **Double-prompting avoidance:** When `python` is not in the command allowlist, the user already confirms the full command (including `-c` details) during the allowlist check. The parameter validation only adds a second prompt when `python` was auto-allowed via the allowlist — preventing commands silently added to the allowlist from executing arbitrary inline code without review.
+
+### Result redirection and jq
+
+`__save_to_file` goes through the same checks as `internal__write_file`
+(protected config files, path allowlist, write confirmation) before the tool
+runs. `__jq_filter` and `internal__json_query` run jq with an empty
+environment, so `$ENV` / `env` cannot read API keys.
+
+### Secrets in command environments
+
+`execute_command` runs with the same filtered environment as skill scripts
+(see the patterns in section 4). To let commands see a specific variable
+(e.g. `GITHUB_TOKEN` for `gh`), list it in `~/.ai-assist/command_env.json`:
+
+```json
+["GITHUB_TOKEN"]
+```
+
+Sandboxes created with the `gh` feature get this file automatically.
+
+### AWL scripts and scheduled actions
+
+Commands written in backticks in an AWL script are auto-authorized only when
+the user started the script (`ai-assist /run`, or an action whose AWL prompt
+the user confirmed). Scripts the agent runs via
+`introspection__execute_awl_script` get no auto-authorization. Commands come
+from the script text, never from interpolated variable values (see
+`docs/AWL_SPECIFICATIONS.md`).
+
+Creating or changing an action (`internal__create_action` /
+`internal__update_action`) so that it runs an AWL script requires user
+confirmation, and is refused when nobody can be asked. `event-schedules.json`
+is a protected config file, so the agent cannot add actions behind this check.
+
+### Plan mode
+
+`/plan` restricts the agent to read-only tools both in the tool list it sees
+and when a tool is called (`_execute_tool_impl`), so a hijacked model cannot
+call a hidden write tool. Saving results with `__save_to_file` or report
+redirection is refused too. A tool counts as read-only when its `_readonly`
+annotation says so; MCP tools without one are allowed only when their name
+starts with a read-style verb (`get_`, `list_`, `search_`, `query_`, `find_`,
+`count_`, `read_`, ...). Set `readonly_tools` (fnmatch patterns) on a server in
+`mcp_servers.yaml` to classify its tools explicitly.
+
+### Saved user preferences
+
+Knowledge saved as `user_preference` is injected into every future system
+prompt. When the model saves one (`internal__save_knowledge`), the user must
+confirm the key and content; it is refused when nobody can be asked. Other
+knowledge types, and facts extracted from the conversation at compaction, are
+saved without confirmation.
+
+## 8b. Secret Redaction
+
+**Module:** `ai_assist/redaction.py` — `Redactor`
+
+Every tool result (MCP, internal, introspection, goal tools) and every MCP
+prompt/resource is redacted before the model, history, audit log, knowledge
+graph, MLflow traces, or `__save_to_file` see it:
+
+- **Environment values** — the value of any variable whose name contains
+  `TOKEN`, `SECRET`, `PASSWORD`, `API_KEY`, or ends in `_KEY`/`_PAT` (8+
+  characters) becomes `[REDACTED:VAR_NAME]`.
+- **Known formats** — Anthropic/OpenAI `sk-`, GitHub, GitLab, Slack, Google
+  `AIza`, AWS access key ids, JWTs, `Bearer` tokens, `user:password@` in URLs,
+  PEM private keys.
+- **Your own list** — `~/.ai-assist/redact.json`:
+
+```json
+{"strings": ["internal-codename"], "patterns": ["EMP-\\d{6}"]}
+```
+
+`redact.json` and `command_env.json` are protected config files. Redaction
+catches accidental leaks but not a model that deliberately transforms a secret
+(`rev`, `base64`) before printing it, which is why command environments are
+filtered too.
 
 ## 9. Claude Code Plugin Trust Model
 

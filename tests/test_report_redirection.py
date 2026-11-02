@@ -20,7 +20,7 @@ def temp_reports_dir(tmp_path):
 @pytest.fixture
 def agent_with_mcp(temp_reports_dir):
     """Agent with a mocked MCP session and real report tools."""
-    config = AiAssistConfig(anthropic_api_key="test-key", working_dirs=["/tmp"])
+    config = AiAssistConfig(anthropic_api_key="test-key", working_dirs=["/tmp"], allowed_paths=[tempfile.gettempdir()])
     agent = AiAssistAgent(config=config)
     agent.report_tools = ReportTools(reports_dir=temp_reports_dir)
 

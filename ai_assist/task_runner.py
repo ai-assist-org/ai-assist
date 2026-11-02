@@ -150,7 +150,10 @@ class TaskRunner:
     async def _run_awl_script(self) -> str:
         from .awl_executor import run_awl_script
 
-        return await run_awl_script(self.task_def.prompt, self.agent, variables=self.task_def.prompt_arguments)
+        # Tasks come from the user's own config: the script's commands are trusted
+        return await run_awl_script(
+            self.task_def.prompt, self.agent, variables=self.task_def.prompt_arguments, authorize_commands=True
+        )
 
     def get_last_run(self) -> datetime | None:
         """Get timestamp of last successful run"""
