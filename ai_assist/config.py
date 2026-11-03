@@ -29,6 +29,10 @@ EFFORT_NONE: Literal["no"] = "no"
 EffortSetting = Literal["low", "medium", "high", "xhigh", "max", "no"]
 EFFORT_SETTINGS: tuple[EffortSetting, ...] = (*EFFORT_LEVELS, EFFORT_NONE)
 
+# Pass as max_time_seconds to run a query with no wall-clock limit (AWL tasks
+# without max_time=, scheduled actions); None means the default limit.
+NO_TIME_LIMIT = 0
+
 
 def _split_model_effort(value: str | None) -> tuple[str | None, EffortSetting | None]:
     """Split a model's optional ``model:effort`` suffix (effort may be ``no``)."""

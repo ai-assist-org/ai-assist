@@ -24,7 +24,7 @@ from .awl_ast import (
     WorkflowNode,
 )
 from .awl_expressions import AWLExpressionEvaluator
-from .config import EFFORT_SETTINGS
+from .config import EFFORT_SETTINGS, NO_TIME_LIMIT
 from .filesystem_tools import extract_command_names
 from .jev_client import JevError, jev_configured, jev_decide, noul, noul_probability
 from .output import console_print
@@ -621,7 +621,7 @@ class AWLRuntime:
                         prompt,
                         max_turns=max_turns,
                         progress_callback=callback,
-                        max_time_seconds=task.max_time,
+                        max_time_seconds=task.max_time or NO_TIME_LIMIT,
                         raise_on_api_error=True,
                         raise_on_incomplete=True,
                     )

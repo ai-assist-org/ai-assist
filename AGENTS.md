@@ -60,8 +60,13 @@ User → CLI (main.py) → AiAssistAgent (agent.py) → Claude API
 Both interactive and collected responses use the streaming agent loop in `agent.py`.
 `query()` collects the final answer from `query_streaming()`; keep execution logic in
 the shared streaming path. Both entry points default to a 600-second time budget
-(`AI_ASSIST_QUERY_TIMEOUT`). Time spent waiting on an approval prompt (`pause_timeout()`)
-doesn't count. A model API failure comes back from `query()` as error text unless the caller passes `raise_on_api_error=True` (AWL tasks and scheduled actions do, also via `execute_mcp_prompt`), which raises `QueryAPIError` instead. Similarly `raise_on_incomplete=True` (AWL tasks) raises `QueryIncompleteError` when the query stops without a final answer (time/turn limit, loop, no progress, refusal); both live in `query_errors.py`. A model turn whose stream drops mid-reply (transport/SSL/connection-reset error) is retried up to twice (`_STREAM_RETRY_BACKOFF_SECONDS`) without consuming the turn budget, but only if the turn hasn't added to the conversation yet. An AWL script run from a tool call doesn't count against the enclosing
+(`AI_ASSIST_QUERY_TIMEOUT`); `max_time_seconds=NO_TIME_LIMIT` (AWL tasks without `max_time=`,
+scheduled actions) removes it. Time spent waiting on an approval prompt (`pause_timeout()`)
+doesn't count. Work limits wind a query down instead of cutting it off: the turn budget is
+soft (at `max_turns` the model is told to wrap up and gets up to 50% more turns), and when
+that runs out or the time budget passes (checked between turns) the model gets one final
+turn, offered only `internal__finish_task` in an AWL task and no tools otherwise. The hard
+time cut-off is a backstop at 1.5x the budget (`_HARD_TIME_LIMIT_FACTOR`). A model API failure comes back from `query()` as error text unless the caller passes `raise_on_api_error=True` (AWL tasks and scheduled actions do, also via `execute_mcp_prompt`), which raises `QueryAPIError` instead. Similarly `raise_on_incomplete=True` (AWL tasks) raises `QueryIncompleteError` when the query stops without a final answer (tool loop, no progress, refusal, an AWL task that still doesn't report after its final turn); both live in `query_errors.py`. A model turn whose stream drops mid-reply (transport/SSL/connection-reset error) is retried up to twice (`_STREAM_RETRY_BACKOFF_SECONDS`) without consuming the turn budget, but only if the turn hasn't added to the conversation yet. An AWL script run from a tool call doesn't count against the enclosing
 query either (`exempt_enclosing_queries_from_timeout()`): the script bounds itself per
 task, and its tasks keep their own budgets.
 

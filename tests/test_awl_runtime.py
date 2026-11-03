@@ -2445,3 +2445,17 @@ def test_validate_warns_on_undefined_variable_in_fail_message():
     warnings = validate_workflow_variables(workflow)
 
     assert warnings == ["@fail: variable 'missing_root' used before definition"]
+
+
+@pytest.mark.asyncio
+async def test_task_without_max_time_has_no_time_limit(mock_agent, runtime):
+    from ai_assist.agent import NO_TIME_LIMIT
+
+    mock_agent.query.return_value = "Done."
+    await runtime.execute(
+        WorkflowNode(body=[TaskNode(task_id="t1", goal="Do."), TaskNode(task_id="t2", goal="Do.", max_time=900)])
+    )
+
+    task_calls = [c for c in mock_agent.query.call_args_list if "You are executing task" in c[0][0]]
+    assert task_calls[0].kwargs["max_time_seconds"] == NO_TIME_LIMIT
+    assert task_calls[1].kwargs["max_time_seconds"] == 900

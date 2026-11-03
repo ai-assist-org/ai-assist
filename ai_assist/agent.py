@@ -22,7 +22,7 @@ from mcp.client.extension import NotificationBinding
 
 from .action_tools import ActionTools
 from .audit import AuditLogger
-from .config import AiAssistConfig, MCPChannelConfig, MCPServerConfig, get_config_dir
+from .config import NO_TIME_LIMIT, AiAssistConfig, MCPChannelConfig, MCPServerConfig, get_config_dir
 from .effort import effort_output_config
 from .event_source_mcp import EVENT_NOTIFICATION_METHOD, MCPEventEnvelope
 from .filesystem_tools import FilesystemTools
@@ -76,6 +76,20 @@ logger = logging.getLogger(__name__)
 
 
 _STREAM_EXHAUSTED = object()
+
+# A time budget is checked between turns, so the model can still wind down; the
+# hard cut-off, a backstop against a turn that never ends, comes later.
+_HARD_TIME_LIMIT_FACTOR = 1.5
+
+_FINAL_TURN_ANSWER = (
+    "Your budget for this request is used up. Do not call any more tools: give your final "
+    "answer now with what you have, and say what is incomplete."
+)
+_FINAL_TURN_REPORT = (
+    "Your budget for this task is used up. Do not continue the work: call internal__finish_task "
+    'now, with status "success" and the values if the goal is achieved, otherwise status '
+    '"failed" and what is missing.'
+)
 
 # Waits before retrying a model turn whose stream dropped mid-reply; one entry
 # per retry. The SDK's own retries only cover failures before the response starts.
@@ -1802,10 +1816,21 @@ class AiAssistAgent:
         """Yield text, tool_use, done (with final text), error, or cancelled events.
 
         Queries have a config.default_query_timeout-second limit (default 600s)
-        unless max_time_seconds is provided. Time spent blocked on a user
-        approval prompt (see pause_timeout()) doesn't count against that limit.
+        unless max_time_seconds is provided; NO_TIME_LIMIT removes the limit.
+        Time spent blocked on a user approval prompt (see pause_timeout())
+        doesn't count against that limit. The limit is checked between turns
+        (the model then gets a final turn); this wrapper only cuts off a query
+        that runs well past it.
         """
         timeout = max_time_seconds if max_time_seconds is not None else self.config.default_query_timeout
+        if timeout == NO_TIME_LIMIT:
+            async with aclosing(
+                self._query_streaming_inner(prompt, messages, max_turns, progress_callback, cancel_event, NO_TIME_LIMIT)
+            ) as stream:
+                async for event in stream:
+                    yield event
+            return
+        hard_timeout = timeout * _HARD_TIME_LIMIT_FACTOR
         depth = self._query_depth
         if depth == 0:
             self._timeout_pause_seconds = 0.0
@@ -1820,7 +1845,7 @@ class AiAssistAgent:
                 try:
                     while not next_event.done():
                         remaining = (
-                            timeout
+                            hard_timeout
                             + self._timeout_pause_seconds
                             + self._timeout_exempt_seconds(depth)
                             - (time.monotonic() - start_monotonic)
@@ -1948,6 +1973,8 @@ class AiAssistAgent:
             messages = self._strip_stale_thinking_blocks(messages)
         if is_outermost and max_time_seconds:
             self._query_deadline = time.time() + max_time_seconds
+        if is_outermost:
+            self._query_unlimited = max_time_seconds == NO_TIME_LIMIT
         query_text = prompt or ""
         start_time = time.time()
         accumulated_text = []
@@ -2051,11 +2078,17 @@ class AiAssistAgent:
             # without consuming the turn budget.
             turn = -1
             stream_retries = 0
-            while turn + 1 < max_turns:
+            # The turn budget is soft: at max_turns the model is told to wrap up and
+            # gets up to 50% more turns; then, as when the time budget passes, one
+            # final turn to answer (or report through internal__finish_task).
+            turn_budget = max_turns
+            budget_extended = False
+            final_turn = False
+            final_turn_prompted = False
+            while True:
                 turn += 1
                 self._record_query_event("turn_started", turn=turn + 1)
-                # Check time-based timeout (only when max_time_seconds is explicitly set)
-                if max_time_seconds:
+                if not final_turn and max_time_seconds:
                     elapsed = (
                         time.time()
                         - start_time
@@ -2063,15 +2096,41 @@ class AiAssistAgent:
                         - self._timeout_exempt_seconds(budget_depth)
                     )
                     if elapsed > max_time_seconds:
-                        self._last_turn_count = turn + 1
                         logger.warning(
-                            "Time budget exhausted after %d seconds (max: %ds)", int(elapsed), max_time_seconds
+                            "Time budget exhausted after %d seconds (max: %ds); asking for a final answer",
+                            int(elapsed),
+                            max_time_seconds,
                         )
-                        yield {
-                            "type": "error",
-                            "message": f"Task timeout after {int(elapsed)} seconds (max: {max_time_seconds}s)",
+                        final_turn = True
+                if not final_turn and turn >= turn_budget:
+                    if not budget_extended:
+                        budget_extended = True
+                        extra = max(1, max_turns // 2)
+                        turn_budget += extra
+                        logger.warning("Turn budget of %d reached; allowing %d more to wrap up", max_turns, extra)
+                        messages.append(
+                            {
+                                "role": "user",
+                                "content": (
+                                    f"You have used your budget of {max_turns} turns. Wrap up: finish only the "
+                                    f"essential remaining work within at most {extra} more turns, then give "
+                                    "your result."
+                                ),
+                            }
+                        )
+                    else:
+                        logger.warning("Extended turn budget used up; asking for a final answer")
+                        final_turn = True
+                if final_turn and not final_turn_prompted:
+                    final_turn_prompted = True
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": _FINAL_TURN_REPORT if self.task_result_tool.active else _FINAL_TURN_ANSWER,
                         }
-                        return
+                    )
+                # On the final turn, only internal__finish_task (in an AWL task) is offered.
+                turn_tools = [t for t in api_tools if t["name"] == "internal__finish_task"] if final_turn else api_tools
 
                 # Check cancellation before each turn
                 if cancel_event and cancel_event.is_set():
@@ -2141,7 +2200,7 @@ class AiAssistAgent:
                     idle_timeout = getattr(self.config, "model_stream_idle_timeout_seconds", 120)
 
                     def create_stream(
-                        system: Any = system_prompt, tools: Any = api_tools, request_messages: Any = messages
+                        system: Any = system_prompt, tools: Any = turn_tools, request_messages: Any = messages
                     ) -> Any:
                         return self.anthropic.messages.stream(
                             model=self.config.model,
@@ -2224,6 +2283,18 @@ class AiAssistAgent:
                         if cancel_event and cancel_event.is_set():
                             self._last_turn_count = turn + 1
                             yield {"type": "cancelled"}
+                            return
+
+                        if final_turn:
+                            self._last_turn_count = turn + 1
+                            if self.task_result_tool.active and not self.task_result_tool.reported:
+                                yield {
+                                    "type": "error",
+                                    "message": "Stopped at its budget without reporting the task outcome",
+                                }
+                                return
+                            final_text = "".join(b.text for b in final_message.content if b.type == "text")
+                            yield {"type": "done", "turns": turn + 1, "text": final_text}
                             return
 
                         if loop_detected:
@@ -2436,10 +2507,6 @@ class AiAssistAgent:
 
                     return
 
-            # Max turns reached
-            self._last_turn_count = max_turns
-            logger.warning("Tool budget exhausted: reached maximum %d turns without final answer", max_turns)
-            yield {"type": "error", "message": "Maximum turns reached without final answer"}
         finally:
             if is_outermost:
                 self._record_query_event("query_finished", turn=self._last_turn_count)
@@ -2452,6 +2519,7 @@ class AiAssistAgent:
             self._query_depth -= 1
             if is_outermost:
                 self._query_deadline = None
+                self._query_unlimited = False
             else:
                 self._turn_token_usage = saved_token_usage
                 self.last_tool_calls = saved_tool_calls
@@ -2542,6 +2610,8 @@ class AiAssistAgent:
             # Forward active cancel_event so Escape works during inner execution
             # Inherit remaining time from outer query deadline if no explicit timeout
             effective_timeout = max_time_seconds
+            if effective_timeout is None and getattr(self, "_query_unlimited", False):
+                effective_timeout = NO_TIME_LIMIT
             if effective_timeout is None and self._query_deadline is not None:
                 effective_timeout = max(
                     1,

@@ -136,9 +136,15 @@ Goal: Determine how the system initializes using only source code evidence.
 ## max_tool_calls=N and max_time=N
 
 `max_tool_calls` overrides the default tool call budget (100) for a single task.
+The budget is soft: when it is reached, the agent is told to wrap up and gets up to
+50% more tool calls.
 
-`max_time` overrides the default wall-clock timeout (600 seconds) for a single task.
-This is useful for tasks that involve long-running operations like RCA analysis.
+`max_time` sets a wall-clock budget, in seconds, for a single task. Without it, a
+task has no time limit (only a stalled model connection is cut off).
+
+When either budget runs out, the agent is not cut off mid-work: it gets one final
+turn in which it can only call `internal__finish_task`, to report success with what
+it has or failure with what is missing.
 
 Use this when a task may need many tool calls, such as running a detailed analysis before creating a ticket.
 
@@ -405,7 +411,7 @@ During a task, and only then, the agent has an `internal__finish_task` tool. The
 - `status="success"` with `values` holding the task's `Expose:` variables. These are taken as is (method `finish_tool`); only keys missing from `values` go through the usual extraction (JSON block in the reply, nudge, report sections).
 - `status="failed"` with a `reason` when the goal could not be achieved (a required step failed, a tool returned an error, needed data is missing). The task then fails with that reason, exactly like any other task failure, instead of exposing empty values that later steps would take as real results.
 
-If the task runs out of time (`max_time`, default 600 s) or turns (`max_tool_calls`) before calling the tool, it fails as unfinished ("stopped before finishing"), even if part of its output is usable; give long tasks a larger `max_time`. If it had already called the tool, its report stands.
+When a task runs out of its turn budget (`max_tool_calls`, after the extra wrap-up turns) or its `max_time`, it gets a final turn in which only `internal__finish_task` is offered. It fails as unfinished ("stopped before finishing") only if it still doesn't report.
 
 If the agent ends its turn without calling the tool (typically narrating a next step, like "Now writing the report.", and stopping), it is nudged once to continue or report. If it still doesn't call it, the task behaves as before: success, with values extracted from its reply. A value that isn't in the reply stays unset (`None`) rather than being guessed.
 

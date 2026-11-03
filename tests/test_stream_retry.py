@@ -12,13 +12,6 @@ def _text(text: str) -> dict:
     return {"content": [{"type": "text", "text": text}], "stop_reason": "end_turn"}
 
 
-def _think() -> dict:
-    return {
-        "content": [{"type": "tool_use", "id": "toolu_t", "name": "internal__think", "input": {"thought": "x"}}],
-        "stop_reason": "tool_use",
-    }
-
-
 class _DroppedStream:
     """A stream that opens fine, then breaks while the reply is being read."""
 
@@ -103,15 +96,15 @@ async def test_non_transient_error_is_not_retried(make_replay_agent):
 
 
 @pytest.mark.asyncio
-async def test_max_turns_raises_incomplete_when_requested(make_replay_agent):
-    agent = await make_replay_agent([_think()])
+async def test_incomplete_query_raises_when_requested(make_replay_agent):
+    agent = await make_replay_agent([{"content": [], "stop_reason": "refusal"}])
 
-    with pytest.raises(QueryIncompleteError, match="Maximum turns"):
-        await agent.query("Hello", max_turns=1, raise_on_incomplete=True)
+    with pytest.raises(QueryIncompleteError, match="declined"):
+        await agent.query("Hello", raise_on_incomplete=True)
 
 
 @pytest.mark.asyncio
-async def test_max_turns_still_text_by_default(make_replay_agent):
-    agent = await make_replay_agent([_think()])
+async def test_incomplete_query_still_text_by_default(make_replay_agent):
+    agent = await make_replay_agent([{"content": [], "stop_reason": "refusal"}])
 
-    assert await agent.query("Hello", max_turns=1) == "Maximum turns reached without final answer"
+    assert await agent.query("Hello") == "The model declined this request for safety reasons."

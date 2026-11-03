@@ -81,7 +81,7 @@ class TestActionEngine:
 
         assert result.success is True
         mock_agent.execute_mcp_prompt.assert_called_once_with(
-            "dci", "rca", {"days": "1"}, max_turns=100, raise_on_api_error=True
+            "dci", "rca", {"days": "1"}, max_turns=100, max_time_seconds=0, raise_on_api_error=True
         )
 
     @pytest.mark.asyncio
@@ -225,3 +225,13 @@ class TestActionEngine:
         assert result.success is True
         called_prompt = mock_agent.query.call_args[0][0]
         assert called_prompt == "Test prompt"
+
+
+@pytest.mark.asyncio
+async def test_actions_run_without_a_time_limit(engine, mock_agent):
+    from ai_assist.agent import NO_TIME_LIMIT
+
+    mock_agent.query.return_value = "Done"
+    await engine.execute_action(_make_action())
+
+    assert mock_agent.query.call_args.kwargs["max_time_seconds"] == NO_TIME_LIMIT
