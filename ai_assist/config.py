@@ -510,7 +510,9 @@ class AiAssistConfig(BaseModel):
         if self.http_referer:
             headers["HTTP-Referer"] = self.http_referer
         if self.x_title:
+            # OpenRouter's newer name for the app title; X-Title is kept for other endpoints.
             headers["X-Title"] = self.x_title
+            headers["X-OpenRouter-Title"] = self.x_title
         return headers
 
     @property

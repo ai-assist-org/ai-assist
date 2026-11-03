@@ -148,6 +148,7 @@ def test_agent_uses_custom_endpoint_client():
                 default_headers={
                     "HTTP-Referer": "https://github.com/ai-assist-org/ai-assist",
                     "X-Title": "ai-assist",
+                    "X-OpenRouter-Title": "ai-assist",
                 },
             )
 
@@ -164,11 +165,12 @@ def test_custom_endpoint_headers_default_to_project_attribution():
         assert config.custom_endpoint_headers == {
             "HTTP-Referer": "https://github.com/ai-assist-org/ai-assist",
             "X-Title": "ai-assist",
+            "X-OpenRouter-Title": "ai-assist",
         }
 
 
 def test_custom_endpoint_headers_from_env():
-    """Attribution env vars map to the OpenRouter HTTP-Referer / X-Title headers"""
+    """Attribution env vars map to the OpenRouter HTTP-Referer / title headers"""
     with patch.dict(
         os.environ,
         {
@@ -186,6 +188,7 @@ def test_custom_endpoint_headers_from_env():
         assert config.custom_endpoint_headers == {
             "HTTP-Referer": "https://app.example.com",
             "X-Title": "ai-assist",
+            "X-OpenRouter-Title": "ai-assist",
         }
 
 
@@ -233,6 +236,7 @@ def test_agent_passes_attribution_headers_to_client():
                 default_headers={
                     "HTTP-Referer": "https://app.example.com",
                     "X-Title": "ai-assist",
+                    "X-OpenRouter-Title": "ai-assist",
                 },
             )
 
@@ -288,6 +292,7 @@ def test_agent_uses_placeholder_key_when_none_provided():
                 default_headers={
                     "HTTP-Referer": "https://github.com/ai-assist-org/ai-assist",
                     "X-Title": "ai-assist",
+                    "X-OpenRouter-Title": "ai-assist",
                 },
             )
 
