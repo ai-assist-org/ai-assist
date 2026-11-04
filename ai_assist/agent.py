@@ -2189,6 +2189,16 @@ class AiAssistAgent:
                     messages.pop(0)
                     total_chars = sum(len(str(m.get("content", ""))) for m in messages)
 
+                # Newer models reject assistant "prefill": the request must end with a
+                # user message. Log the culprit's role sequence, and add a user turn.
+                if messages and messages[-1].get("role") != "user":
+                    logger.warning(
+                        "Model request ends with an %s message (roles: %s); adding a user turn",
+                        messages[-1].get("role"),
+                        ", ".join(str(m.get("role")) for m in messages[-8:]),
+                    )
+                    messages.append({"role": "user", "content": "Continue."})
+
                 # A retry is only safe while this turn hasn't added to the conversation.
                 messages_before_turn = len(messages)
 
@@ -2337,6 +2347,8 @@ class AiAssistAgent:
                         if not tool_results:
                             final_text = "".join(block.text for block in final_message.content if block.type == "text")
                             if not final_text.strip():
+                                # Drop the empty reply so the retry still ends with the user's turn.
+                                messages.pop()
                                 no_progress_count += 1
                                 if no_progress_count >= 10:
                                     self._last_turn_count = turn + 1
