@@ -681,17 +681,6 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#file-maintenance" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        File Maintenance
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#requirements" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1220,17 +1209,6 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#file-maintenance" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        File Maintenance
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#requirements" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1290,7 +1268,7 @@
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>ai-assist<span class="w"> </span>/interactive
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>You:<span class="w"> </span>Remind<span class="w"> </span>me<span class="w"> </span><span class="k">in</span><span class="w"> </span><span class="m">2</span><span class="w"> </span>hours<span class="w"> </span>to<span class="w"> </span>check<span class="w"> </span>the<span class="w"> </span>DCI<span class="w"> </span>job<span class="w"> </span>status<span class="w"> </span><span class="k">for</span><span class="w"> </span>job-456
 </code></pre></div>
-<p>The agent schedules the action → <code>/monitor</code> process executes it → You get notified.</p>
+<p>The agent schedules the action (a one-time action in <code>~/.ai-assist/event-schedules.json</code>) → <code>/monitor</code> process executes it → You get notified.</p>
 <h2 id="time-formats">Time Formats<a class="headerlink" href="#time-formats" title="Permanent link">&para;</a></h2>
 <ul>
 <li><code>in 2 hours</code>, <code>in 30 minutes</code>, <code>in 1 day</code></li>
@@ -1311,61 +1289,49 @@
 - Data queries → Executes via agent, then notifies with results
 - Reports → Executes via agent, saves to file (optional notification)</p>
 <h2 id="how-actions-execute">How Actions Execute<a class="headerlink" href="#how-actions-execute" title="Permanent link">&para;</a></h2>
-<p><strong>Reminder-only actions</strong> (<code>notify=True</code>, <code>create_report=False</code>):
+<p><strong>Reminder-only actions</strong> (<code>execute_query=False</code>, stored with <code>"reminder": true</code>):
 - Send notification directly with your reminder message
 - No agent query executed (efficient for simple reminders)
-- Example: "Remind me in 1 hour to watch TV" → Shows "⏰ Time to watch TV!"</p>
-<p><strong>Query/Report actions</strong> (<code>create_report=True</code> or mixed):
+- Example: "Remind me in 1 hour to watch TV" → Shows "Time to watch TV"</p>
+<p><strong>Query/Report actions</strong> (<code>execute_query=True</code>, optionally <code>create_report=True</code>):
 - Execute the prompt via the agent
 - Results sent to notification channels and/or saved as report
 - Example: "Check failed jobs in 30 minutes and notify me" → Agent queries, notifies with results</p>
 <h2 id="managing-actions">Managing Actions<a class="headerlink" href="#managing-actions" title="Permanent link">&para;</a></h2>
 <p><strong>View scheduled actions:</strong>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>cat<span class="w"> </span>~/.ai-assist/scheduled-actions.json
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>jq<span class="w"> </span><span class="s1">'.actions[] | select(.trigger.type == "once")'</span><span class="w"> </span>~/.ai-assist/event-schedules.json
 </code></pre></div></p>
+<p>Each one-time action is named after its description plus its scheduled time, so the same reminder can be scheduled again for another day.</p>
+<p><strong>Finished actions leave the schedule file:</strong> once a one-time action has run, it is moved to <code>~/.ai-assist/event-schedules-archive.jsonl</code> (one JSON object per line, with <code>status</code>, <code>archived_at</code> and <code>archive_reason</code>: <code>completed</code>, <code>failed</code> or <code>expired</code>). An action whose time passed more than 24 hours ago without running (the <code>/monitor</code> process was down) can no longer run and is archived as <code>expired</code>.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>jq<span class="w"> </span>-c<span class="w"> </span><span class="s1">'{name, status, archive_reason, archived_at}'</span><span class="w"> </span>~/.ai-assist/event-schedules-archive.jsonl
+</code></pre></div>
 <p><strong>View notification history:</strong>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>tail<span class="w"> </span>-f<span class="w"> </span>~/.ai-assist/notifications.log
-</code></pre></div></p>
-<h2 id="file-maintenance">File Maintenance<a class="headerlink" href="#file-maintenance" title="Permanent link">&para;</a></h2>
-<p>Scheduled actions are automatically cleaned up:
-- <strong>Pending actions</strong>: Kept indefinitely until executed
-- <strong>Completed/failed actions</strong>: Kept for 7 days, then archived
-- <strong>Archive location</strong>: <code>~/.ai-assist/scheduled-actions-archive.jsonl</code></p>
-<p>The archive uses JSONL format (one action per line) for efficient append-only storage.</p>
-<p><strong>Manual cleanup:</strong>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>ai-assist<span class="w"> </span>/cleanup-actions
-</code></pre></div></p>
-<p><strong>View archived actions:</strong>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="c1"># See all archived actions</span>
-<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>cat<span class="w"> </span>~/.ai-assist/scheduled-actions-archive.jsonl<span class="w"> </span><span class="p">|</span><span class="w"> </span>jq
-<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>
-<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="c1"># Count archived actions</span>
-<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>wc<span class="w"> </span>-l<span class="w"> </span>~/.ai-assist/scheduled-actions-archive.jsonl
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>tail<span class="w"> </span>-f<span class="w"> </span>~/.ai-assist/notifications.log
 </code></pre></div></p>
 <h2 id="requirements">Requirements<a class="headerlink" href="#requirements" title="Permanent link">&para;</a></h2>
 <p><strong>The <code>/monitor</code> process must be running:</strong>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>ai-assist<span class="w"> </span>/monitor<span class="w"> </span><span class="p">&amp;</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>ai-assist<span class="w"> </span>/monitor<span class="w"> </span><span class="p">&amp;</span>
 </code></pre></div></p>
 <p>Or in tmux:
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>tmux<span class="w"> </span>new<span class="w"> </span>-d<span class="w"> </span>-s<span class="w"> </span>ai-assist-monitor<span class="w"> </span><span class="s1">'ai-assist /monitor'</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>tmux<span class="w"> </span>new<span class="w"> </span>-d<span class="w"> </span>-s<span class="w"> </span>ai-assist-monitor<span class="w"> </span><span class="s1">'ai-assist /monitor'</span>
 </code></pre></div></p>
 <p><strong>For desktop notifications (Linux):</strong>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>sudo<span class="w"> </span>dnf<span class="w"> </span>install<span class="w"> </span>libnotify<span class="w">  </span><span class="c1"># Fedora/RHEL</span>
-<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>sudo<span class="w"> </span>apt<span class="w"> </span>install<span class="w"> </span>libnotify-bin<span class="w">  </span><span class="c1"># Ubuntu/Debian</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>sudo<span class="w"> </span>dnf<span class="w"> </span>install<span class="w"> </span>libnotify<span class="w">  </span><span class="c1"># Fedora/RHEL</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>sudo<span class="w"> </span>apt<span class="w"> </span>install<span class="w"> </span>libnotify-bin<span class="w">  </span><span class="c1"># Ubuntu/Debian</span>
 </code></pre></div></p>
 <h2 id="periodic-task-notifications">Periodic Task Notifications<a class="headerlink" href="#periodic-task-notifications" title="Permanent link">&para;</a></h2>
 <p>Add notifications to actions in <code>~/.ai-assist/event-schedules.json</code>:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="p">{</span>
-<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">  </span><span class="nt">"monitors"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
-<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="w">    </span><span class="p">{</span>
-<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="w">      </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"critical-failures"</span><span class="p">,</span>
-<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="w">      </span><span class="nt">"prompt"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Check for critical DCI failures"</span><span class="p">,</span>
-<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="w">      </span><span class="nt">"interval"</span><span class="p">:</span><span class="w"> </span><span class="s2">"1h"</span><span class="p">,</span>
-<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="w">      </span><span class="nt">"notify"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
-<a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a><span class="w">      </span><span class="nt">"notification_channels"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"desktop"</span><span class="p">,</span><span class="w"> </span><span class="s2">"file"</span><span class="p">]</span>
-<a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a><span class="w">    </span><span class="p">}</span>
-<a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a><span class="w">  </span><span class="p">]</span>
-<a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a><span class="p">}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="p">{</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">  </span><span class="nt">"monitors"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">    </span><span class="p">{</span>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="w">      </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"critical-failures"</span><span class="p">,</span>
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="w">      </span><span class="nt">"prompt"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Check for critical DCI failures"</span><span class="p">,</span>
+<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="w">      </span><span class="nt">"interval"</span><span class="p">:</span><span class="w"> </span><span class="s2">"1h"</span><span class="p">,</span>
+<a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a><span class="w">      </span><span class="nt">"notify"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a><span class="w">      </span><span class="nt">"notification_channels"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"desktop"</span><span class="p">,</span><span class="w"> </span><span class="s2">"file"</span><span class="p">]</span>
+<a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a><span class="w">  </span><span class="p">]</span>
+<a id="__codelineno-7-11" name="__codelineno-7-11" href="#__codelineno-7-11"></a><span class="p">}</span>
 </code></pre></div>
 <p><strong>Fields:</strong>
 - <code>notify</code> (boolean) - Enable notifications (default: false)
@@ -1373,16 +1339,14 @@
 <h2 id="troubleshooting">Troubleshooting<a class="headerlink" href="#troubleshooting" title="Permanent link">&para;</a></h2>
 <p><strong>Actions not executing:</strong>
 Check <code>/monitor</code> is running:
-<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>ps<span class="w"> </span>aux<span class="w"> </span><span class="p">|</span><span class="w"> </span>grep<span class="w"> </span><span class="s2">"ai-assist /monitor"</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>ps<span class="w"> </span>aux<span class="w"> </span><span class="p">|</span><span class="w"> </span>grep<span class="w"> </span><span class="s2">"ai-assist /monitor"</span>
 </code></pre></div></p>
 <p><strong>Desktop notifications not appearing:</strong>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>which<span class="w"> </span>notify-send
-<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>notify-send<span class="w"> </span><span class="s2">"Test"</span><span class="w"> </span><span class="s2">"Test notification"</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>which<span class="w"> </span>notify-send
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>notify-send<span class="w"> </span><span class="s2">"Test"</span><span class="w"> </span><span class="s2">"Test notification"</span>
 </code></pre></div></p>
 <p><strong>Action failed:</strong>
-Check the result in scheduled-actions.json:
-<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>jq<span class="w"> </span><span class="s1">'.actions[] | select(.status == "failed")'</span><span class="w"> </span>~/.ai-assist/scheduled-actions.json
-</code></pre></div></p>
+Failures are sent as an error notification; see <code>~/.ai-assist/notifications.log</code>.</p>
 
 
 
