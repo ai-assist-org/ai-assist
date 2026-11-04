@@ -1,12 +1,13 @@
 """Filesystem tools for ai-assist agent"""
 
+import asyncio
 import glob
 import json
 import logging
 import os
 import re
 import shlex
-import subprocess
+import signal
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
@@ -1326,6 +1327,14 @@ def _extract_command_argument_paths(command: str, cwd: str | None = None) -> lis
     return results
 
 
+def _kill_process_group(pid: int) -> None:
+    """Kill a command started with start_new_session=True, children included."""
+    try:
+        os.killpg(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+
+
 class FilesystemTools:
     """Internal filesystem tools for the agent"""
 
@@ -2598,6 +2607,47 @@ class FilesystemTools:
         except Exception as e:
             return f"Error editing file: {e}"
 
+    async def _run_shell_command(self, command: str, cwd: Path | None, timeout: float | None) -> str:
+        """Run an already-authorized command and format its exit code and output."""
+        # A shell is required for pipes, redirects, etc.; commands are validated
+        # through allowlists and confirmation callbacks above. stdin is /dev/null so
+        # a command expecting input (e.g. grep with no file) can't wait on the
+        # terminal; it runs in its own process group, off the event loop, so a
+        # timeout or a cancelled query (Escape) stops it with all its children.
+        proc = await asyncio.create_subprocess_shell(  # nosec B602
+            command,
+            cwd=cwd,
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=filter_sensitive_env(os.environ, allowed=self._load_command_env_allowlist()),
+            start_new_session=True,
+        )
+        try:
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout)
+        except BaseException:
+            _kill_process_group(proc.pid)
+            await proc.wait()
+            raise
+        stdout = stdout_bytes.decode(errors="replace")
+        stderr = stderr_bytes.decode(errors="replace")
+
+        output = f"Command: {command}\n"
+        if cwd:
+            output += f"Working directory: {cwd}\n"
+        output += f"Exit code: {proc.returncode}\n\n"
+
+        if stdout:
+            output += f"STDOUT:\n{stdout}\n"
+
+        if stderr:
+            output += f"STDERR:\n{stderr}\n"
+
+        if proc.returncode != 0:
+            output += f"\nCommand failed with exit code {proc.returncode}"
+
+        return output
+
     async def _execute_command(self, args: dict) -> str:
         """Execute a command with allowlist enforcement"""
         command = args.get("command")
@@ -2678,36 +2728,9 @@ class FilesystemTools:
                 if not cwd.exists() or not cwd.is_dir():
                     return f"Error: Invalid working directory: {working_dir}"
 
-            # shell=True is required for shell command execution with pipes, redirects, etc.
-            # Commands are validated through allowlists and confirmation callbacks above
-            result = subprocess.run(  # nosec B602
-                command,
-                shell=True,
-                cwd=cwd,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                check=False,
-                env=filter_sensitive_env(os.environ, allowed=self._load_command_env_allowlist()),
-            )
+            return await self._run_shell_command(command, cwd, timeout)
 
-            output = f"Command: {command}\n"
-            if working_dir:
-                output += f"Working directory: {cwd}\n"
-            output += f"Exit code: {result.returncode}\n\n"
-
-            if result.stdout:
-                output += f"STDOUT:\n{result.stdout}\n"
-
-            if result.stderr:
-                output += f"STDERR:\n{result.stderr}\n"
-
-            if result.returncode != 0:
-                output += f"\nCommand failed with exit code {result.returncode}"
-
-            return output
-
-        except subprocess.TimeoutExpired:
+        except TimeoutError:
             return f"Error: Command timed out after {timeout} seconds. Use interactive mode for long-running commands."
         except Exception as e:
             return f"Error executing command: {str(e)}"
