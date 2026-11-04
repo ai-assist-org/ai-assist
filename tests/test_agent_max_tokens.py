@@ -1,5 +1,7 @@
 """Tests for model max_tokens discovery"""
 
+import pytest
+
 from ai_assist.agent import AiAssistAgent
 from ai_assist.config import AiAssistConfig
 
@@ -163,3 +165,21 @@ def test_vertex_default_opus_45():
     )
     agent = AiAssistAgent(config)
     assert agent.get_max_tokens() == 64000
+
+
+@pytest.mark.parametrize(
+    "model, max_output, context",
+    [
+        # Limits from OpenRouter's model list; DeepSeek's output cap is the lowest
+        # across the providers OpenRouter may route to.
+        ("deepseek/deepseek-v4.1-flash", 384000, 1048576),
+        ("deepseek/deepseek-v4-flash-0731", 384000, 1048576),
+        ("z-ai/glm-5.3-flash", 131072, 1048576),
+        ("z-ai/glm-4.7-flash", 117964, 200000),
+    ],
+)
+def test_openrouter_model_limits(model, max_output, context):
+    agent = AiAssistAgent(AiAssistConfig(anthropic_api_key="test-key", model=model, mcp_servers={}))
+
+    assert agent.get_max_tokens() == max_output
+    assert agent.get_context_window_size() == context

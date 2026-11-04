@@ -354,6 +354,12 @@ class AiAssistAgent:
         "claude-3-haiku-20240307": 4096,
         # GLM 5.3, hosted via the EnMaaS gateway
         "rits/zai-org/glm-5-3": 65536,
+        # Via OpenRouter (limits from its model list). DeepSeek's cap is the lowest
+        # across the providers OpenRouter may route to; other V4 variants are
+        # matched by name in get_max_tokens.
+        "deepseek/deepseek-v4.1-flash": 384000,
+        "z-ai/glm-5.3-flash": 131072,
+        "z-ai/glm-4.7-flash": 117964,
     }
 
     # Model-specific context window sizes (input tokens)
@@ -378,6 +384,10 @@ class AiAssistAgent:
         "claude-3-haiku": 200000,
         # GLM 5.3, hosted via the EnMaaS gateway
         "rits/zai-org/glm-5-3": 262144,
+        # Via OpenRouter (limits from its model list)
+        "deepseek-v4": 1048576,
+        "glm-5.3-flash": 1048576,
+        "glm-4.7-flash": 200000,
     }
 
     CONTEXT_BUDGET_WARNING_THRESHOLD = 0.8
@@ -633,6 +643,8 @@ class AiAssistAgent:
                 max_tokens = 64000
             elif "sonnet-4" in model.lower() or "haiku-4" in model.lower() or "3-5-" in model:
                 max_tokens = 8192
+            elif "deepseek-v4" in model.lower():
+                max_tokens = 384000  # DeepSeek V4 family, lowest cap across OpenRouter providers
             else:
                 # Conservative default for unknown models
                 max_tokens = 4096
