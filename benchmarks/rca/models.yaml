@@ -26,6 +26,26 @@ models:
       AI_ASSIST_MODEL_MAX_TOKENS: "65536"
       AI_ASSIST_MODEL_CONTEXT_WINDOW: "262144"
 
+  # vLLM max_model_len is 1048576 (input + output combined).
+  - name: enmaas-deepseek-v4-1-flash
+    env:
+      ANTHROPIC_BASE_URL: https://api.enmaas.devshift.net
+      AI_ASSIST_API_KEY: ${ENMAAS_API_KEY}
+      AI_ASSIST_MODEL: rits/deepseek-ai/DeepSeek-V4.1-Flash-1017
+      AI_ASSIST_MODEL_MAX_TOKENS: "65536"
+      AI_ASSIST_MODEL_CONTEXT_WINDOW: "983040"
+
+  # Same model at low effort. AI_ASSIST_EFFORT is set too because the repo .env
+  # has AI_ASSIST_EFFORT=no, which currently wins over the AI_ASSIST_MODEL suffix.
+  - name: enmaas-deepseek-v4-1-flash-low
+    env:
+      ANTHROPIC_BASE_URL: https://api.enmaas.devshift.net
+      AI_ASSIST_API_KEY: ${ENMAAS_API_KEY}
+      AI_ASSIST_MODEL: rits/deepseek-ai/DeepSeek-V4.1-Flash-1017:low
+      AI_ASSIST_EFFORT: low
+      AI_ASSIST_MODEL_MAX_TOKENS: "65536"
+      AI_ASSIST_MODEL_CONTEXT_WINDOW: "983040"
+
   - name: openai-gpt-5
     env:
       ANTHROPIC_BASE_URL: http://127.0.0.1:4010
