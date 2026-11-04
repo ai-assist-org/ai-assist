@@ -1,19 +1,16 @@
-"""Internal tools for scheduling one-shot future actions"""
+"""Internal tool for scheduling one-shot future actions"""
 
 import re
 from datetime import datetime, timedelta
 
-from ai_assist.config import get_config_dir
-from ai_assist.scheduled_actions import ScheduledAction, ScheduledActionManager
+from ai_assist.action_tools import ActionTools
 
 
 class ScheduleActionTools:
-    """Internal tools for scheduling one-shot future actions"""
+    """internal__schedule_action: a one-time action in event-schedules.json, from a natural time spec"""
 
-    def __init__(self, agent):
-        self.agent = agent
-        self.action_file = get_config_dir() / "scheduled-actions.json"
-        self.manager = ScheduledActionManager(self.action_file, agent)
+    def __init__(self, action_tools: ActionTools):
+        self.action_tools = action_tools
 
     def get_tool_definitions(self) -> list[dict]:
         """Return tool definitions for agent"""
@@ -105,33 +102,28 @@ class ScheduleActionTools:
                 "  - Next week: 'next monday 10:00', 'next friday 14:30'"
             )
 
-        # Agent has decided the behavior via parameters (no inference needed)
+        action_prompt = prompt
+        if execute_query and create_report:
+            action_prompt += "\n\nSave the result as a report with internal__write_report."
 
-        # Determine notification channels
-        if notify:
-            notification_channels = ["desktop", "file"]
-        else:
-            notification_channels = []
-
-        # Create action
-        action = ScheduledAction(
-            id=f"action-{int(datetime.now().timestamp() * 1000)}",
-            prompt=prompt,
-            scheduled_at=scheduled_at,
-            created_at=datetime.now(),
-            created_by="agent",
-            description=description or prompt[:100],
-            execute_query=execute_query,
-            notify=notify,
-            create_report=create_report,
-            notification_channels=notification_channels,
-            status="pending",
-            result=None,
-            executed_at=None,
+        # The time keeps names unique when the same reminder is scheduled again.
+        label = (description or prompt)[:100]
+        result = await self.action_tools.execute_tool(
+            "internal__create_action",
+            {
+                "name": f"{label} ({scheduled_at.strftime('%Y-%m-%d %H:%M')})",
+                "trigger": {"type": "once", "at": scheduled_at.isoformat(timespec="seconds")},
+                "prompt": action_prompt,
+                "reminder": not execute_query,
+                "notify": notify,
+                "notification_channels": ["desktop", "file"] if notify else [],
+                "created_by": "agent",
+                "created_at": datetime.now().isoformat(),
+                "status": "pending",
+            },
         )
-
-        # Save
-        await self.manager.save_action(action)
+        if not result.startswith("Created action"):
+            return f"Error: {result}"
 
         # Format response
         time_until = scheduled_at - datetime.now()

@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from ai_assist.action_loader import ActionLoader
 from ai_assist.action_model import ActionDefinition
 from ai_assist.action_scheduler import ActionScheduler
 from ai_assist.event_sources import EventContext
@@ -305,8 +306,10 @@ async def test_schedule_timer_once_future_runs_and_marks(mock_agent, state_manag
     await s._schedule_timer_action(s.actions[0])
 
     s.engine.execute_action.assert_awaited_once()
-    saved = json.loads(f.read_text())
-    assert saved["actions"][0]["status"] == "completed"
+    assert _once_actions(f) == []
+    [archived] = _archive(f)
+    assert archived["name"] == "future_once"
+    assert archived["status"] == "completed"
 
 
 async def test_schedule_timer_schedule_sleeps_then_executes(scheduler):
@@ -397,13 +400,13 @@ async def test_execute_timer_action_failure(scheduler):
     assert action.name not in scheduler._executing
 
 
-# --- _mark_once_completed error path (330-331) ---
+# --- _finish_once error path ---
 
 
-def test_mark_once_completed_handles_error(scheduler):
+def test_finish_once_handles_error(scheduler):
     action = _mqtt_action()
     scheduler.loader.load_actions = MagicMock(side_effect=RuntimeError("boom"))
-    scheduler._mark_once_completed(action)  # should not raise
+    scheduler._finish_once(action, success=True)  # should not raise
 
 
 # --- run_missed_at_startup edge cases (341, 348-349, 360-361, 365, 370-371, 388-389) ---
@@ -489,3 +492,143 @@ async def test_run_missed_schedule_execution_error(scheduler):
     scheduler.engine.execute_action.side_effect = RuntimeError("boom")
     await scheduler.run_missed_at_startup(now=datetime(2026, 6, 15, 12, 0, 0))
     scheduler.engine.execute_action.assert_awaited_once()
+
+
+# --- Finished one-time actions leave event-schedules.json for the archive ---
+
+
+def _once_actions(schedule_file):
+    return [a for a in json.loads(schedule_file.read_text())["actions"] if a["trigger"]["type"] == "once"]
+
+
+def _archive(schedule_file):
+    archive = schedule_file.with_name("event-schedules-archive.jsonl")
+    if not archive.exists():
+        return []
+    return [json.loads(line) for line in archive.read_text().splitlines()]
+
+
+def _once(name, at, status="pending"):
+    return {"name": name, "trigger": {"type": "once", "at": at}, "prompt": name, "enabled": True, "status": status}
+
+
+def _write(schedule_file, actions):
+    schedule_file.write_text(json.dumps({"version": "2.0", "actions": actions}))
+
+
+async def _run_once(mock_agent, state_manager, schedule_file, success):
+    s = ActionScheduler(mock_agent, state_manager, schedule_file)
+    s.load_actions()
+    s.engine.execute_action = AsyncMock(return_value=_result(success))
+    s._sleep_until = AsyncMock()
+    s.running = True
+    await s._schedule_timer_action(s.actions[0])
+    return s
+
+
+async def test_failed_once_action_archived_as_failed(mock_agent, state_manager, schedule_file):
+    _write(schedule_file, [_once("report", (datetime.now() + timedelta(hours=1)).isoformat())])
+
+    await _run_once(mock_agent, state_manager, schedule_file, success=False)
+
+    assert _once_actions(schedule_file) == []
+    [archived] = _archive(schedule_file)
+    assert archived["status"] == "failed"
+    assert archived["archive_reason"] == "failed"
+    assert "archived_at" in archived
+
+
+async def test_finishing_one_of_two_same_named_actions_keeps_the_other(mock_agent, state_manager, schedule_file):
+    soon = (datetime.now() + timedelta(hours=1)).isoformat()
+    later = (datetime.now() + timedelta(days=7)).isoformat()
+    _write(schedule_file, [_once("Weekly report", soon), _once("Weekly report", later)])
+
+    await _run_once(mock_agent, state_manager, schedule_file, success=True)
+
+    [remaining] = _once_actions(schedule_file)
+    assert remaining["trigger"]["at"] == later
+    assert remaining["status"] == "pending"
+    assert [a["trigger"]["at"] for a in _archive(schedule_file)] == [soon]
+
+
+def test_load_archives_finished_and_expired_once_actions(mock_agent, state_manager, schedule_file):
+    now = datetime.now()
+    recurring = {"name": "daily", "trigger": {"type": "schedule", "at": "8:00", "days": "weekdays"}, "prompt": "x"}
+    _write(
+        schedule_file,
+        [
+            _once("done", (now - timedelta(days=2)).isoformat(), status="completed"),
+            _once("broke", (now - timedelta(days=2)).isoformat(), status="failed"),
+            _once("never ran", (now - timedelta(days=3)).isoformat()),
+            _once("due an hour ago", (now - timedelta(hours=1)).isoformat()),
+            _once("tomorrow", (now + timedelta(days=1)).isoformat()),
+            recurring,
+        ],
+    )
+    s = ActionScheduler(mock_agent, state_manager, schedule_file)
+
+    s.load_actions()
+
+    defaults = {d["name"] for d in ActionLoader.DEFAULT_ACTIONS}
+    kept = [a["name"] for a in json.loads(schedule_file.read_text())["actions"] if a["name"] not in defaults]
+    assert kept == ["due an hour ago", "tomorrow", "daily"]
+    assert [a.name for a in s.actions if a.name not in defaults] == kept
+    reasons = {a["name"]: a["archive_reason"] for a in _archive(schedule_file)}
+    assert reasons == {"done": "completed", "broke": "failed", "never ran": "expired"}
+
+
+def test_load_without_stale_actions_writes_nothing(mock_agent, state_manager, schedule_file):
+    _write(schedule_file, [_once("tomorrow", (datetime.now() + timedelta(days=1)).isoformat())])
+    scheduler = ActionScheduler(mock_agent, state_manager, schedule_file)
+    scheduler.load_actions()  # adds the default actions once
+    before = schedule_file.read_text()
+
+    scheduler.load_actions()
+
+    assert schedule_file.read_text() == before
+    assert _archive(schedule_file) == []
+
+
+async def test_missed_once_action_archived_after_catch_up(scheduler, schedule_file):
+    now = datetime(2026, 6, 15, 12, 0, 0)
+    _write(schedule_file, [_once("missed", "2026-06-15T11:00:00")])
+    scheduler.actions = scheduler.loader.load_actions()
+    scheduler.engine.execute_action = AsyncMock(return_value=_result(True))
+
+    await scheduler.run_missed_at_startup(now=now)
+
+    scheduler.engine.execute_action.assert_awaited_once()
+    assert _once_actions(schedule_file) == []
+    assert _archive(schedule_file)[0]["status"] == "completed"
+
+
+# --- Concurrent reloads must not orphan timers ---
+
+
+async def test_concurrent_reloads_leave_one_timer_per_action(mock_agent, state_manager, schedule_file):
+    _write(
+        schedule_file,
+        [{"name": "daily", "trigger": {"type": "schedule", "at": "8:00", "days": "weekdays"}, "prompt": "x"}],
+    )
+    s = ActionScheduler(mock_agent, state_manager, schedule_file)
+
+    async def sleep_forever(target):
+        await asyncio.Event().wait()
+
+    async def yield_to_others():
+        await asyncio.sleep(0.01)
+
+    s._sleep_until = sleep_forever
+    s._start_event_sources = yield_to_others
+    s._stop_event_sources = yield_to_others
+    await s.start()
+
+    try:
+        await asyncio.gather(*(s.reload() for _ in range(10)))
+        await asyncio.sleep(0)
+
+        live = [t for t in asyncio.all_tasks() if t.get_name() == "daily" and not t.done()]
+        assert len(live) == 1
+        assert [h.get_name() for h in s.timer_handles].count("daily") == 1
+    finally:
+        await s.stop()

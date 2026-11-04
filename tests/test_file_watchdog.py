@@ -255,3 +255,48 @@ async def test_multiple_watchers_same_directory():
         await watcher_b.stop()
         # Observer released
         assert len(_shared_observers) == 0
+
+
+def _handler(tmp_path, callback, debounce_seconds=0.05):
+    from ai_assist.file_watchdog import _DebounceHandler
+
+    target = tmp_path / "event-schedules.json"
+    target.write_text("{}")
+    return _DebounceHandler(target, callback, debounce_seconds, asyncio.get_running_loop())
+
+
+@pytest.mark.asyncio
+async def test_burst_from_observer_thread_triggers_one_callback(tmp_path):
+    """Many events in a row from the observer thread, before the loop runs, collapse into one callback."""
+    import threading
+
+    callback = AsyncMock()
+    handler = _handler(tmp_path, callback)
+
+    burst = threading.Thread(target=lambda: [handler._trigger_debounced() for _ in range(31)])
+    burst.start()
+    burst.join()
+    await asyncio.sleep(0.3)
+
+    assert callback.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_new_event_does_not_cancel_a_running_callback(tmp_path):
+    """An event arriving while the callback runs schedules another run instead of interrupting it."""
+    started = asyncio.Event()
+    finished: list[int] = []
+
+    async def callback():
+        started.set()
+        await asyncio.sleep(0.1)
+        finished.append(1)
+
+    handler = _handler(tmp_path, callback)
+    handler._trigger_debounced()
+    await asyncio.wait_for(started.wait(), timeout=1)
+
+    handler._trigger_debounced()
+    await asyncio.sleep(0.4)
+
+    assert finished == [1, 1]

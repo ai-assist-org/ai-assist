@@ -11,7 +11,7 @@ ai-assist /interactive
 You: Remind me in 2 hours to check the DCI job status for job-456
 ```
 
-The agent schedules the action → `/monitor` process executes it → You get notified.
+The agent schedules the action (a one-time action in `~/.ai-assist/event-schedules.json`) → `/monitor` process executes it → You get notified.
 
 ## Time Formats
 
@@ -36,12 +36,12 @@ The agent decides the best execution strategy:
 
 ## How Actions Execute
 
-**Reminder-only actions** (`notify=True`, `create_report=False`):
+**Reminder-only actions** (`execute_query=False`, stored with `"reminder": true`):
 - Send notification directly with your reminder message
 - No agent query executed (efficient for simple reminders)
-- Example: "Remind me in 1 hour to watch TV" → Shows "⏰ Time to watch TV!"
+- Example: "Remind me in 1 hour to watch TV" → Shows "Time to watch TV"
 
-**Query/Report actions** (`create_report=True` or mixed):
+**Query/Report actions** (`execute_query=True`, optionally `create_report=True`):
 - Execute the prompt via the agent
 - Results sent to notification channels and/or saved as report
 - Example: "Check failed jobs in 30 minutes and notify me" → Agent queries, notifies with results
@@ -50,35 +50,20 @@ The agent decides the best execution strategy:
 
 **View scheduled actions:**
 ```bash
-cat ~/.ai-assist/scheduled-actions.json
+jq '.actions[] | select(.trigger.type == "once")' ~/.ai-assist/event-schedules.json
+```
+
+Each one-time action is named after its description plus its scheduled time, so the same reminder can be scheduled again for another day.
+
+**Finished actions leave the schedule file:** once a one-time action has run, it is moved to `~/.ai-assist/event-schedules-archive.jsonl` (one JSON object per line, with `status`, `archived_at` and `archive_reason`: `completed`, `failed` or `expired`). An action whose time passed more than 24 hours ago without running (the `/monitor` process was down) can no longer run and is archived as `expired`.
+
+```bash
+jq -c '{name, status, archive_reason, archived_at}' ~/.ai-assist/event-schedules-archive.jsonl
 ```
 
 **View notification history:**
 ```bash
 tail -f ~/.ai-assist/notifications.log
-```
-
-## File Maintenance
-
-Scheduled actions are automatically cleaned up:
-- **Pending actions**: Kept indefinitely until executed
-- **Completed/failed actions**: Kept for 7 days, then archived
-- **Archive location**: `~/.ai-assist/scheduled-actions-archive.jsonl`
-
-The archive uses JSONL format (one action per line) for efficient append-only storage.
-
-**Manual cleanup:**
-```bash
-ai-assist /cleanup-actions
-```
-
-**View archived actions:**
-```bash
-# See all archived actions
-cat ~/.ai-assist/scheduled-actions-archive.jsonl | jq
-
-# Count archived actions
-wc -l ~/.ai-assist/scheduled-actions-archive.jsonl
 ```
 
 ## Requirements
@@ -136,7 +121,4 @@ notify-send "Test" "Test notification"
 ```
 
 **Action failed:**
-Check the result in scheduled-actions.json:
-```bash
-jq '.actions[] | select(.status == "failed")' ~/.ai-assist/scheduled-actions.json
-```
+Failures are sent as an error notification; see `~/.ai-assist/notifications.log`.

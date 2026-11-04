@@ -202,7 +202,7 @@ Unified action system where everything is a **trigger + prompt**. Actions are st
 - **ActionDefinition** (`action_model.py`): unified model replacing `TaskDefinition` + `ScheduledAction`
 - **TriggerMatcher** (`action_model.py`): matches incoming events against event-based trigger configs
 - **ActionEngine** (`action_engine.py`): executes actions (natural language, MCP prompts, AWL, builtins) with event context
-- **ActionScheduler** (`action_scheduler.py`): unified scheduler for timer and event actions
+- **ActionScheduler** (`action_scheduler.py`): unified scheduler for timer and event actions. Edits to event-schedules.json hot-reload it: `FileWatchdog` collapses a burst of writes into one callback (debounce state lives on the loop thread; a running callback is never cancelled), and `reload()` is serialized by a lock, since overlapping reloads would leave untracked duplicate timers.
 - **ActionLoader** (`action_loader.py`): load/save `event-schedules.json`, auto-migration from old format
 - **ActionTools** (`action_tools.py`): agent CRUD tools for actions
 - **EventSource** ABC (`event_sources.py`): pluggable event sources (MQTT, D-Bus, file)
@@ -330,7 +330,6 @@ Files: `background_tasks.py`, `background_task_tools.py`
 - `state/` - Monitor states and cache
 - `allowed_commands.json` - User-approved shell commands
 - `skill_env.json` - Per-skill env var allowlists
-- `scheduled-actions.json` - One-time future actions
 - `traces/query_traces.jsonl` - Per-query traces with token usage and cost (100-day retention)
 - `events.jsonl` - Event bridge (monitor→interactive IPC)
 - `interactive_history.txt` - Command history
@@ -351,7 +350,7 @@ Files: `config.py`, `state.py`, `config_watcher.py`, `file_watchdog.py`
 **Built-in tools** are organized by domain:
 - `report_tools.py` - Markdown report management (`~/ai-reports/`)
 - `action_tools.py` - Create/update/delete actions (event-schedules.json)
-- `schedule_action_tools.py` - One-time scheduled actions with notifications
+- `schedule_action_tools.py` - `internal__schedule_action`: one-time actions from a natural time spec ("in 2 hours"), created in event-schedules.json via `ActionTools`
 - `knowledge_tools.py` - KG synthesis and learning
 - `kg_query_tools.py` - KG querying (stats, changes, historical state)
 - `filesystem_tools.py` - File operations (read, write, edit, search, execute)
@@ -838,9 +837,7 @@ async def check(self) -> list[dict]:
 
 ### Scheduled Actions
 
-One-time future actions (`scheduled_actions.py`) execute via the `/monitor` process with notifications. The agent decides whether to send a simple notification or query via the agent based on the prompt.
-
-Actions older than 7 days are archived to `scheduled-actions-archive.jsonl`.
+One-time future actions are `once` actions in `event-schedules.json`, created with `internal__schedule_action` (or `internal__create_action`) and run by the `/monitor` process's `ActionScheduler`. A simple reminder is stored with `"reminder": true`: `ActionEngine` notifies with the prompt text and makes no model call. Otherwise the prompt runs through the agent like any action. A one-time action that has run is moved (matched by name and time) to `event-schedules-archive.jsonl` with its `completed`/`failed` status; each (re)load also archives finished ones and those past due beyond the 24 h catch-up window (`expired`). See `ActionLoader.archive_actions`.
 
 ## Code Organization
 
@@ -874,7 +871,6 @@ ai_assist/
 ├── background_tasks.py        # Background task manager (interactive mode)
 ├── background_task_tools.py   # Agent tools for background tasks
 ├── *_tools.py                 # Tool implementations (report, schedule, KG, filesystem, etc.)
-├── scheduled_actions.py       # One-time future actions (legacy)
 ├── notification_*.py          # Notification channels and dispatcher
 ├── state.py                   # State management and caching
 ├── *_watcher.py               # File watching and hot-reload

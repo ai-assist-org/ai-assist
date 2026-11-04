@@ -15,6 +15,10 @@ from .tasks import TaskLoader
 
 logger = logging.getLogger(__name__)
 
+# One-time actions due within this window still run at startup (catch-up); older
+# ones never will, so they are archived as expired.
+_CATCH_UP_WINDOW = timedelta(hours=24)
+
 
 class ActionScheduler:
     """Unified scheduler for all action types"""
@@ -41,10 +45,12 @@ class ActionScheduler:
         self._executing: set[str] = set()
         self._last_completed: dict[str, float] = {}
         self._self_write_time: float = 0.0
+        self._reload_lock = asyncio.Lock()  # concurrent reloads would orphan timers
         self._resume_event = asyncio.Event()
 
     def load_actions(self) -> list[ActionDefinition]:
         self.loader.ensure_defaults()
+        self._archive_stale_once_actions()
         try:
             self.actions = self.loader.load_actions()
         except Exception:
@@ -84,6 +90,10 @@ class ActionScheduler:
         if time.monotonic() - self._self_write_time < 2.0:
             return
 
+        async with self._reload_lock:
+            await self._reload_locked()
+
+    async def _reload_locked(self) -> None:
         logger.info("Reloading actions...")
 
         await self._stop_event_sources()
@@ -259,8 +269,8 @@ class ActionScheduler:
                         break
                     logger.info("%s: scheduled for %s", action.name, target_time.strftime("%Y-%m-%d %H:%M"))
                     await self._sleep_until(target_time)
-                    await self._execute_timer_action(action)
-                    self._mark_once_completed(action)
+                    success = await self._execute_timer_action(action)
+                    self._finish_once(action, success)
                     break
 
                 elif trigger_type == "schedule":
@@ -301,7 +311,7 @@ class ActionScheduler:
                     except asyncio.CancelledError:
                         break
 
-    async def _execute_timer_action(self, action: ActionDefinition) -> None:
+    async def _execute_timer_action(self, action: ActionDefinition) -> bool:
         self._executing.add(action.name)
         try:
             logger.info("Running %s...", action.name)
@@ -312,29 +322,68 @@ class ActionScheduler:
                     logger.debug("%s", result.output)
             else:
                 logger.warning("%s: failed - %s", action.name, result.output[:200])
+            return result.success
         finally:
             self._executing.discard(action.name)
 
-    def _mark_once_completed(self, action: ActionDefinition) -> None:
+    def _finish_once(self, action: ActionDefinition, success: bool) -> None:
+        """Move a one-time action that just ran from the schedule file to the archive.
+
+        Matches on name *and* time, so another entry with the same name (the same
+        reminder for another day) is left alone.
+        """
         import time
 
+        status = "completed" if success else "failed"
+
+        def select(candidate: ActionDefinition) -> str | None:
+            if (
+                candidate.trigger_type == "once"
+                and candidate.name == action.name
+                and candidate.trigger.get("at") == action.trigger.get("at")
+            ):
+                candidate.status = status
+                candidate.executed_at = datetime.now()
+                return status
+            return None
+
         try:
-            actions = self.loader.load_actions()
-            for a in actions:
-                if a.name == action.name and a.trigger_type == "once":
-                    a.status = "completed"
-                    a.executed_at = datetime.now()
-                    break
             self._self_write_time = time.monotonic()
-            self.loader.save_actions(actions)
+            self.loader.archive_actions(select)
         except Exception:
-            logger.exception("Failed to mark once-action '%s' as completed", action.name)
+            logger.exception("Failed to archive once-action '%s'", action.name)
+
+    def _archive_stale_once_actions(self) -> None:
+        """Archive one-time actions that are finished, or past due beyond the catch-up window."""
+        import time
+
+        expired_before = datetime.now() - _CATCH_UP_WINDOW
+
+        def select(candidate: ActionDefinition) -> str | None:
+            if candidate.trigger_type != "once":
+                return None
+            if candidate.status in ("completed", "failed"):
+                return candidate.status
+            try:
+                due = datetime.fromisoformat(candidate.trigger["at"])
+            except KeyError, TypeError, ValueError:
+                return None
+            return "expired" if due < expired_before else None
+
+        try:
+            archived = self.loader.archive_actions(select)
+        except Exception:
+            logger.exception("Failed to archive stale once-actions from %s", self.schedule_file)
+            return
+        if archived:
+            self._self_write_time = time.monotonic()
+            logger.info("Archived %d finished or expired one-time action(s)", archived)
 
     async def run_missed_at_startup(self, now: datetime | None = None) -> None:
         if now is None:
             now = datetime.now()
 
-        lookback = now - timedelta(hours=24)
+        lookback = now - _CATCH_UP_WINDOW
 
         for action in self.actions:
             if not action.enabled:
@@ -355,8 +404,8 @@ class ActionScheduler:
                     target_time.strftime("%Y-%m-%d %H:%M"),
                 )
                 try:
-                    await self.engine.execute_action(action)
-                    self._mark_once_completed(action)
+                    result = await self.engine.execute_action(action)
+                    self._finish_once(action, result.success)
                 except Exception:
                     logger.exception("Error running missed once-action '%s'", action.name)
                 continue

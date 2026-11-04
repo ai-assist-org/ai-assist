@@ -3,6 +3,8 @@
 import json
 import logging
 import re
+from collections.abc import Callable
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -46,6 +48,36 @@ class ActionLoader:
         data = self._load_json()
         data["actions"] = [a.to_dict() for a in actions]
         self._save_json(data)
+
+    @property
+    def archive_file(self) -> Path:
+        """event-schedules.json -> event-schedules-archive.jsonl, next to it."""
+        return self.json_file.with_name(f"{self.json_file.stem}-archive.jsonl")
+
+    def archive_actions(self, select: Callable[[ActionDefinition], str | None]) -> int:
+        """Move the actions for which ``select`` returns a reason to the archive file.
+
+        Each archived action is appended as one JSON line with ``archived_at`` and
+        ``archive_reason``; the others are saved back. Returns how many moved, and
+        writes nothing when none do. ``select`` may update an action (e.g. its
+        status) before it is archived.
+        """
+        kept: list[ActionDefinition] = []
+        archived: list[tuple[ActionDefinition, str]] = []
+        for action in self.load_actions():
+            reason = select(action)
+            if reason:
+                archived.append((action, reason))
+            else:
+                kept.append(action)
+        if not archived:
+            return 0
+        now = datetime.now().isoformat()
+        with open(self.archive_file, "a") as f:
+            for action, reason in archived:
+                f.write(json.dumps({**action.to_dict(), "archived_at": now, "archive_reason": reason}) + "\n")
+        self.save_actions(kept)
+        return len(archived)
 
     def ensure_defaults(self) -> None:
         data = self._load_json()
@@ -95,48 +127,6 @@ class ActionLoader:
         data["actions"].extend(new_actions)
         self._save_json(data)
         logger.info("Migrated %d action(s) from %s", len(new_actions), old_schedules_file)
-
-    def migrate_scheduled_actions(self, old_actions_file: Path) -> None:
-        if not old_actions_file.exists():
-            return
-
-        try:
-            with open(old_actions_file) as f:
-                old_data = json.load(f)
-        except json.JSONDecodeError, OSError:
-            logger.exception("Failed to read old scheduled actions file for migration")
-            return
-
-        data = self._load_json()
-        existing_prompts = {
-            (a.get("prompt"), a.get("trigger", {}).get("at"))
-            for a in data.get("actions", [])
-            if a.get("trigger", {}).get("type") == "once"
-        }
-        count = 0
-
-        for old_action in old_data.get("actions", []):
-            if old_action.get("status") in ("completed", "failed"):
-                continue
-            key = (old_action["prompt"], old_action["scheduled_at"])
-            if key in existing_prompts:
-                continue
-            action = {
-                "name": old_action.get("description") or old_action.get("prompt", "")[:50],
-                "trigger": {"type": "once", "at": old_action["scheduled_at"]},
-                "prompt": old_action["prompt"],
-                "enabled": True,
-                "notify": old_action.get("notify", True),
-                "created_by": old_action.get("created_by"),
-                "created_at": old_action.get("created_at"),
-                "status": old_action.get("status", "pending"),
-            }
-            data.setdefault("actions", []).append(action)
-            count += 1
-
-        if count > 0:
-            self._save_json(data)
-            logger.info("Migrated %d scheduled action(s) from %s", count, old_actions_file)
 
     @staticmethod
     def _convert_old_task(task_data: dict[str, Any]) -> dict[str, Any] | None:
