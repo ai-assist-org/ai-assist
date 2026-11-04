@@ -1383,7 +1383,7 @@ class AiAssistAgent:
         if self.config.model_context_window:
             return self.config.model_context_window
 
-        model = self.config.model
+        model = self.config.model.lower()  # e.g. rits/deepseek-ai/DeepSeek-V4.1-Flash-1017
         for key, size in self.MODEL_CONTEXT_WINDOWS.items():
             if key in model:
                 return size

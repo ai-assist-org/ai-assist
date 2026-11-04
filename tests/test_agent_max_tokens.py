@@ -174,6 +174,9 @@ def test_vertex_default_opus_45():
         # across the providers OpenRouter may route to.
         ("deepseek/deepseek-v4.1-flash", 384000, 1048576),
         ("deepseek/deepseek-v4-flash-0731", 384000, 1048576),
+        # RITS via the EnMaaS gateway: its vLLM reports max_model_len=1048576 and accepts
+        # max_tokens=384000; the name's capitals must not defeat the lookup.
+        ("rits/deepseek-ai/DeepSeek-V4.1-Flash-1017", 384000, 1048576),
         ("z-ai/glm-5.3-flash", 131072, 1048576),
         ("z-ai/glm-4.7-flash", 117964, 200000),
     ],
