@@ -68,6 +68,7 @@ class BackgroundTaskManager:
                 prefixed_prompt,
                 max_turns=max_turns,
                 max_time_seconds=max_time_seconds,
+                raise_on_api_error=True,
             )
             task.status = "completed"
             task.result = result

@@ -8,6 +8,7 @@ from typing import Any
 from .action_model import ActionDefinition
 from .agent import AiAssistAgent
 from .conditions import ActionExecutor, ConditionEvaluator
+from .config import NO_TIME_LIMIT
 from .event_sources import EventContext
 from .notification_dispatcher import Notification, NotificationDispatcher
 from .state import StateManager
@@ -49,10 +50,17 @@ class ActionEngine:
             elif action.is_mcp_prompt:
                 server, prompt_name = action.parse_mcp_prompt()
                 output = await self.agent.execute_mcp_prompt(
-                    server, prompt_name, action.prompt_arguments, max_turns=action.max_turns
+                    server,
+                    prompt_name,
+                    action.prompt_arguments,
+                    max_turns=action.max_turns,
+                    max_time_seconds=NO_TIME_LIMIT,
+                    raise_on_api_error=True,
                 )
             else:
-                output = await self.agent.query(prompt, max_turns=action.max_turns)
+                output = await self.agent.query(
+                    prompt, max_turns=action.max_turns, max_time_seconds=NO_TIME_LIMIT, raise_on_api_error=True
+                )
 
             evaluator = ConditionEvaluator()
             metadata = evaluator.extract_metadata(output)

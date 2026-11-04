@@ -45,6 +45,14 @@ env | sort
 """)
     env_script.chmod(0o755)
 
+    # Create a script that reads stdin
+    stdin_script = scripts_dir / "read_stdin.sh"
+    stdin_script.write_text("""#!/bin/bash
+cat
+echo "done reading"
+""")
+    stdin_script.chmod(0o755)
+
     # Create a script that sleeps
     sleep_script = scripts_dir / "sleep.sh"
     sleep_script.write_text("""#!/bin/bash
@@ -500,3 +508,29 @@ def test_skill_env_filtering_other_skill_not_allowed(skills_manager_with_skill, 
         assert "GOOGLE_API_KEY" not in safe_env
     finally:
         del os.environ["GOOGLE_API_KEY"]
+
+
+@pytest.mark.asyncio
+async def test_script_reading_stdin_gets_end_of_input(skills_manager_with_skill):
+    """A script expecting input must not wait on the terminal."""
+    import os
+    import time
+
+    config = AiAssistConfig(anthropic_api_key="test", allow_skill_script_execution=True)
+    tools = ScriptExecutionTools(skills_manager_with_skill, config)
+    read_end, write_end = os.pipe()  # an "input" that never ends, standing in for the terminal
+    saved_stdin = os.dup(0)
+    os.dup2(read_end, 0)
+    try:
+        started = time.monotonic()
+        result = await tools.execute_tool(
+            "execute_skill_script", {"skill_name": "test-skill", "script_name": "read_stdin.sh"}
+        )
+        elapsed = time.monotonic() - started
+    finally:
+        os.dup2(saved_stdin, 0)
+        for fd in (saved_stdin, read_end, write_end):
+            os.close(fd)
+
+    assert "done reading" in result
+    assert elapsed < 5

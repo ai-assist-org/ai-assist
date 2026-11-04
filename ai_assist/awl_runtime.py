@@ -24,10 +24,11 @@ from .awl_ast import (
     WorkflowNode,
 )
 from .awl_expressions import AWLExpressionEvaluator
-from .config import EFFORT_SETTINGS
+from .config import EFFORT_SETTINGS, NO_TIME_LIMIT
 from .filesystem_tools import extract_command_names
 from .jev_client import JevError, jev_configured, jev_decide, noul, noul_probability
 from .output import console_print
+from .query_errors import QueryIncompleteError
 
 logger = logging.getLogger(__name__)
 
@@ -370,6 +371,8 @@ def validate_workflow_variables(workflow: WorkflowNode, initial_variables: set[s
                 _check_used(node.message, "@continue")
             elif isinstance(node, BreakNode):
                 _check_used(node.message, "@break")
+            elif isinstance(node, FailNode):
+                _check_used(node.message, "@fail")
 
     _walk(workflow.body)
     return warnings
@@ -507,7 +510,7 @@ class AWLRuntime:
         elif isinstance(node, NotifyNode):
             await self._execute_notify(node)
         elif isinstance(node, FailNode):
-            raise AWLRuntimeError(node.message)
+            raise AWLRuntimeError(self._expr.interpolate(node.message, self._variables))
         elif isinstance(node, ContinueNode):
             if self._loop_depth == 0:
                 raise AWLRuntimeError(f"@continue outside loop: {node.message}")
@@ -611,14 +614,22 @@ class AWLRuntime:
                         resolved_model,
                     )
                 task_commands = self._authorize_task_commands(task)
+                previous_result_state = self._agent.task_result_tool.begin()
+                stopped_early: QueryIncompleteError | None = None
                 try:
                     response = await self._agent.query(
                         prompt,
                         max_turns=max_turns,
                         progress_callback=callback,
-                        max_time_seconds=task.max_time,
+                        max_time_seconds=task.max_time or NO_TIME_LIMIT,
+                        raise_on_api_error=True,
+                        raise_on_incomplete=True,
                     )
+                except QueryIncompleteError as e:
+                    stopped_early = e
+                    response = str(e)
                 finally:
+                    reported = self._agent.task_result_tool.end(previous_result_state)
                     self._revoke_task_commands(*task_commands)
                     self._agent.config.model = saved_model
                     self._agent.config.effort = saved_effort
@@ -652,7 +663,13 @@ class AWLRuntime:
                 for line in details:
                     console_print(line)
 
-            exposed, expose_methods = await self._resolve_exposed(task, response, tool_calls_before)
+            # Out of time or turns: unfinished, unless the agent had already reported.
+            if stopped_early and not reported:
+                raise AWLRuntimeError(f"Task '{task.task_id}' stopped before finishing: {stopped_early}")
+            if reported and reported["status"] == "failed":
+                raise AWLRuntimeError(f"Task '{task.task_id}' reported failure: {reported['reason']}")
+            reported_values = {k: v for k, v in reported["values"].items() if k in task.expose} if reported else {}
+            exposed, expose_methods = await self._resolve_exposed(task, response, tool_calls_before, reported_values)
 
             self._variables.update(exposed)
             outcome = TaskOutcome(
@@ -713,10 +730,18 @@ class AWLRuntime:
         task: TaskNode,
         response: str,
         tool_calls_before: int,
+        reported: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], dict[str, str]]:
-        """Run the full expose extraction chain: json → nudge → response sections → report sections."""
-        exposed = self._extract_exposed(response, task.expose)
-        expose_methods: dict[str, str] = dict.fromkeys(exposed, "json")
+        """Run the full expose extraction chain: finish tool → json → nudge → response sections → report sections.
+
+        ``reported`` holds the values the agent passed to internal__finish_task; the
+        rest of the chain only runs for the keys still missing.
+        """
+        exposed = dict(reported or {})
+        expose_methods: dict[str, str] = dict.fromkeys(exposed, "finish_tool")
+        json_exposed = self._extract_exposed(response, [v for v in task.expose if v not in exposed])
+        exposed.update(json_exposed)
+        expose_methods.update(dict.fromkeys(json_exposed, "json"))
 
         if not task.expose:
             return exposed, expose_methods
@@ -807,8 +832,8 @@ class AWLRuntime:
             f"Extract the requested information from the output above and return "
             f"ONLY a JSON block with these keys: {keys}\n"
             f"```json\n{{{example}}}\n```\n"
-            f"If a value is not present in the output, use your best judgement to "
-            f"infer it from context. Do NOT call any tools. Output nothing else."
+            f"If a value is not present in the output, use null: do not infer or guess it. "
+            f"Do NOT call any tools. Output nothing else."
         )
         logger.info("AWL task '%s': nudging for missing exposed vars: %s", task.task_id, missing_vars)
         console_print(f"    [~] nudging for missing vars: {missing_vars}")
@@ -1288,7 +1313,7 @@ class AWLRuntime:
             f"Has the success criterion been met? Respond with JSON:\n"
             f'{{"success_met": true/false, "reason": "brief explanation"}}'
         )
-        response = await self._agent.query(prompt, max_turns=1)
+        response = await self._agent.query(prompt, max_turns=1, raise_on_api_error=True)
         result = self._extract_exposed(response, ["success_met", "reason"])
 
         self._variables["_goal_success_met"] = result.get("success_met", False)
@@ -1332,15 +1357,17 @@ class AWLRuntime:
         if task.success:
             parts.append(f"\nSuccess criteria: {interp(task.success, v)}")
 
+        parts.append("\nWhen you are done, call the internal__finish_task tool once:")
         if task.expose:
             keys = ", ".join(task.expose)
-            example = ", ".join(f'"{k}": "<value>"' for k in task.expose)
-            parts.append(f"\nIMPORTANT: Your final message MUST end with a JSON block containing these keys: {keys}")
-            parts.append(f"```json\n{{{example}}}\n```")
-            parts.append(
-                "This JSON block is mandatory — without it the workflow cannot continue. "
-                "Do NOT put the JSON inside a tool call or think block."
-            )
+            parts.append(f'- on success: status="success" and values with exactly these keys: {keys}')
+        else:
+            parts.append('- on success: status="success"')
+        parts.append(
+            "- if you could not achieve the goal (a required step failed, a tool returned an error, "
+            'or data you need is missing): status="failed" with a reason. '
+            "Never report empty or made-up values as success."
+        )
 
         # If the goal references an MCP prompt (e.g. /server/prompt), remind the agent
         # to use introspection__execute_mcp_prompt to run it.

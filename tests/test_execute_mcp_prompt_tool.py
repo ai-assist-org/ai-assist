@@ -113,7 +113,9 @@ async def test_execute_mcp_prompt_success(agent_with_prompts):
     assert result["result"] == "Test result from prompt"
 
     # Verify execute_mcp_prompt was called correctly
-    agent_with_prompts.execute_mcp_prompt.assert_called_once_with("test_server", "test_prompt", {})
+    agent_with_prompts.execute_mcp_prompt.assert_called_once_with(
+        "test_server", "test_prompt", {}, raise_on_api_error=True
+    )
 
 
 @pytest.mark.asyncio
@@ -134,7 +136,7 @@ async def test_execute_mcp_prompt_with_arguments(agent_with_prompts):
 
     # Verify arguments were passed
     agent_with_prompts.execute_mcp_prompt.assert_called_once_with(
-        "test_server", "test_prompt", {"for": "Semih", "days": "7"}
+        "test_server", "test_prompt", {"for": "Semih", "days": "7"}, raise_on_api_error=True
     )
 
 
@@ -186,4 +188,6 @@ async def test_execute_mcp_prompt_via_agent_execute_tool(agent_with_prompts):
 
     assert result["success"] is True
     assert result["result"] == "Weekly report generated"
-    agent_with_prompts.execute_mcp_prompt.assert_called_once_with("test_server", "weekly_report", {"for": "Peri"})
+    agent_with_prompts.execute_mcp_prompt.assert_called_once_with(
+        "test_server", "weekly_report", {"for": "Peri"}, raise_on_api_error=True
+    )

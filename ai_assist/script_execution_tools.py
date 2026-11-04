@@ -202,6 +202,7 @@ class ScriptExecutionTools:
                 shell=False,  # CRITICAL: prevents shell injection
                 cwd=script_path.parent,
                 env=safe_env,
+                stdin=subprocess.DEVNULL,  # never wait on the terminal for input
                 capture_output=True,
                 encoding="utf-8",
                 errors="replace",

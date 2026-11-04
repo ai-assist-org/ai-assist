@@ -34,6 +34,7 @@ from ai_assist.awl_runtime import (
     validate_workflow_variables,
 )
 from ai_assist.jev_client import JevError
+from ai_assist.task_result_tool import TaskResultTool
 
 
 @pytest.fixture
@@ -47,6 +48,7 @@ def mock_agent():
     agent.config.jev_enabled = False
     agent.config.jev_api_key = None
     agent.config.jev_verify_tasks = False
+    agent.task_result_tool = TaskResultTool()
     return agent
 
 
@@ -2216,3 +2218,244 @@ async def test_task_verify_error_does_not_disrupt_task(mock_agent, runtime):
     assert result.success is True
     assert result.task_outcomes[0].status == "success"
     assert result.task_outcomes[0].success_confidence is None
+
+
+# --- internal__finish_task: the agent reports the task outcome ---
+
+
+def _finishing(mock_agent, arguments: dict, text: str = "Done."):
+    """Make the model call internal__finish_task with ``arguments``, then reply ``text``."""
+
+    async def query(prompt, **kwargs):
+        await mock_agent.task_result_tool.execute_tool("finish_task", arguments)
+        return text
+
+    return AsyncMock(side_effect=query)
+
+
+@pytest.mark.asyncio
+async def test_finish_failed_fails_task_and_stops_workflow(mock_agent, runtime):
+    mock_agent.query = _finishing(
+        mock_agent,
+        {"status": "failed", "reason": "listing returned a null dataset id"},
+        text='Step 3 failed.\n```json\n{"ids": ""}\n```',
+    )
+    workflow = WorkflowNode(
+        body=[
+            TaskNode(task_id="list", goal="List the videos.", expose=["ids"]),
+            TaskNode(task_id="report", goal="Write the report."),
+        ]
+    )
+    result = await runtime.execute(workflow)
+
+    assert result.success is False
+    assert [o.status for o in result.task_outcomes] == ["failed"]
+    assert "null dataset id" in result.task_outcomes[0].summary
+    assert "ids" not in result.variables
+    mock_agent.query.assert_called_once()  # no nudge, and the next task never ran
+
+
+@pytest.mark.asyncio
+async def test_finish_failed_with_continue_on_failure_runs_next_task(mock_agent, runtime):
+    calls = []
+
+    async def query(prompt, **kwargs):
+        calls.append(prompt)
+        if len(calls) == 1:
+            await mock_agent.task_result_tool.execute_tool("finish_task", {"status": "failed", "reason": "no data"})
+        return "Done."
+
+    mock_agent.query = AsyncMock(side_effect=query)
+    workflow = WorkflowNode(
+        body=[
+            TaskNode(task_id="t1", goal="Fetch.", hints=["continue-on-failure"]),
+            TaskNode(task_id="t2", goal="Report."),
+        ]
+    )
+    result = await runtime.execute(workflow)
+
+    assert [o.status for o in result.task_outcomes] == ["failed", "success"]
+
+
+@pytest.mark.asyncio
+async def test_finish_success_exposes_values_without_json(mock_agent, runtime):
+    mock_agent.query = _finishing(mock_agent, {"status": "success", "values": {"ids": "a b", "count": 2}})
+    workflow = WorkflowNode(body=[TaskNode(task_id="list", goal="List.", expose=["ids", "count"])])
+    result = await runtime.execute(workflow)
+
+    assert result.success is True
+    assert result.variables["ids"] == "a b"
+    assert result.variables["count"] == 2
+    assert result.task_outcomes[0].expose_methods == {"ids": "finish_tool", "count": "finish_tool"}
+    mock_agent.query.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_finish_success_missing_key_falls_back_to_response(mock_agent, runtime):
+    mock_agent.query = _finishing(
+        mock_agent, {"status": "success", "values": {"ids": "a b"}}, text='```json\n{"count": 2}\n```'
+    )
+    workflow = WorkflowNode(body=[TaskNode(task_id="list", goal="List.", expose=["ids", "count"])])
+    result = await runtime.execute(workflow)
+
+    assert result.variables["ids"] == "a b"
+    assert result.variables["count"] == 2
+    assert result.task_outcomes[0].expose_methods == {"ids": "finish_tool", "count": "json"}
+
+
+@pytest.mark.asyncio
+async def test_finish_values_restricted_to_expose(mock_agent, runtime):
+    mock_agent.query = _finishing(mock_agent, {"status": "success", "values": {"ids": "a", "extra": "x"}})
+    workflow = WorkflowNode(body=[TaskNode(task_id="list", goal="List.", expose=["ids"])])
+    result = await runtime.execute(workflow)
+
+    assert "extra" not in result.variables
+
+
+@pytest.mark.asyncio
+async def test_finish_failed_in_loop_skips_collect(mock_agent, runtime):
+    async def query(prompt, **kwargs):
+        if "item b" in prompt:
+            await mock_agent.task_result_tool.execute_tool("finish_task", {"status": "failed", "reason": "broken"})
+        else:
+            await mock_agent.task_result_tool.execute_tool("finish_task", {"status": "success", "values": {"r": 1}})
+        return "Done."
+
+    mock_agent.query = AsyncMock(side_effect=query)
+    workflow = WorkflowNode(
+        body=[
+            LoopNode(
+                collection="items",
+                item_var="item",
+                collect="results",
+                body=[TaskNode(task_id="t", goal="Process item ${item}.", expose=["r"])],
+            )
+        ]
+    )
+    result = await runtime.execute(workflow, variables={"items": ["a", "b"]})
+
+    assert result.variables["results"] == [{"r": 1}]
+
+
+@pytest.mark.asyncio
+async def test_finish_tool_inactive_after_task(mock_agent, runtime):
+    mock_agent.query.return_value = "Done."
+    await runtime.execute(WorkflowNode(body=[TaskNode(task_id="t", goal="Do it.")]))
+
+    assert not mock_agent.task_result_tool.active
+
+
+@pytest.mark.asyncio
+async def test_task_prompt_asks_for_finish_tool(mock_agent, runtime):
+    mock_agent.query.return_value = "Done."
+    workflow = WorkflowNode(
+        body=[
+            TaskNode(task_id="t1", goal="List.", expose=["ids", "count"]),
+            TaskNode(task_id="t2", goal="Report."),
+        ]
+    )
+    await runtime.execute(workflow)
+
+    prompts = [c[0][0] for c in mock_agent.query.call_args_list if "You are executing task" in c[0][0]]
+    with_expose, without_expose = prompts
+    assert "internal__finish_task" in with_expose
+    assert "ids, count" in with_expose
+    assert 'status="failed"' in with_expose
+    assert "internal__finish_task" in without_expose
+    assert 'status="failed"' in without_expose
+
+
+@pytest.mark.asyncio
+async def test_expose_nudge_does_not_ask_to_infer_values(mock_agent, runtime):
+    """A missing value must stay missing, not be guessed from narration."""
+    prompts = []
+
+    async def query(prompt, **kwargs):
+        prompts.append(prompt)
+        return "Now writing the final report." if len(prompts) == 1 else '```json\n{"brief_report": null}\n```'
+
+    mock_agent.query = AsyncMock(side_effect=query)
+    result = await runtime.execute(
+        WorkflowNode(body=[TaskNode(task_id="brief", goal="Write the brief.", expose=["brief_report"])])
+    )
+
+    nudge = prompts[1]
+    assert "best judgement" not in nudge
+    assert "null" in nudge
+    assert result.variables["brief_report"] is None
+
+
+# --- Task limits: a task that runs out of time or turns is unfinished ---
+
+
+@pytest.mark.asyncio
+async def test_task_hitting_its_limit_without_finishing_fails(mock_agent, runtime):
+    from ai_assist.query_errors import QueryIncompleteError
+
+    async def query(prompt, **kwargs):
+        assert kwargs.get("raise_on_incomplete") is True
+        raise QueryIncompleteError("Task timeout after 600 seconds (max: 600s)")
+
+    mock_agent.query = AsyncMock(side_effect=query)
+    workflow = WorkflowNode(
+        body=[
+            TaskNode(task_id="candidates", goal="Build candidates.", expose=["candidates_path"]),
+            TaskNode(task_id="evaluate", goal="Evaluate ${candidates_path}."),
+        ]
+    )
+    result = await runtime.execute(workflow)
+
+    assert result.success is False
+    assert [o.status for o in result.task_outcomes] == ["failed"]
+    assert "stopped before finishing" in result.task_outcomes[0].summary
+    assert "Task timeout" in result.task_outcomes[0].summary
+    mock_agent.query.assert_called_once()  # no expose nudge, next task never ran
+
+
+@pytest.mark.asyncio
+async def test_task_hitting_its_limit_after_reporting_keeps_the_report(mock_agent, runtime):
+    from ai_assist.query_errors import QueryIncompleteError
+
+    async def query(prompt, **kwargs):
+        await mock_agent.task_result_tool.execute_tool(
+            "finish_task", {"status": "success", "values": {"candidates_path": "/tmp/c.md"}}
+        )
+        raise QueryIncompleteError("Maximum turns reached without final answer")
+
+    mock_agent.query = AsyncMock(side_effect=query)
+    result = await runtime.execute(
+        WorkflowNode(body=[TaskNode(task_id="candidates", goal="Build.", expose=["candidates_path"])])
+    )
+
+    assert result.success is True
+    assert result.variables["candidates_path"] == "/tmp/c.md"
+
+
+@pytest.mark.asyncio
+async def test_fail_message_interpolates_variables(runtime):
+    workflow = WorkflowNode(body=[FailNode(message="No valid channel under ${root} for ${ids}")])
+
+    with pytest.raises(AWLRuntimeError, match=r"^No valid channel under /data/transcripts for a,b$"):
+        await runtime.execute(workflow, variables={"root": "/data/transcripts", "ids": "a,b"})
+
+
+def test_validate_warns_on_undefined_variable_in_fail_message():
+    workflow = WorkflowNode(body=[FailNode(message="Nothing found under ${missing_root}")])
+
+    warnings = validate_workflow_variables(workflow)
+
+    assert warnings == ["@fail: variable 'missing_root' used before definition"]
+
+
+@pytest.mark.asyncio
+async def test_task_without_max_time_has_no_time_limit(mock_agent, runtime):
+    from ai_assist.agent import NO_TIME_LIMIT
+
+    mock_agent.query.return_value = "Done."
+    await runtime.execute(
+        WorkflowNode(body=[TaskNode(task_id="t1", goal="Do."), TaskNode(task_id="t2", goal="Do.", max_time=900)])
+    )
+
+    task_calls = [c for c in mock_agent.query.call_args_list if "You are executing task" in c[0][0]]
+    assert task_calls[0].kwargs["max_time_seconds"] == NO_TIME_LIMIT
+    assert task_calls[1].kwargs["max_time_seconds"] == 900

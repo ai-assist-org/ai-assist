@@ -29,6 +29,10 @@ EFFORT_NONE: Literal["no"] = "no"
 EffortSetting = Literal["low", "medium", "high", "xhigh", "max", "no"]
 EFFORT_SETTINGS: tuple[EffortSetting, ...] = (*EFFORT_LEVELS, EFFORT_NONE)
 
+# Pass as max_time_seconds to run a query with no wall-clock limit (AWL tasks
+# without max_time=, scheduled actions); None means the default limit.
+NO_TIME_LIMIT = 0
+
 
 def _split_model_effort(value: str | None) -> tuple[str | None, EffortSetting | None]:
     """Split a model's optional ``model:effort`` suffix (effort may be ``no``)."""
@@ -506,7 +510,9 @@ class AiAssistConfig(BaseModel):
         if self.http_referer:
             headers["HTTP-Referer"] = self.http_referer
         if self.x_title:
+            # OpenRouter's newer name for the app title; X-Title is kept for other endpoints.
             headers["X-Title"] = self.x_title
+            headers["X-OpenRouter-Title"] = self.x_title
         return headers
 
     @property

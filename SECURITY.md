@@ -87,7 +87,7 @@ MCP servers can change their tool definitions after initial approval (rug-pull a
 4. A warning is printed and logged; `/mcp/review [server]` shows a diff of each change and approves tools one by one
 5. In non-interactive runs (`/monitor`) changed tools stay hidden until approved in an interactive session
 
-Approved definitions are stored in `~/.ai-assist/mcp-tool-definitions.json`, a protected config file, so changes between runs (e.g. an MCP server update) are detected too. Deleting a server's entry from that file re-trusts it on the next connection.
+Approved definitions are stored in `~/.ai-assist/mcp-tool-definitions.json`, a protected config file, so changes between runs (e.g. an MCP server update) are detected too. The monitor service and interactive sessions share this file: each approval is merged into the current file under a lock, and each review re-reads it, so an approval made in one process is seen by the others. Deleting a server's entry from that file re-trusts it on the next connection.
 
 ## 4. Script Execution Sandboxing
 

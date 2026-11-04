@@ -60,8 +60,13 @@ User → CLI (main.py) → AiAssistAgent (agent.py) → Claude API
 Both interactive and collected responses use the streaming agent loop in `agent.py`.
 `query()` collects the final answer from `query_streaming()`; keep execution logic in
 the shared streaming path. Both entry points default to a 600-second time budget
-(`AI_ASSIST_QUERY_TIMEOUT`). Time spent waiting on an approval prompt (`pause_timeout()`)
-doesn't count. An AWL script run from a tool call doesn't count against the enclosing
+(`AI_ASSIST_QUERY_TIMEOUT`); `max_time_seconds=NO_TIME_LIMIT` (AWL tasks without `max_time=`,
+scheduled actions) removes it. Time spent waiting on an approval prompt (`pause_timeout()`)
+doesn't count. Work limits wind a query down instead of cutting it off: the turn budget is
+soft (at `max_turns` the model is told to wrap up and gets up to 50% more turns), and when
+that runs out or the time budget passes (checked between turns) the model gets one final
+turn, offered only `internal__finish_task` in an AWL task and no tools otherwise. The hard
+time cut-off is a backstop at 1.5x the budget (`_HARD_TIME_LIMIT_FACTOR`). A model API failure comes back from `query()` as error text unless the caller passes `raise_on_api_error=True` (AWL tasks and scheduled actions do, also via `execute_mcp_prompt`), which raises `QueryAPIError` instead. Similarly `raise_on_incomplete=True` (AWL tasks) raises `QueryIncompleteError` when the query stops without a final answer (tool loop, no progress, refusal, an AWL task that still doesn't report after its final turn); both live in `query_errors.py`. A model turn whose stream drops mid-reply (transport/SSL/connection-reset error) is retried up to twice (`_STREAM_RETRY_BACKOFF_SECONDS`) without consuming the turn budget, but only if the turn hasn't added to the conversation yet. An AWL script run from a tool call doesn't count against the enclosing
 query either (`exempt_enclosing_queries_from_timeout()`): the script bounds itself per
 task, and its tasks keep their own budgets.
 
@@ -72,6 +77,7 @@ AWL scripts define intent-driven workflows where the agent autonomously selects 
 - `@task <name> [@hints] [max_tool_calls=N] [max_time=N] [model=<level>] [effort=<level>]`: Defines a goal for the agent to achieve, exposing variables. `model=` selects an abstract capability level for this task — `low`, `medium`, `high`, or `default` (e.g., `low` for cheap data gathering, `high` for deep analysis); validated at load time. Each level maps to a concrete model via `AI_ASSIST_MODEL_LOW`/`_MEDIUM`/`_HIGH`, falling back to `default` (the session model, `AI_ASSIST_MODEL`) when unset. `default` and `high` fall back to each other, so setting only one is enough. Omitting `model=` uses `default`. `effort=` overrides the reasoning effort for this task (`low`/`medium`/`high`/`xhigh`/`max`, or `no` to send none).
 
 **Effort configuration**: Each `AI_ASSIST_MODEL*` variable accepts an optional `:effort` suffix — the session model, the AWL tiers (`AI_ASSIST_MODEL_LOW`/`_MEDIUM`/`_HIGH`), and the per-role overrides (`AI_ASSIST_SYNTHESIS_MODEL`, `AI_ASSIST_COMPACTION_MODEL`) — as does `AI_ASSIST_EFFORT` for the session default. Values are `low`/`medium`/`high`/`xhigh`/`max`, or `no` (send no effort — for models that reject the parameter). Resolution is `effort=` override (AWL only) → the model var's own suffix → the session effort; a model var with no suffix inherits the session effort, and `no` opts it out. AWL tiers resolve via `resolve_tier` (`awl_runtime.py`); the synthesis/compaction roles via `AiAssistAgent._model_for` / `_effort_for`. Effort is omitted from the request when unset or `no`. Run `ai-assist /doctor` to check every configured model+effort with a cheap live query (resolved exactly as the runtime resolves it), plus the jev goal-success service when configured.
+- **Task outcome**: while a task runs, the agent gets `internal__finish_task` (`task_result_tool.py`, offered by `_build_api_tools` only when active). It reports `status="success"` with the exposed `values`, or `status="failed"` with a reason, which fails the task through the normal failure path. A turn that ends without calling it gets one nudge to continue or report (`_finish_nudge_fired`); after that, values are extracted from the reply, and missing ones stay `None` (the expose nudge must not guess). Limitation: a nested non-AWL query made during a task also sees the tool.
 - `@if <condition>`: Conditional execution with Python-like expressions
 - `@loop <var> as <item> limit=N collect=<var>`: Iteration with map-reduce pattern
 - `${var}`: Variable interpolation in goals and text

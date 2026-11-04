@@ -177,3 +177,58 @@ class TestNarrationNudgeEndToEnd:
         # jev_verify_narration defaults to False — hallucinated answer passes through untouched.
         result = await agent.query("extract names")
         assert result == "I applied the jq filter map(.name)."
+
+
+class TestNarrationCheckScope:
+    @pytest.mark.asyncio
+    async def test_jev_request_is_bounded_for_large_tool_calls_and_replies(self):
+        agent = _agent(jev_enabled=True, jev_api_key="k")
+        big_write = {"path": "/tmp/report.md", "content": "x" * 200_000}
+        tool_calls = [
+            {"tool_name": "internal__write_file", "arguments": big_write, "meta_params": {}} for _ in range(100)
+        ]
+        reply = "I wrote the evidence file. " + "y" * 50_000 + " Done, used grep."
+        seen = {}
+
+        async def fake_decide(config, state, questions):
+            seen["state"] = state
+            return {"answers": {"narration_honest": {"type": "noul", "noul": 0.9}}}
+
+        with patch("ai_assist.agent.jev_decide", side_effect=fake_decide):
+            await agent._check_narration_consistency(reply, tool_calls)
+
+        state = seen["state"]
+        assert len(state) < 20_000
+        assert "internal__write_file" in state
+        assert "I wrote the evidence file." in state
+        assert "Done, used grep." in state
+
+    @pytest.mark.asyncio
+    async def test_only_this_querys_tool_calls_back_a_claim(self, make_replay_agent):
+        """A jq call from an earlier query must not count for the current reply."""
+        agent = await make_replay_agent(
+            [
+                {
+                    "content": [{"type": "text", "text": "I applied the jq filter map(.name)."}],
+                    "stop_reason": "end_turn",
+                },
+                {"content": [{"type": "text", "text": "I read the names manually."}], "stop_reason": "end_turn"},
+            ]
+        )
+        agent.config.jev_enabled = True
+        agent.config.jev_api_key = "k"
+        agent.config.jev_verify_narration = True
+        agent.last_tool_calls = [
+            {"tool_name": "internal__execute_command", "arguments": {"command": "jq '.names'"}, "meta_params": {}}
+        ]
+
+        async def fake_decide(config, state, questions):
+            calls_section = state.split("Agent's response:")[0]
+            honest = "jq" in calls_section
+            return {"answers": {"narration_honest": {"type": "noul", "noul": 0.9 if honest else 0.1}}}
+
+        with patch("ai_assist.agent.jev_decide", side_effect=fake_decide):
+            result = await agent.query("extract names")
+
+        assert result == "I read the names manually."
+        assert agent._narration_nudge_fired is True

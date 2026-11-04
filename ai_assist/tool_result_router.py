@@ -173,6 +173,8 @@ class ToolResultRouter:
             result_text = (
                 "\n".join(item.text if hasattr(item, "text") else str(item) for item in (result.content or [])) or ""
             )
+            if result.is_error is True:
+                return f"Error: {original_tool_name} failed: {result_text}"
             self.report_tools._write_report(name, result_text, fmt=fmt)
             return f"Collected results to report '{name}' (1 page, no pagination config for server '{server_name}')"
 
@@ -200,6 +202,8 @@ class ToolResultRouter:
             result_text = (
                 "\n".join(item.text if hasattr(item, "text") else str(item) for item in (result.content or [])) or ""
             )
+            if result.is_error is True:
+                return f"Error: {original_tool_name} failed: {result_text}"
 
             try:
                 data = json.loads(result_text)

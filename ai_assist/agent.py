@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import re
+import ssl
 import time
 import uuid
 from contextlib import aclosing, asynccontextmanager, suppress
@@ -21,7 +22,7 @@ from mcp.client.extension import NotificationBinding
 
 from .action_tools import ActionTools
 from .audit import AuditLogger
-from .config import AiAssistConfig, MCPChannelConfig, MCPServerConfig, get_config_dir
+from .config import NO_TIME_LIMIT, AiAssistConfig, MCPChannelConfig, MCPServerConfig, get_config_dir
 from .effort import effort_output_config
 from .event_source_mcp import EVENT_NOTIFICATION_METHOD, MCPEventEnvelope
 from .filesystem_tools import FilesystemTools
@@ -38,6 +39,7 @@ from .mlflow_tracing import end_span, record_query_trace, setup_mlflow, start_qu
 from .output import console_print
 from .plugins_loader import PluginsLoader
 from .plugins_manager import PluginsManager
+from .query_errors import QueryAPIError, QueryIncompleteError
 from .redaction import Redactor
 from .report_tools import ReportTools
 from .script_execution_tools import ScriptExecutionTools
@@ -53,6 +55,7 @@ from .skills_loader import SkillsLoader
 from .skills_manager import SkillsManager
 from .synthesis_engine import SynthesisEngine
 from .system_prompt_builder import SystemPromptBuilder
+from .task_result_tool import TaskResultTool
 from .think_tool import ThinkTool
 from .tool_result_router import (
     ToolResultRouter,
@@ -73,6 +76,40 @@ logger = logging.getLogger(__name__)
 
 
 _STREAM_EXHAUSTED = object()
+
+# A time budget is checked between turns, so the model can still wind down; the
+# hard cut-off, a backstop against a turn that never ends, comes later.
+_HARD_TIME_LIMIT_FACTOR = 1.5
+
+_FINAL_TURN_ANSWER = (
+    "Your budget for this request is used up. Do not call any more tools: give your final "
+    "answer now with what you have, and say what is incomplete."
+)
+_FINAL_TURN_REPORT = (
+    "Your budget for this task is used up. Do not continue the work: call internal__finish_task "
+    'now, with status "success" and the values if the goal is achieved, otherwise status '
+    '"failed" and what is missing.'
+)
+
+# Waits before retrying a model turn whose stream dropped mid-reply; one entry
+# per retry. The SDK's own retries only cover failures before the response starts.
+_STREAM_RETRY_BACKOFF_SECONDS = (1, 3)
+
+
+def _is_transient_stream_error(exc: BaseException) -> bool:
+    """Whether ``exc`` (or an exception it wraps) is a dropped connection worth retrying.
+
+    Matches transport errors by class name so both httpx and its httpx2 fork
+    (used by the Anthropic SDK) are covered without importing either.
+    """
+    current: BaseException | None = exc
+    while current is not None:
+        if isinstance(current, ssl.SSLError | ConnectionError):
+            return True
+        if any(cls.__name__ == "TransportError" for cls in type(current).__mro__):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
 
 
 def _next_stream_event(iterator):
@@ -155,6 +192,21 @@ def _meta_params_for_tool(tool_name: str, jq_available: bool) -> list[str]:
 # available. Covers the one confirmed pattern: claiming jq/__jq_filter usage
 # that never actually happened.
 _JQ_CLAIM_RE = re.compile(r"jq[\s_-]*filter|__jq_filter|\bjq\s+-|\|\s*jq\b", re.IGNORECASE)
+
+# Bounds on what the jev narration check sends: the question is about which
+# tools/commands were used, so the start of each call is enough.
+_NARRATION_CALL_CHARS = 300
+_NARRATION_MAX_CALLS = 40
+_NARRATION_REPLY_CHARS = 6_000
+
+
+def _bounded_text(text: str, limit: int) -> str:
+    """Keep the head and tail of ``text`` within ``limit`` characters."""
+    if len(text) <= limit:
+        return text
+    half = limit // 2
+    return f"{text[:half]}\n[... {len(text) - limit:,} characters omitted ...]\n{text[-half:]}"
+
 
 _NARRATION_NUDGE_MESSAGE = (
     "Your last answer describes using a command, filter, or tool that doesn't match your "
@@ -302,6 +354,12 @@ class AiAssistAgent:
         "claude-3-haiku-20240307": 4096,
         # GLM 5.3, hosted via the EnMaaS gateway
         "rits/zai-org/glm-5-3": 65536,
+        # Via OpenRouter (limits from its model list). DeepSeek's cap is the lowest
+        # across the providers OpenRouter may route to; other V4 variants are
+        # matched by name in get_max_tokens.
+        "deepseek/deepseek-v4.1-flash": 384000,
+        "z-ai/glm-5.3-flash": 131072,
+        "z-ai/glm-4.7-flash": 117964,
     }
 
     # Model-specific context window sizes (input tokens)
@@ -326,6 +384,10 @@ class AiAssistAgent:
         "claude-3-haiku": 200000,
         # GLM 5.3, hosted via the EnMaaS gateway
         "rits/zai-org/glm-5-3": 262144,
+        # Via OpenRouter (limits from its model list)
+        "deepseek-v4": 1048576,
+        "glm-5.3-flash": 1048576,
+        "glm-4.7-flash": 200000,
     }
 
     CONTEXT_BUDGET_WARNING_THRESHOLD = 0.8
@@ -400,6 +462,7 @@ class AiAssistAgent:
 
         # Initialize think tool (planning/reasoning scratchpad)
         self.think_tool = ThinkTool()
+        self.task_result_tool = TaskResultTool()  # offered only while an AWL task runs
 
         # Initialize JSON query tool (requires jq)
         self.json_tools = JsonTools(filesystem_tools=self.filesystem_tools)
@@ -580,6 +643,8 @@ class AiAssistAgent:
                 max_tokens = 64000
             elif "sonnet-4" in model.lower() or "haiku-4" in model.lower() or "3-5-" in model:
                 max_tokens = 8192
+            elif "deepseek-v4" in model.lower():
+                max_tokens = 384000  # DeepSeek V4 family, lowest cap across OpenRouter providers
             else:
                 # Conservative default for unknown models
                 max_tokens = 4096
@@ -1240,6 +1305,8 @@ class AiAssistAgent:
             from .plan_mode import get_planning_tools
 
             source_tools = get_planning_tools(self.available_tools)
+        if self.task_result_tool.active:
+            source_tools = [*source_tools, *self.task_result_tool.get_tool_definitions()]
 
         jq_available = bool(self.json_tools.jq_path)
         api_tools = []
@@ -1316,7 +1383,7 @@ class AiAssistAgent:
         if self.config.model_context_window:
             return self.config.model_context_window
 
-        model = self.config.model
+        model = self.config.model.lower()  # e.g. rits/deepseek-ai/DeepSeek-V4.1-Flash-1017
         for key, size in self.MODEL_CONTEXT_WINDOWS.items():
             if key in model:
                 return size
@@ -1595,9 +1662,9 @@ class AiAssistAgent:
             cleaned.append(cleaned_msg)
         return cleaned
 
-    async def _check_narration_consistency(self, final_text: str) -> str | None:
+    async def _check_narration_consistency(self, final_text: str, tool_calls: list[dict] | None = None) -> str | None:
         """Check whether the final response claims tool/filter usage that never
-        happened this query, per self.last_tool_calls.
+        happened this query, per ``tool_calls`` (default: self.last_tool_calls).
 
         Uses jev (fast, cheap, general — catches any tool/claim mismatch) when
         configured; otherwise falls back to a narrower keyword check covering the
@@ -1605,15 +1672,22 @@ class AiAssistAgent:
         applied). Returns a corrective nudge message, or None if the response
         looks consistent (or the check itself was inconclusive/unavailable).
         """
+        if tool_calls is None:
+            tool_calls = self.last_tool_calls
         if jev_configured(self.config):
-            calls_summary = (
-                "\n".join(
-                    f"- {tc['tool_name']}({tc.get('arguments', {})}) meta={tc.get('meta_params') or '(none)'}"
-                    for tc in self.last_tool_calls
+            recent = tool_calls[-_NARRATION_MAX_CALLS:]
+            lines = [
+                _bounded_text(
+                    f"- {tc['tool_name']}({tc.get('arguments', {})}) meta={tc.get('meta_params') or '(none)'}",
+                    _NARRATION_CALL_CHARS,
                 )
-                or "(no tool calls made)"
-            )
-            state = f"Tool calls made this query:\n{calls_summary}\n\nAgent's response:\n{final_text}"
+                for tc in recent
+            ]
+            if len(tool_calls) > len(recent):
+                lines.insert(0, f"({len(tool_calls) - len(recent)} earlier tool calls omitted)")
+            calls_summary = "\n".join(lines) or "(no tool calls made)"
+            reply = _bounded_text(final_text, _NARRATION_REPLY_CHARS)
+            state = f"Tool calls made this query:\n{calls_summary}\n\nAgent's response:\n{reply}"
             question = (
                 "The response may claim it used a specific command, tool, or filter (e.g. jq, "
                 "__jq_filter, grep) to process data. Judge ONLY by literal presence: does that exact "
@@ -1637,7 +1711,7 @@ class AiAssistAgent:
         if _JQ_CLAIM_RE.search(final_text):
             used_jq = any(
                 "__jq_filter" in (tc.get("meta_params") or {}) or "jq" in str(tc.get("arguments", {})).lower()
-                for tc in self.last_tool_calls
+                for tc in tool_calls
             )
             if not used_jq:
                 return _NARRATION_NUDGE_MESSAGE
@@ -1702,8 +1776,19 @@ class AiAssistAgent:
         max_turns: int = 100,
         progress_callback=None,
         max_time_seconds: int | None = None,
+        *,
+        raise_on_api_error: bool = False,
+        raise_on_incomplete: bool = False,
     ) -> str:
-        """Collect the final answer from the shared streaming execution path."""
+        """Collect the final answer from the shared streaming execution path.
+
+        A model API failure is returned as its error message, like any other
+        error, unless ``raise_on_api_error`` is set: then it raises
+        ``QueryAPIError`` so the caller cannot mistake it for an answer.
+        Likewise ``raise_on_incomplete`` raises ``QueryIncompleteError`` when the
+        query stops without a final answer for another reason (time or turn
+        limit, tool loop, no progress, refusal).
+        """
         chunks: list[str] = []
         async with aclosing(
             self.query_streaming(
@@ -1720,6 +1805,10 @@ class AiAssistAgent:
                 elif event["type"] == "done":
                     return event["text"]
                 elif event["type"] == "error":
+                    if raise_on_api_error and event.get("api_error"):
+                        raise QueryAPIError(event["message"])
+                    if raise_on_incomplete and not event.get("api_error"):
+                        raise QueryIncompleteError(event["message"])
                     return event["message"]
                 elif event["type"] == "tool_use":
                     chunks.clear()
@@ -1739,10 +1828,21 @@ class AiAssistAgent:
         """Yield text, tool_use, done (with final text), error, or cancelled events.
 
         Queries have a config.default_query_timeout-second limit (default 600s)
-        unless max_time_seconds is provided. Time spent blocked on a user
-        approval prompt (see pause_timeout()) doesn't count against that limit.
+        unless max_time_seconds is provided; NO_TIME_LIMIT removes the limit.
+        Time spent blocked on a user approval prompt (see pause_timeout())
+        doesn't count against that limit. The limit is checked between turns
+        (the model then gets a final turn); this wrapper only cuts off a query
+        that runs well past it.
         """
         timeout = max_time_seconds if max_time_seconds is not None else self.config.default_query_timeout
+        if timeout == NO_TIME_LIMIT:
+            async with aclosing(
+                self._query_streaming_inner(prompt, messages, max_turns, progress_callback, cancel_event, NO_TIME_LIMIT)
+            ) as stream:
+                async for event in stream:
+                    yield event
+            return
+        hard_timeout = timeout * _HARD_TIME_LIMIT_FACTOR
         depth = self._query_depth
         if depth == 0:
             self._timeout_pause_seconds = 0.0
@@ -1757,7 +1857,7 @@ class AiAssistAgent:
                 try:
                     while not next_event.done():
                         remaining = (
-                            timeout
+                            hard_timeout
                             + self._timeout_pause_seconds
                             + self._timeout_exempt_seconds(depth)
                             - (time.monotonic() - start_monotonic)
@@ -1885,6 +1985,8 @@ class AiAssistAgent:
             messages = self._strip_stale_thinking_blocks(messages)
         if is_outermost and max_time_seconds:
             self._query_deadline = time.time() + max_time_seconds
+        if is_outermost:
+            self._query_unlimited = max_time_seconds == NO_TIME_LIMIT
         query_text = prompt or ""
         start_time = time.time()
         accumulated_text = []
@@ -1971,6 +2073,9 @@ class AiAssistAgent:
             self._wrapup_nudge_fired = False
             self._loop_nudge_fired = False
             self._narration_nudge_fired = False
+            # last_tool_calls is only cleared by the interactive UI; this query's calls start here.
+            query_tool_calls_start = len(self.last_tool_calls)
+            self._finish_nudge_fired = False
 
             # Store messages for introspection tools to access
             self._conversation_messages = messages
@@ -1981,10 +2086,21 @@ class AiAssistAgent:
             if progress_callback:
                 progress_callback("thinking", 0, max_turns, None)
 
-            for turn in range(max_turns):
+            # A while loop (not range) so a dropped stream can redo the same turn
+            # without consuming the turn budget.
+            turn = -1
+            stream_retries = 0
+            # The turn budget is soft: at max_turns the model is told to wrap up and
+            # gets up to 50% more turns; then, as when the time budget passes, one
+            # final turn to answer (or report through internal__finish_task).
+            turn_budget = max_turns
+            budget_extended = False
+            final_turn = False
+            final_turn_prompted = False
+            while True:
+                turn += 1
                 self._record_query_event("turn_started", turn=turn + 1)
-                # Check time-based timeout (only when max_time_seconds is explicitly set)
-                if max_time_seconds:
+                if not final_turn and max_time_seconds:
                     elapsed = (
                         time.time()
                         - start_time
@@ -1992,15 +2108,41 @@ class AiAssistAgent:
                         - self._timeout_exempt_seconds(budget_depth)
                     )
                     if elapsed > max_time_seconds:
-                        self._last_turn_count = turn + 1
                         logger.warning(
-                            "Time budget exhausted after %d seconds (max: %ds)", int(elapsed), max_time_seconds
+                            "Time budget exhausted after %d seconds (max: %ds); asking for a final answer",
+                            int(elapsed),
+                            max_time_seconds,
                         )
-                        yield {
-                            "type": "error",
-                            "message": f"Task timeout after {int(elapsed)} seconds (max: {max_time_seconds}s)",
+                        final_turn = True
+                if not final_turn and turn >= turn_budget:
+                    if not budget_extended:
+                        budget_extended = True
+                        extra = max(1, max_turns // 2)
+                        turn_budget += extra
+                        logger.warning("Turn budget of %d reached; allowing %d more to wrap up", max_turns, extra)
+                        messages.append(
+                            {
+                                "role": "user",
+                                "content": (
+                                    f"You have used your budget of {max_turns} turns. Wrap up: finish only the "
+                                    f"essential remaining work within at most {extra} more turns, then give "
+                                    "your result."
+                                ),
+                            }
+                        )
+                    else:
+                        logger.warning("Extended turn budget used up; asking for a final answer")
+                        final_turn = True
+                if final_turn and not final_turn_prompted:
+                    final_turn_prompted = True
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": _FINAL_TURN_REPORT if self.task_result_tool.active else _FINAL_TURN_ANSWER,
                         }
-                        return
+                    )
+                # On the final turn, only internal__finish_task (in an AWL task) is offered.
+                turn_tools = [t for t in api_tools if t["name"] == "internal__finish_task"] if final_turn else api_tools
 
                 # Check cancellation before each turn
                 if cancel_event and cancel_event.is_set():
@@ -2059,6 +2201,19 @@ class AiAssistAgent:
                     messages.pop(0)
                     total_chars = sum(len(str(m.get("content", ""))) for m in messages)
 
+                # Newer models reject assistant "prefill": the request must end with a
+                # user message. Log the culprit's role sequence, and add a user turn.
+                if messages and messages[-1].get("role") != "user":
+                    logger.warning(
+                        "Model request ends with an %s message (roles: %s); adding a user turn",
+                        messages[-1].get("role"),
+                        ", ".join(str(m.get("role")) for m in messages[-8:]),
+                    )
+                    messages.append({"role": "user", "content": "Continue."})
+
+                # A retry is only safe while this turn hasn't added to the conversation.
+                messages_before_turn = len(messages)
+
                 # The SDK stream is synchronous. Running each blocking operation
                 # in a worker keeps the event loop responsive to cancellation and
                 # makes first-byte and idle timeouts enforceable.
@@ -2067,7 +2222,7 @@ class AiAssistAgent:
                     idle_timeout = getattr(self.config, "model_stream_idle_timeout_seconds", 120)
 
                     def create_stream(
-                        system: Any = system_prompt, tools: Any = api_tools, request_messages: Any = messages
+                        system: Any = system_prompt, tools: Any = turn_tools, request_messages: Any = messages
                     ) -> Any:
                         return self.anthropic.messages.stream(
                             model=self.config.model,
@@ -2152,6 +2307,18 @@ class AiAssistAgent:
                             yield {"type": "cancelled"}
                             return
 
+                        if final_turn:
+                            self._last_turn_count = turn + 1
+                            if self.task_result_tool.active and not self.task_result_tool.reported:
+                                yield {
+                                    "type": "error",
+                                    "message": "Stopped at its budget without reporting the task outcome",
+                                }
+                                return
+                            final_text = "".join(b.text for b in final_message.content if b.type == "text")
+                            yield {"type": "done", "turns": turn + 1, "text": final_text}
+                            return
+
                         if loop_detected:
                             tool_blocks = [b for b in final_message.content if b.type == "tool_use"]
                             loop_name = tool_blocks[-1].name if tool_blocks else "unknown"
@@ -2192,6 +2359,8 @@ class AiAssistAgent:
                         if not tool_results:
                             final_text = "".join(block.text for block in final_message.content if block.type == "text")
                             if not final_text.strip():
+                                # Drop the empty reply so the retry still ends with the user's turn.
+                                messages.pop()
                                 no_progress_count += 1
                                 if no_progress_count >= 10:
                                     self._last_turn_count = turn + 1
@@ -2202,8 +2371,33 @@ class AiAssistAgent:
                                     return
                                 continue
 
+                            # An AWL task turn that ends without internal__finish_task is
+                            # often a model narrating its next step ("Now writing the
+                            # report.") and stopping: nudge once to continue or report.
+                            if (
+                                self.task_result_tool.active
+                                and not self.task_result_tool.reported
+                                and not self._finish_nudge_fired
+                            ):
+                                self._finish_nudge_fired = True
+                                logger.warning("Task turn ended without internal__finish_task; nudging to continue")
+                                messages.append(
+                                    {
+                                        "role": "user",
+                                        "content": (
+                                            "You ended your turn without calling internal__finish_task. If work "
+                                            "remains, continue it now; otherwise call internal__finish_task "
+                                            '(status "success" with the values, or "failed" with a reason).'
+                                        ),
+                                    }
+                                )
+                                no_progress_count = 0
+                                continue
+
                             if self.config.jev_verify_narration and not self._narration_nudge_fired:
-                                nudge = await self._check_narration_consistency(final_text)
+                                nudge = await self._check_narration_consistency(
+                                    final_text, self.last_tool_calls[query_tool_calls_start:]
+                                )
                                 if nudge:
                                     self._narration_nudge_fired = True
                                     logger.warning("Narration inconsistency detected; nudging to revise")
@@ -2243,10 +2437,29 @@ class AiAssistAgent:
                     self._record_query_event("model_stream_timeout", turn=turn + 1)
                     yield {
                         "type": "error",
+                        "api_error": True,
                         "message": "Model stream timed out waiting for progress. Please retry the query.",
                     }
                     return
                 except Exception as e:
+                    if (
+                        _is_transient_stream_error(e)
+                        and stream_retries < len(_STREAM_RETRY_BACKOFF_SECONDS)
+                        and len(messages) == messages_before_turn
+                    ):
+                        backoff = _STREAM_RETRY_BACKOFF_SECONDS[stream_retries]
+                        stream_retries += 1
+                        logger.warning(
+                            "Model stream dropped (%s); retrying turn %d (%d/%d)",
+                            e,
+                            turn + 1,
+                            stream_retries,
+                            len(_STREAM_RETRY_BACKOFF_SECONDS),
+                        )
+                        self._record_query_event("model_stream_retry", turn=turn + 1, detail=type(e).__name__)
+                        await asyncio.sleep(backoff)
+                        turn -= 1
+                        continue
                     logger.exception("Query execution failed")
                     self._record_query_event("query_error", turn=turn + 1, detail=type(e).__name__)
                     # Handle API errors
@@ -2256,6 +2469,7 @@ class AiAssistAgent:
                         logger.warning("API overloaded: %s", error_msg)
                         yield {
                             "type": "error",
+                            "api_error": True,
                             "message": (
                                 "The API is currently overloaded (all retry attempts failed). "
                                 "This is a temporary capacity issue on the server side. "
@@ -2277,6 +2491,7 @@ class AiAssistAgent:
 
                         yield {
                             "type": "error",
+                            "api_error": True,
                             "message": (
                                 f"The context is too large.\n\n"
                                 f"Context breakdown (estimated):\n"
@@ -2295,28 +2510,27 @@ class AiAssistAgent:
                     elif isinstance(e, RateLimitError):
                         yield {
                             "type": "error",
+                            "api_error": True,
                             "message": f"API Rate Limit Error: {error_msg}\n\nPlease wait before retrying.",
                         }
                     elif isinstance(e, APIConnectionError):
                         yield {
                             "type": "error",
+                            "api_error": True,
                             "message": f"API Connection Error: {error_msg}\n\nCheck network connectivity and retry.",
                         }
                     elif isinstance(e, APIError):
                         yield {
                             "type": "error",
+                            "api_error": True,
                             "message": f"API Error: {error_msg}\n\nPlease check the error message and adjust your request accordingly.",
                         }
                     else:
                         logger.warning("API error: %s", error_msg)
-                        yield {"type": "error", "message": error_msg}
+                        yield {"type": "error", "message": f"API Error: {error_msg}", "api_error": True}
 
                     return
 
-            # Max turns reached
-            self._last_turn_count = max_turns
-            logger.warning("Tool budget exhausted: reached maximum %d turns without final answer", max_turns)
-            yield {"type": "error", "message": "Maximum turns reached without final answer"}
         finally:
             if is_outermost:
                 self._record_query_event("query_finished", turn=self._last_turn_count)
@@ -2329,6 +2543,7 @@ class AiAssistAgent:
             self._query_depth -= 1
             if is_outermost:
                 self._query_deadline = None
+                self._query_unlimited = False
             else:
                 self._turn_token_usage = saved_token_usage
                 self.last_tool_calls = saved_tool_calls
@@ -2340,6 +2555,7 @@ class AiAssistAgent:
         arguments: dict[str, Any] | None = None,
         max_turns: int = 100,
         max_time_seconds: int | None = None,
+        raise_on_api_error: bool = False,
     ) -> str:
         """Execute an MCP prompt by retrieving it from the server and feeding it to Claude
 
@@ -2350,12 +2566,15 @@ class AiAssistAgent:
             max_turns: Maximum agentic turns
             max_time_seconds: Maximum wall-clock time in seconds. If None, inherits
                 remaining time from the outer query deadline when available.
+            raise_on_api_error: Raise ``QueryAPIError`` on a model API failure
+                instead of returning the partial response (see ``query``).
 
         Returns:
             Claude's response after executing the prompt instructions
 
         Raises:
             ValueError: If server/prompt not found or arguments invalid
+            QueryAPIError: If the model API failed and ``raise_on_api_error`` is set
         """
         # Validate server exists
         if server_name not in self.sessions:
@@ -2415,6 +2634,8 @@ class AiAssistAgent:
             # Forward active cancel_event so Escape works during inner execution
             # Inherit remaining time from outer query deadline if no explicit timeout
             effective_timeout = max_time_seconds
+            if effective_timeout is None and getattr(self, "_query_unlimited", False):
+                effective_timeout = NO_TIME_LIMIT
             if effective_timeout is None and self._query_deadline is not None:
                 effective_timeout = max(
                     1,
@@ -2442,6 +2663,8 @@ class AiAssistAgent:
                     elif chunk.get("type") in ("error", "cancelled"):
                         if self.on_inner_execution:
                             self.on_inner_execution(chunk)
+                        if raise_on_api_error and chunk.get("api_error"):
+                            raise QueryAPIError(chunk["message"])
                         break
                     elif chunk.get("type") == "done":
                         break
@@ -2855,6 +3078,8 @@ class AiAssistAgent:
                     result_text = await self.script_execution_tools.execute_tool(original_tool_name, arguments)
                 elif original_tool_name in think_tools:
                     result_text = await self.think_tool.execute_tool(original_tool_name, arguments)
+                elif original_tool_name == "finish_task":
+                    result_text = await self.task_result_tool.execute_tool(original_tool_name, arguments)
                 elif original_tool_name in json_tool_names:
                     result_text = await self.json_tools.execute_tool(original_tool_name, arguments)
                 elif original_tool_name in jev_tool_names:
@@ -2949,7 +3174,7 @@ class AiAssistAgent:
                 summary = await self.tool_result_router.collect_paginated_to_report(
                     server_name, original_tool_name, arguments, collect_to_report
                 )
-                self.audit_logger.log_tool_call(tool_name, arguments, summary, success=True)
+                self.audit_logger.log_tool_call(tool_name, arguments, summary, success=not summary.startswith("Error"))
                 return summary
             except Exception:
                 logger.exception("Error collecting paginated results for %s", tool_name)
@@ -2968,6 +3193,24 @@ class AiAssistAgent:
             else:
                 result_text = "Tool executed successfully with no output"
             result_text = self.redactor.redact(result_text)
+
+            # The server flagged a failed execution: hand it to the model as an error,
+            # never as data (no jq filter, KG storage or file/report redirection).
+            if result.is_error is True:
+                error_msg = f"Error: {original_tool_name} failed: {result_text}"
+                self.last_tool_calls.append(
+                    {
+                        "tool_name": tool_name,
+                        "server_name": server_name,
+                        "original_tool_name": original_tool_name,
+                        "arguments": arguments,
+                        "meta_params": meta_params_used,
+                        "result": error_msg,
+                        "timestamp": datetime.now(),
+                    }
+                )
+                self.audit_logger.log_tool_call(tool_name, arguments, error_msg, success=False)
+                return error_msg
 
             # Apply __jq_filter before recording/logging/KG storage so they reflect
             # what was actually returned to the model, not the pre-filter raw result.

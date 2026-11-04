@@ -1,6 +1,7 @@
 """Rug-pull detection: changed MCP tool definitions stay hidden until approved."""
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -200,3 +201,54 @@ async def test_review_command_with_nothing_pending():
     await _review_tool_changes(agent, Console(file=output), None)
 
     assert "No MCP tool changes" in output.getvalue()
+
+
+# --- The monitor service and an interactive session share the definitions file ---
+
+
+def test_concurrent_saves_from_two_processes_do_not_collide(tmp_path, monkeypatch):
+    """The other process writes and renames its file between our write and our rename."""
+    path = tmp_path / "mcp-tool-definitions.json"
+    first = ToolDefinitionRegistry(path)
+    second = ToolDefinitionRegistry(path)
+    real_replace = Path.replace
+    interleaved = []
+
+    def replace_after_the_other_process_saves(self, target):
+        if not interleaved:
+            interleaved.append(True)
+            second._servers = {"srv_b": {"b": {"description": "B", "input_schema": {}}}}
+            second._save()
+        return real_replace(self, target)
+
+    monkeypatch.setattr(Path, "replace", replace_after_the_other_process_saves)
+
+    first.approve("srv_a", [_tool("a")])
+
+    assert interleaved
+    assert json.loads(path.read_text())  # a complete, valid file
+    assert not list(tmp_path.glob("*.tmp"))  # no temporary file left behind
+
+
+def test_approvals_from_both_processes_are_kept(tmp_path):
+    path = tmp_path / "mcp-tool-definitions.json"
+    monitor = ToolDefinitionRegistry(path)
+    interactive = ToolDefinitionRegistry(path)
+
+    monitor.approve("srv_a", [_tool("a")])
+    interactive.approve("srv_b", [_tool("b")])
+
+    assert set(json.loads(path.read_text())) == {"srv_a", "srv_b"}
+
+
+def test_review_sees_a_change_approved_by_the_other_process(tmp_path):
+    path = tmp_path / "mcp-tool-definitions.json"
+    monitor = ToolDefinitionRegistry(path)
+    monitor.approve("srv", [_tool("search", description="v1")])
+    interactive = ToolDefinitionRegistry(path)
+
+    interactive.approve("srv", [_tool("search", description="v2")])
+    approved, pending = monitor.review("srv", [_tool("search", description="v2")])
+
+    assert pending == []
+    assert [t["name"] for t in approved] == ["srv__search"]

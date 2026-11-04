@@ -184,8 +184,11 @@ async def handle_prompt_command_basic(command: str, agent: AiAssistAgent, conver
         print(response)
         print()
 
-        # Add assistant response to messages
-        conversation_history.append({"role": "assistant", "content": response})
+        # Don't add API errors to the history (prevents poisoning the conversation)
+        from .message_utils import is_api_error
+
+        if not is_api_error(response):
+            conversation_history.append({"role": "assistant", "content": response})
 
     except Exception as e:
         logger.exception("Error executing prompt: %s", e)
@@ -449,7 +452,13 @@ async def run_awl_script(agent: AiAssistAgent, script_path: str, variables: dict
 
 async def run_query(agent: AiAssistAgent, query: str):
     """Run a single query"""
-    response = await agent.query(query)
+    from .agent import QueryAPIError
+
+    try:
+        response = await agent.query(query, raise_on_api_error=True)
+    except QueryAPIError as e:
+        print(e)
+        sys.exit(1)
     print(response)
 
 
