@@ -21,23 +21,12 @@ def _normalize_script_path(path: str) -> str:
     return path
 
 
-def _partition_by_age(lines: list[str], cutoff: datetime) -> tuple[list[str], int]:
-    """Split JSONL lines into kept/removed based on timestamp age."""
-    kept: list[str] = []
-    removed = 0
-    for raw_line in lines:
-        stripped = raw_line.strip()
-        if not stripped:
-            continue
-        try:
-            entry = json.loads(stripped)
-            if datetime.fromisoformat(entry["timestamp"]) >= cutoff:
-                kept.append(stripped)
-            else:
-                removed += 1
-        except Exception:
-            kept.append(stripped)
-    return kept, removed
+def _is_expired(stripped_line: str, cutoff: datetime) -> bool:
+    """True if a JSONL line has a timestamp older than cutoff (unparseable lines are kept)."""
+    try:
+        return datetime.fromisoformat(json.loads(stripped_line)["timestamp"]) < cutoff
+    except Exception:
+        return False
 
 
 @dataclass
@@ -121,9 +110,19 @@ class TraceStore:
         if not self.trace_file.exists():
             return 0
         cutoff = datetime.now() - timedelta(days=max_age_days)
-        lines = self.trace_file.read_text().splitlines()
-        kept, removed = _partition_by_age(lines, cutoff)
-        self.trace_file.write_text("".join(line + "\n" for line in kept))
+        # Stream line by line: the file can be very large and this runs on every startup.
+        with open(self.trace_file) as f:
+            removed = sum(1 for line in f if (stripped := line.strip()) and _is_expired(stripped, cutoff))
+        if not removed:
+            return 0
+
+        tmp_file = self.trace_file.with_name(self.trace_file.name + ".tmp")
+        with open(self.trace_file) as src, open(tmp_file, "w") as dst:
+            for line in src:
+                stripped = line.strip()
+                if stripped and not _is_expired(stripped, cutoff):
+                    dst.write(stripped + "\n")
+        tmp_file.replace(self.trace_file)
         return removed
 
 
