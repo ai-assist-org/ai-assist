@@ -2,7 +2,7 @@
 
 import logging
 
-from ai_assist.pricing import MODEL_PRICING, compute_turn_cost, get_pricing
+from ai_assist.pricing import MODEL_PRICING, compute_turn_cost, get_pricing, prompt_tokens
 
 
 class TestGetPricing:
@@ -64,8 +64,19 @@ class TestComputeTurnCost:
             "cache_read_input_tokens": 5000,
         }
         cost = compute_turn_cost("claude-opus-4-6", entry)
-        plain_input = 10000 - 5000 - 3000  # 2000
-        expected = (plain_input * 5.00 + 2000 * 25.00 + 3000 * 6.25 + 5000 * 0.50) / 1_000_000
+        # The API reports input_tokens excluding cache reads and writes.
+        expected = (10000 * 5.00 + 2000 * 25.00 + 3000 * 6.25 + 5000 * 0.50) / 1_000_000
+        assert abs(cost - expected) < 1e-10
+
+    def test_fully_cached_turn_still_bills_cache_tokens(self):
+        entry = {
+            "input_tokens": 30,
+            "output_tokens": 100,
+            "cache_creation_input_tokens": 2000,
+            "cache_read_input_tokens": 80000,
+        }
+        cost = compute_turn_cost("claude-opus-4-6", entry)
+        expected = (30 * 5.00 + 100 * 25.00 + 2000 * 6.25 + 80000 * 0.50) / 1_000_000
         assert abs(cost - expected) < 1e-10
 
     def test_zero_tokens(self):
@@ -88,3 +99,13 @@ class TestComputeTurnCost:
         cost = compute_turn_cost("claude-haiku-4-5", entry)
         expected = (100 * 1.00 + 50 * 5.00) / 1_000_000
         assert abs(cost - expected) < 1e-10
+
+
+class TestPromptTokens:
+    def test_sums_uncached_and_cache_tokens(self):
+        entry = {"input_tokens": 30, "cache_creation_input_tokens": 2000, "cache_read_input_tokens": 80000}
+        assert prompt_tokens(entry) == 82030
+
+    def test_missing_or_none_cache_fields(self):
+        assert prompt_tokens({"input_tokens": 500}) == 500
+        assert prompt_tokens({"input_tokens": 500, "cache_read_input_tokens": None}) == 500

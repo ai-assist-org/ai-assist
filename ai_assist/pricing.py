@@ -57,6 +57,26 @@ def get_pricing(model: str) -> tuple[float, float, float, float]:
     return MODEL_PRICING[_DEFAULT_FAMILY]
 
 
+def safe_int(val) -> int:
+    try:
+        return int(val) if val else 0
+    except TypeError, ValueError:
+        return 0
+
+
+def prompt_tokens(token_entry: dict) -> int:
+    """Total prompt size of a turn: uncached input plus cache writes and reads.
+
+    The API's input_tokens excludes cached tokens, so on its own it understates
+    how full the context is once prompt caching is in use.
+    """
+    return (
+        safe_int(token_entry.get("input_tokens", 0))
+        + safe_int(token_entry.get("cache_creation_input_tokens", 0))
+        + safe_int(token_entry.get("cache_read_input_tokens", 0))
+    )
+
+
 def compute_turn_cost(model: str, token_entry: dict, zero_if_unknown: bool = False) -> float:
     """Compute USD cost for a single turn's token usage.
 
@@ -74,22 +94,15 @@ def compute_turn_cost(model: str, token_entry: dict, zero_if_unknown: bool = Fal
 
     input_rate, output_rate, cache_write_rate, cache_read_rate = get_pricing(model)
 
-    def _safe_int(val):
-        try:
-            return int(val) if val else 0
-        except TypeError, ValueError:
-            return 0
-
-    input_tokens = _safe_int(token_entry.get("input_tokens", 0))
-    output_tokens = _safe_int(token_entry.get("output_tokens", 0))
-    cache_write_tokens = _safe_int(token_entry.get("cache_creation_input_tokens", 0))
-    cache_read_tokens = _safe_int(token_entry.get("cache_read_input_tokens", 0))
-
-    # Non-cache input tokens = total input - cache reads - cache writes
-    plain_input = max(0, input_tokens - cache_read_tokens - cache_write_tokens)
+    # The API reports input_tokens excluding cache reads and writes, so the
+    # three input fields are billed independently.
+    input_tokens = safe_int(token_entry.get("input_tokens", 0))
+    output_tokens = safe_int(token_entry.get("output_tokens", 0))
+    cache_write_tokens = safe_int(token_entry.get("cache_creation_input_tokens", 0))
+    cache_read_tokens = safe_int(token_entry.get("cache_read_input_tokens", 0))
 
     cost = (
-        plain_input * input_rate
+        input_tokens * input_rate
         + output_tokens * output_rate
         + cache_write_tokens * cache_write_rate
         + cache_read_tokens * cache_read_rate

@@ -3,6 +3,7 @@
 import json
 import os
 from datetime import datetime, timedelta
+from unittest.mock import patch
 
 from ai_assist.eval import EvalMetrics, QueryEvaluator, QueryEventStore, QueryTrace, TraceStore
 
@@ -617,3 +618,81 @@ class TestCostPerDay:
 
         assert result.num_days == 3
         assert abs(result.cost_per_day - 0.20) < 1e-10
+
+
+class TestCostRecomputedFromTokens:
+    """Reported cost is recomputed from per-turn tokens, so traces stored with old pricing are corrected."""
+
+    CACHED_TURN = {
+        "turn": 0,
+        "input_tokens": 1000,
+        "output_tokens": 100,
+        "cache_creation_input_tokens": 2000,
+        "cache_read_input_tokens": 10000,
+        "cost_usd": 0.0,
+    }
+
+    def _summary(self, tmp_path, *traces):
+        import ai_assist.eval as eval_mod
+        from ai_assist.eval import TraceStore, compute_cost_summary
+
+        store = TraceStore(trace_dir=tmp_path)
+        for trace in traces:
+            store.append(trace)
+        with patch.object(eval_mod, "TraceStore", lambda: TraceStore(trace_dir=tmp_path)):
+            return compute_cost_summary()
+
+    def test_cost_recomputed_from_token_usage(self):
+        trace = QueryTrace(
+            query_text="q",
+            timestamp="2026-01-01T00:00:00",
+            model="claude-sonnet-4-6",
+            token_usage=[self.CACHED_TURN],
+            total_cost_usd=0.001,  # undercounted by old pricing
+        )
+        expected = (1000 * 3.00 + 100 * 15.00 + 2000 * 3.75 + 10000 * 0.30) / 1_000_000
+        assert abs(trace.cost_usd() - expected) < 1e-10
+
+    def test_stored_cost_used_without_token_usage(self):
+        trace = QueryTrace(
+            query_text="q", timestamp="2026-01-01T00:00:00", model="claude-sonnet-4-6", total_cost_usd=0.5
+        )
+        assert trace.cost_usd() == 0.5
+
+    def test_stored_cost_used_for_unknown_model(self):
+        trace = QueryTrace(
+            query_text="q",
+            timestamp="2026-01-01T00:00:00",
+            model="self-hosted-model",
+            token_usage=[self.CACHED_TURN],
+            total_cost_usd=0.0,
+        )
+        assert trace.cost_usd() == 0.0
+
+    def test_cost_summary_uses_recomputed_cost_and_splits_input_tokens(self, tmp_path):
+        trace = QueryTrace(
+            query_text="q",
+            timestamp="2026-01-01T00:00:00",
+            model="claude-sonnet-4-6",
+            token_usage=[self.CACHED_TURN, {**self.CACHED_TURN, "turn": 1, "cache_read_input_tokens": "bad"}],
+            total_input_tokens=2000,
+            total_cost_usd=0.001,
+        )
+        result = self._summary(tmp_path, trace)
+
+        assert abs(result.total_cost - trace.cost_usd()) < 1e-10
+        assert abs(result.cost_by_model["claude-sonnet-4-6"] - trace.cost_usd()) < 1e-10
+        assert result.total_input_tokens == 2000
+        assert result.total_cache_write_tokens == 4000
+        assert result.total_cache_read_tokens == 10000
+
+    def test_metrics_use_recomputed_cost(self):
+        trace = QueryTrace(
+            query_text="q",
+            timestamp="2026-01-01T00:00:00",
+            model="claude-sonnet-4-6",
+            token_usage=[self.CACHED_TURN],
+            total_cost_usd=0.001,
+        )
+        metrics = QueryEvaluator.evaluate_traces([trace])
+        assert metrics.total_cost_usd == round(trace.cost_usd(), 4)

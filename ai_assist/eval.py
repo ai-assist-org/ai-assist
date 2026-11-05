@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from .config import get_config_dir
+from .pricing import compute_turn_cost, is_known_model, safe_int
 
 _HOME = Path.home()
 
@@ -64,6 +65,25 @@ class QueryTrace:
 
     # Dedup
     duplicate_tool_calls: int = 0
+
+    def cost_usd(self) -> float:
+        """Cost recomputed from per-turn token counts with the current pricing.
+
+        Traces written before a pricing fix keep a stale total_cost_usd, so this
+        is what reports should show. Falls back to the stored total when there
+        are no per-turn counts or the model has no pricing entry.
+        """
+        if not self.token_usage or not is_known_model(self.model):
+            return self.total_cost_usd
+        return sum(compute_turn_cost(self.model, entry) for entry in self.token_usage if isinstance(entry, dict))
+
+    def cache_tokens(self) -> tuple[int, int]:
+        """Total (cache write, cache read) tokens across this query's turns."""
+        entries = [e for e in self.token_usage if isinstance(e, dict)]
+        return (
+            sum(safe_int(e.get("cache_creation_input_tokens")) for e in entries),
+            sum(safe_int(e.get("cache_read_input_tokens")) for e in entries),
+        )
 
     def to_jsonl_line(self) -> str:
         """Serialize to a single JSON line."""
@@ -239,7 +259,7 @@ class QueryEvaluator:
         total_tool_calls = sum(len(t.tool_calls) for t in traces)
         total_duplicates = sum(t.duplicate_tool_calls for t in traces)
         queries_with_dupes = sum(1 for t in traces if t.duplicate_tool_calls > 0)
-        total_cost = sum(t.total_cost_usd for t in traces)
+        total_cost = sum(t.cost_usd() for t in traces)
 
         return EvalMetrics(
             total_queries=n,
@@ -265,7 +285,7 @@ class CostSummary:
     query_count: int
     total_cost: float
     avg_cost: float
-    total_input_tokens: int
+    total_input_tokens: int  # uncached input only
     total_output_tokens: int
     cost_by_model: dict[str, float]
     queries_by_model: dict[str, int]
@@ -273,6 +293,8 @@ class CostSummary:
     num_days: int = 0
     cost_by_script: dict[str, float] = field(default_factory=dict)
     queries_by_script: dict[str, int] = field(default_factory=dict)
+    total_cache_write_tokens: int = 0
+    total_cache_read_tokens: int = 0
 
 
 def compute_cost_summary(period: str | None = None) -> CostSummary | str:
@@ -294,9 +316,11 @@ def compute_cost_summary(period: str | None = None) -> CostSummary | str:
     if not traces:
         return "No query traces found for the selected period."
 
-    total_cost = sum(t.total_cost_usd for t in traces)
+    costs = [t.cost_usd() for t in traces]
+    total_cost = sum(costs)
     total_input = sum(t.total_input_tokens for t in traces)
     total_output = sum(t.total_output_tokens for t in traces)
+    cache_totals = [t.cache_tokens() for t in traces]
 
     distinct_days = {t.timestamp[:10] for t in traces}
     num_days = len(distinct_days)
@@ -306,11 +330,11 @@ def compute_cost_summary(period: str | None = None) -> CostSummary | str:
     queries_by_model: dict[str, int] = defaultdict(int)
     cost_by_script: dict[str, float] = defaultdict(float)
     queries_by_script: dict[str, int] = defaultdict(int)
-    for t in traces:
-        cost_by_model[t.model] += t.total_cost_usd
+    for t, cost in zip(traces, costs, strict=True):
+        cost_by_model[t.model] += cost
         queries_by_model[t.model] += 1
         script_key = _normalize_script_path(t.script_path) if t.script_path else "(interactive)"
-        cost_by_script[script_key] += t.total_cost_usd
+        cost_by_script[script_key] += cost
         queries_by_script[script_key] += 1
 
     return CostSummary(
@@ -326,4 +350,6 @@ def compute_cost_summary(period: str | None = None) -> CostSummary | str:
         queries_by_model=dict(queries_by_model),
         cost_by_script=dict(cost_by_script),
         queries_by_script=dict(queries_by_script),
+        total_cache_write_tokens=sum(w for w, _ in cache_totals),
+        total_cache_read_tokens=sum(r for _, r in cache_totals),
     )

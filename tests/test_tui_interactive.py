@@ -1023,11 +1023,16 @@ async def test_cost_command_summary_table():
         num_days=7,
         cost_by_script={"report.awl": 0.5},
         queries_by_script={"report.awl": 1},
+        total_cache_write_tokens=2000,
+        total_cache_read_tokens=90000,
     )
     with patch("ai_assist.eval.compute_cost_summary", return_value=summary):
         await handle_cost_command(console, "7d")
     text = output.getvalue()
     assert "Cost Summary" in text
+    assert "Uncached input tokens" in text
+    assert "2,000" in text
+    assert "90,000" in text
     assert "Cost by Model" in text
     assert "Cost by Script" in text
 
