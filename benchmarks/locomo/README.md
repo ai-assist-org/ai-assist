@@ -38,7 +38,7 @@ make run-quick
 # Full benchmark (all 10 conversations)
 make run
 
-# Vector-only baseline (no synthesis, for comparison)
+# Hybrid-retrieval baseline over raw turns (no synthesis, for comparison)
 make run-baseline
 ```
 
@@ -52,7 +52,7 @@ python run_benchmark.py \
   --synthesis-model claude-sonnet-4-6 \  # model for synthesis/connections
   --limit 2 \                       # limit to N conversations
   --keep-db \                       # keep KG database after run
-  --skip-synthesis \                # skip synthesis (vector baseline)
+  --skip-synthesis \                # skip synthesis (raw-turn baseline)
   --output results.md \             # write results to file
   -v                                # verbose logging
 ```
@@ -65,7 +65,7 @@ python run_benchmark.py \
 | ai-assist (synthesis + hybrid) | 86.2% |
 | Memobase | 75.78% |
 | Mem0 | ~70% |
-| ai-assist (vector baseline) | 32.0% |
+| ai-assist (hybrid baseline, no synthesis) | 69.5% |
 
 ## Isolation
 

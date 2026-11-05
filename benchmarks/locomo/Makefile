@@ -8,7 +8,7 @@ help:
 	@echo "  make download      - Download LoCoMo dataset"
 	@echo "  make run           - Full benchmark with synthesis pipeline"
 	@echo "  make run-quick     - Quick test (1 conversation, full pipeline)"
-	@echo "  make run-baseline  - Vector-only baseline (no synthesis)"
+	@echo "  make run-baseline  - Hybrid baseline over raw turns (no synthesis)"
 	@echo "  make clean         - Remove dataset and temp files"
 
 download: $(DATASET)
