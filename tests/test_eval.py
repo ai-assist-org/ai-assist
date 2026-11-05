@@ -144,6 +144,20 @@ class TestTraceStore:
         store = TraceStore(trace_dir=tmp_path)
         assert store.cleanup() == 0
 
+    def test_cleanup_does_not_rewrite_when_nothing_expired(self, tmp_path):
+        """Cleanup runs on every startup; with nothing to remove it must leave the file alone"""
+        store = TraceStore(trace_dir=tmp_path)
+        store.append(QueryTrace(query_text="recent", timestamp=datetime.now().isoformat()))
+        before = store.trace_file.stat()
+        content = store.trace_file.read_bytes()
+
+        assert store.cleanup(max_age_days=30) == 0
+
+        after = store.trace_file.stat()
+        assert after.st_ino == before.st_ino
+        assert after.st_mtime_ns == before.st_mtime_ns
+        assert store.trace_file.read_bytes() == content
+
 
 class TestQueryEventStore:
     def test_append_writes_redacted_live_event(self, tmp_path):
