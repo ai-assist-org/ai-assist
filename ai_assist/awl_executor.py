@@ -82,12 +82,26 @@ def _generate_builtin_variables() -> dict[str, str]:
         "reports_dir": str(get_reports_dir()),
         "logs_dir": str(config_dir / "logs"),
         "tmpdir": _get_session_tmpdir(),
+        # Top dir of the ai-assist source tree (parent of the ai_assist package)
+        "source_dir": str(Path(__file__).resolve().parent.parent),
     }
 
 
-def _merge_all_variables(variables: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Merge builtin, local, and caller-provided variables (caller wins)."""
+# Built-ins derived from the running script's location (see _merge_all_variables)
+SCRIPT_LOCATION_VARIABLES = frozenset({"script_path", "script_dir"})
+
+
+def _merge_all_variables(variables: dict[str, Any] | None = None, script_path: Path | None = None) -> dict[str, Any]:
+    """Merge builtin, local, and caller-provided variables (caller wins).
+
+    When script_path is given, ${script_path} and ${script_dir} are added as
+    built-ins pointing to the resolved script file and its directory.
+    """
     merged = _generate_builtin_variables()
+    if script_path is not None:
+        resolved = Path(script_path).resolve()
+        merged["script_path"] = str(resolved)
+        merged["script_dir"] = str(resolved.parent)
     merged.update(load_local_variables())
     if variables:
         merged.update(variables)
@@ -140,12 +154,14 @@ def _try_lock_script(resolved_path: Path) -> TextIOWrapper | None:
         return None
 
 
-def get_missing_variables(workflow, variables: dict[str, Any] | None = None) -> set[str]:
+def get_missing_variables(
+    workflow, variables: dict[str, Any] | None = None, script_path: Path | None = None
+) -> set[str]:
     """Return input variables required by the workflow but absent from the provided dict."""
     from .awl_runtime import _compute_input_variables
 
     required = _compute_input_variables(workflow)
-    provided = set(_merge_all_variables(variables).keys())
+    provided = set(_merge_all_variables(variables, script_path).keys())
     return required - provided
 
 
@@ -167,17 +183,17 @@ async def run_awl_script(
     Variables are merged from three sources (highest precedence wins):
     1. Caller-provided variables (CLI key=value, agent tool)
     2. User-defined variables from ~/.ai-assist/variables.yaml
-    3. Built-in variables (date/time, paths)
+    3. Built-in variables (date/time, paths, script_path/script_dir)
 
     authorize_commands auto-authorizes the commands written in the script: pass
     True only for scripts the user started, never for the agent tool.
     """
     from .awl_ast import GoalNode
 
-    merged = _merge_all_variables(variables)
     _allow_session_tmpdir(agent)
 
     workflow, _awl_path = load_awl_workflow(prompt)
+    merged = _merge_all_variables(variables, _awl_path)
 
     lock_fh = _try_lock_script(_awl_path)
     if lock_fh is None:

@@ -4,6 +4,7 @@ import logging
 import logging.handlers
 import os
 import stat
+import subprocess  # nosec B404
 from pathlib import Path
 from typing import Literal, cast
 
@@ -134,6 +135,38 @@ def get_reports_dir() -> Path:
     return reports_dir
 
 
+def _git(source_dir: Path, *args: str) -> str | None:
+    """Run a git command in source_dir; return its stdout, or None on any failure."""
+    try:
+        result = subprocess.run(  # nosec B603 B607
+            ["git", *args],
+            cwd=source_dir,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except OSError, subprocess.SubprocessError:
+        return None
+    return result.stdout if result.returncode == 0 else None
+
+
+def get_source_commit() -> str | None:
+    """Describe the ai-assist source checkout's HEAD, e.g. "<sha1> (uncommitted changes)".
+
+    Returns None when git is missing or ai-assist does not run from its own
+    checkout (e.g. a package installed inside some other repository).
+    """
+    source_dir = Path(__file__).resolve().parent.parent
+    out = _git(source_dir, "rev-parse", "--show-toplevel", "HEAD")
+    lines = out.splitlines() if out else []
+    if len(lines) != 2 or Path(lines[0]).resolve() != source_dir:
+        return None
+    sha = lines[1]
+    status = _git(source_dir, "status", "--porcelain", "--untracked-files=no")
+    return f"{sha} (uncommitted changes)" if status else sha
+
+
 def setup_logging(config_dir: Path | None = None) -> None:
     """Configure logging to write to both console and file.
 
@@ -196,6 +229,9 @@ def setup_logging(config_dir: Path | None = None) -> None:
     logger.info(
         "Logging initialized - file: %s (level=%s), console (level=%s)", log_file, file_level_name, console_level_name
     )
+    commit = get_source_commit()
+    if commit:
+        logger.info("ai-assist source commit %s", commit)
 
 
 class PaginationConfig(BaseModel):

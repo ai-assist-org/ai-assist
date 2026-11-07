@@ -2657,12 +2657,7 @@ class FilesystemTools:
         if not command:
             return "Error: command parameter is required"
 
-        # Block commands that target protected security config files
-        config_dir = str(get_config_dir().resolve())
-        for protected in PROTECTED_CONFIG_FILES:
-            protected_path = f"{config_dir}/{protected}"
-            if protected_path in command or f"~/.ai-assist/{protected}" in command:
-                return f"Error: {protected} is a protected security config file and cannot be modified by the agent."
+        # Block commands that write protected security config files (reading them is fine)
         for cmd_name, path in _extract_command_argument_paths(command, working_dir):
             if cmd_name in _WRITE_TARGET_SOURCES and self._is_protected_config(path):
                 return (

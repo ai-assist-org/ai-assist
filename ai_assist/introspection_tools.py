@@ -1306,7 +1306,7 @@ Do NOT compact if you still need the old tool results for your current task.
         except Exception as e:
             return json.dumps({"error": f"Error reading script: {e}"})
 
-        auto_vars = _merge_all_variables()
+        auto_vars = _merge_all_variables(script_path=awl_path)
         all_known = set(auto_vars.keys())
         input_var_set = _compute_input_variables(workflow) - all_known
         input_vars = sorted(input_var_set)
@@ -1326,7 +1326,7 @@ Do NOT compact if you still need the old tool results for your current task.
 
     def _validate_awl_script(self, arguments: dict) -> str:
         """Parse an AWL script and report syntax and variable errors"""
-        from .awl_executor import _merge_all_variables
+        from .awl_executor import SCRIPT_LOCATION_VARIABLES, _merge_all_variables
         from .awl_parser import AWLParser, ParseError
         from .awl_runtime import _compute_input_variables, validate_workflow_variables
 
@@ -1341,7 +1341,8 @@ Do NOT compact if you still need the old tool results for your current task.
         except Exception as e:
             return f"Error: {e}"
 
-        auto_vars = set(_merge_all_variables().keys())
+        # No file here, but script_path/script_dir will be set when it runs from one
+        auto_vars = set(_merge_all_variables().keys()) | SCRIPT_LOCATION_VARIABLES
         known = auto_vars | _compute_input_variables(workflow)
         warnings = validate_workflow_variables(workflow, known)
         if warnings:
@@ -1374,8 +1375,8 @@ Do NOT compact if you still need the old tool results for your current task.
 
         from .awl_executor import _merge_all_variables
 
-        all_var_names = set(_merge_all_variables(variables).keys())
-        missing = get_missing_variables(workflow, variables)
+        all_var_names = set(_merge_all_variables(variables, awl_path).keys())
+        missing = get_missing_variables(workflow, variables, awl_path)
         var_warnings = validate_workflow_variables(workflow, all_var_names)
         if missing or var_warnings:
             error: dict[str, Any] = {}

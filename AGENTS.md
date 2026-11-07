@@ -880,6 +880,7 @@ ai_assist/
 
 tests/                         # Test suite (mirrors ai_assist structure)
 docs/                          # Detailed documentation
+workflows/                     # AWL workflows shipped with ai-assist; helpers in <workflow>/lib/
 presentation/                  # LaTeX/Beamer slides (run `make -C presentation`)
 emacs/                         # AWL major mode for Emacs
 ```
@@ -903,6 +904,7 @@ Detailed documentation in `docs/`:
 - `MULTI_INSTANCE.md` - Running multiple ai-assist instances
 - `KNOWLEDGE_MANAGEMENT.md` - Knowledge graph usage and synthesis
 - `SCHEDULED_ACTIONS.md` - One-time future actions
+- `SELF_IMPROVEMENT.md` - Self-improvement workflow (proposals from ai-assist's own logs)
 
 Also see:
 - `CONTRIBUTING.md` - Pre-commit setup and workflow

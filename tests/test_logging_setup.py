@@ -89,3 +89,100 @@ def test_handler_reopens_after_rename(tmp_path):
     assert log_file.exists(), "handler should have created a new log file"
     assert "after rename" in log_file.read_text()
     assert "after rename" not in rotated.read_text()
+
+
+SHA = "0123456789abcdef0123456789abcdef01234567"
+
+
+def _read_log(tmp_path):
+    for h in logging.getLogger().handlers:
+        h.flush()
+    return (tmp_path / "logs" / "ai-assist.log").read_text()
+
+
+def test_setup_logging_logs_source_commit(tmp_path):
+    from unittest.mock import patch
+
+    with patch("ai_assist.config.get_source_commit", return_value=f"{SHA} (uncommitted changes)"):
+        setup_logging(tmp_path)
+    assert f"ai-assist source commit {SHA} (uncommitted changes)" in _read_log(tmp_path)
+
+
+def test_setup_logging_skips_commit_without_git(tmp_path):
+    from unittest.mock import patch
+
+    with patch("ai_assist.config.get_source_commit", return_value=None):
+        setup_logging(tmp_path)
+    assert "source commit" not in _read_log(tmp_path)
+
+
+def _git(top_level, sha=SHA, status=""):
+    """Fake subprocess.run answering the two git calls get_source_commit makes."""
+    import subprocess
+
+    def run(cmd, **kwargs):
+        if cmd[:2] == ["git", "rev-parse"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout=f"{top_level}\n{sha}\n")
+        if cmd[:2] == ["git", "status"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout=status)
+        raise AssertionError(cmd)
+
+    return run
+
+
+def _source_dir():
+    from pathlib import Path
+
+    import ai_assist
+
+    return Path(ai_assist.__file__).resolve().parent.parent
+
+
+def test_get_source_commit_clean_checkout():
+    from unittest.mock import patch
+
+    from ai_assist.config import get_source_commit
+
+    with patch("ai_assist.config.subprocess.run", side_effect=_git(_source_dir())) as run:
+        assert get_source_commit() == SHA
+    assert run.call_args_list[0].kwargs["cwd"] == _source_dir()
+
+
+def test_get_source_commit_reports_uncommitted_changes():
+    from unittest.mock import patch
+
+    from ai_assist.config import get_source_commit
+
+    with patch("ai_assist.config.subprocess.run", side_effect=_git(_source_dir(), status=" M ai_assist/config.py\n")):
+        assert get_source_commit() == f"{SHA} (uncommitted changes)"
+
+
+def test_get_source_commit_ignores_enclosing_foreign_repo(tmp_path):
+    """Installed in site-packages inside another repo: that repo's HEAD is not ours."""
+    from unittest.mock import patch
+
+    from ai_assist.config import get_source_commit
+
+    with patch("ai_assist.config.subprocess.run", side_effect=_git(tmp_path)):
+        assert get_source_commit() is None
+
+
+@pytest.mark.parametrize("error", [FileNotFoundError("git"), OSError("boom")])
+def test_get_source_commit_none_when_git_unavailable(error):
+    from unittest.mock import patch
+
+    from ai_assist.config import get_source_commit
+
+    with patch("ai_assist.config.subprocess.run", side_effect=error):
+        assert get_source_commit() is None
+
+
+def test_get_source_commit_none_outside_a_checkout():
+    import subprocess
+    from unittest.mock import patch
+
+    from ai_assist.config import get_source_commit
+
+    completed = subprocess.CompletedProcess(args=[], returncode=128, stdout="")
+    with patch("ai_assist.config.subprocess.run", return_value=completed):
+        assert get_source_commit() is None

@@ -431,10 +431,10 @@ async def run_awl_script(agent: AiAssistAgent, script_path: str, variables: dict
         print(f"Error: {e}")
         sys.exit(1)
 
-    missing_vars = get_missing_variables(workflow, variables)
+    missing_vars = get_missing_variables(workflow, variables, awl_path)
     if missing_vars:
         required_vars = _compute_input_variables(workflow)
-        provided_vars = set(_merge_all_variables(variables).keys())
+        provided_vars = set(_merge_all_variables(variables, awl_path).keys())
         print(f"Error: Missing required input variables: {sorted(missing_vars)}")
         print(f"\nRequired variables: {sorted(required_vars)}")
         print(f"Provided variables: {sorted(provided_vars)}")
