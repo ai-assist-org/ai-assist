@@ -250,6 +250,9 @@ def test_cost_command_with_traces(capsys):
     out = capsys.readouterr().out
     assert "Cost Summary" in out
     assert "By model" in out
+    assert "Uncached input tokens" in out
+    assert "Cache write tokens" in out
+    assert "Cache read tokens" in out
 
 
 # --- identity commands ------------------------------------------------------

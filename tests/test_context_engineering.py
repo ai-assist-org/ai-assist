@@ -87,6 +87,32 @@ class TestTokenBudgetMonitoring:
             mock_warn.assert_called_once()
             assert "Context budget warning" in mock_warn.call_args[0][0]
 
+    def test_track_token_usage_warns_when_context_is_mostly_cached(self):
+        """Cached tokens count toward the context budget"""
+        config = AiAssistConfig(anthropic_api_key="test-key", mcp_servers={})
+        agent = AiAssistAgent(config)
+
+        mock_response = MagicMock()
+        mock_response.usage.input_tokens = 1000
+        mock_response.usage.output_tokens = 1000
+        mock_response.usage.cache_creation_input_tokens = 49000
+        mock_response.usage.cache_read_input_tokens = 800000  # 85% of 1M in total
+
+        with patch("logging.warning") as mock_warn:
+            agent._track_token_usage(mock_response, turn=0)
+            mock_warn.assert_called_once()
+            assert "Context budget warning" in mock_warn.call_args[0][0]
+
+    def test_masking_triggers_on_cached_context(self):
+        """Observation masking counts cached tokens, not just uncached input"""
+        config = AiAssistConfig(anthropic_api_key="test-key", mcp_servers={})
+        agent = AiAssistAgent(config)
+        agent._turn_token_usage = [
+            {"turn": 0, "input_tokens": 50, "cache_creation_input_tokens": 1000, "cache_read_input_tokens": 600000}
+        ]
+
+        assert agent._should_mask_observations()
+
     def test_track_token_usage_no_warn_below_threshold(self):
         """No warning when token usage is below threshold"""
         config = AiAssistConfig(anthropic_api_key="test-key", mcp_servers={})

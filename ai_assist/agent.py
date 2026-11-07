@@ -39,6 +39,7 @@ from .mlflow_tracing import end_span, record_query_trace, setup_mlflow, start_qu
 from .output import console_print
 from .plugins_loader import PluginsLoader
 from .plugins_manager import PluginsManager
+from .pricing import compute_turn_cost, prompt_tokens
 from .query_errors import QueryAPIError, QueryIncompleteError
 from .redaction import Redactor
 from .report_tools import ReportTools
@@ -1461,8 +1462,6 @@ class AiAssistAgent:
             entry["service_tier"] = usage.service_tier
 
         try:
-            from .pricing import compute_turn_cost
-
             entry["cost_usd"] = compute_turn_cost(
                 self.config.model, entry, zero_if_unknown=self.config.use_custom_endpoint
             )
@@ -1474,11 +1473,12 @@ class AiAssistAgent:
         # Warn if approaching context limit
         try:
             context_window = self.get_context_window_size()
-            utilization = usage.input_tokens / context_window
+            used = prompt_tokens(entry)
+            utilization = used / context_window
             if utilization >= self.CONTEXT_BUDGET_WARNING_THRESHOLD:
                 logging.warning(
                     "Context budget warning: using %d/%d tokens (%.0f%% of context window)",
-                    usage.input_tokens,
+                    used,
                     context_window,
                     utilization * 100,
                 )
@@ -1662,6 +1662,31 @@ class AiAssistAgent:
             cleaned.append(cleaned_msg)
         return cleaned
 
+    @staticmethod
+    def _with_message_cache_breakpoints(messages: list) -> list:
+        """Return a copy of messages with prompt-cache breakpoints on the last two user messages.
+
+        Without them each turn resends the whole conversation (tool results
+        included) as uncached input. The breakpoint moves with each turn; the
+        one on the previous user message keeps the cache hit when a turn adds
+        more blocks than the API's 20-block lookback (many parallel tool calls).
+        System (1) + these (2) stays within the 4-breakpoint limit. The caller's
+        messages are not modified, so markers never accumulate across turns.
+        """
+        result = list(messages)
+        user_indices = [i for i, msg in enumerate(result) if msg.get("role") == "user"][-2:]
+        for i in user_indices:
+            content = result[i].get("content")
+            if isinstance(content, str) and content:
+                blocks: list = [{"type": "text", "text": content}]
+            elif isinstance(content, list) and content and isinstance(content[-1], dict):
+                blocks = list(content)
+            else:
+                continue
+            blocks[-1] = {**blocks[-1], "cache_control": {"type": "ephemeral"}}
+            result[i] = {**result[i], "content": blocks}
+        return result
+
     async def _check_narration_consistency(self, final_text: str, tool_calls: list[dict] | None = None) -> str | None:
         """Check whether the final response claims tool/filter usage that never
         happened this query, per ``tool_calls`` (default: self.last_tool_calls).
@@ -1729,7 +1754,7 @@ class AiAssistAgent:
         """
         if not self._turn_token_usage:
             return False
-        last_input = self._turn_token_usage[-1]["input_tokens"]
+        last_input = prompt_tokens(self._turn_token_usage[-1])
         context_window = self.get_context_window_size()
         return last_input > context_window * self.OBSERVATION_MASKING_THRESHOLD
 
@@ -2222,7 +2247,13 @@ class AiAssistAgent:
                     idle_timeout = getattr(self.config, "model_stream_idle_timeout_seconds", 120)
 
                     def create_stream(
-                        system: Any = system_prompt, tools: Any = turn_tools, request_messages: Any = messages
+                        system: Any = system_prompt,
+                        tools: Any = turn_tools,
+                        request_messages: Any = (
+                            self._with_message_cache_breakpoints(messages)
+                            if self.config.enable_prompt_caching
+                            else messages
+                        ),
                     ) -> Any:
                         return self.anthropic.messages.stream(
                             model=self.config.model,

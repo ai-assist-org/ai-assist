@@ -9,6 +9,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
+from .pricing import prompt_tokens
 from .skill_performance import SkillPerformanceStore
 
 if TYPE_CHECKING:
@@ -1176,7 +1177,7 @@ Do NOT compact if you still need the old tool results for your current task.
         # Get last turn's token usage
         if self.agent._turn_token_usage:
             last_usage = self.agent._turn_token_usage[-1]
-            input_tokens = last_usage["input_tokens"]
+            input_tokens = prompt_tokens(last_usage)
         else:
             input_tokens = 0
 

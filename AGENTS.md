@@ -339,7 +339,9 @@ Files: `background_tasks.py`, `background_task_tools.py`
   Prices are **not** available from the Anthropic API; update `MODEL_PRICING` when Anthropic publishes new rates
   (see https://docs.anthropic.com/en/docs/about-claude/models).
 - Costs are recorded per-turn in `_track_token_usage()` and aggregated per-query in `QueryTrace.total_cost_usd`.
-- Commands: `/cost [period]` for cost summary, `/eval-stats` for aggregate metrics including cost.
+- The API's `input_tokens` excludes cached tokens: `compute_turn_cost` bills uncached input, cache writes, cache reads and output separately, and anything that measures how full the context is (observation masking, the context-budget warning, `get_context_usage`) uses `prompt_tokens()`, the sum of the three input counts.
+- Prompt caching (`AI_ASSIST_ENABLE_CACHE`, on by default) marks the static system block and the last two user messages of each request (`_with_message_cache_breakpoints` in `agent.py`), so a multi-turn tool loop reads earlier turns from the cache instead of resending them at full price. The markers go on a copy; the conversation itself is never modified.
+- Commands: `/cost [period]` for cost summary (uncached input, cache write and cache read tokens shown separately), `/eval-stats` for aggregate metrics including cost. Both recompute each query's cost from its per-turn token counts (`QueryTrace.cost_usd()`), so traces stored with older pricing are reported correctly; the stored `total_cost_usd` is only used when per-turn counts are missing or the model has no pricing entry.
 
 **MLflow tracing** (`mlflow_tracing.py`): optional GenAI observability — optional dep `mlflow-skinny` + `sqlalchemy` (`pip install ai-assist[mlflow]`), enabled with `AI_ASSIST_ENABLE_MLFLOW=true`. Backend via `MLFLOW_TRACKING_URI`; unset => local SQLite store at `<config dir>/mlflow.db` (SQL backend needed for the Traces UI metrics). Emits a `query → tool` span tree (autolog for LLM spans + manual spans in `agent.py`), mirroring `QueryTrace` metrics onto the root span. No-op when disabled/uninstalled; the JSONL cost tracking above is unaffected.
 

@@ -164,3 +164,25 @@ async def test_compact_conversation_validates_keep_recent():
     result = await agent.introspection_tools.execute_tool("compact_conversation", {"keep_recent_turns": -5})
 
     assert "error" in result.lower() or "invalid" in result.lower() or "positive" in result.lower()
+
+
+@pytest.mark.asyncio
+async def test_get_context_usage_counts_cached_tokens():
+    """Cached prompt tokens are part of the context in use."""
+    import json
+
+    config = AiAssistConfig(anthropic_api_key="test-key", working_dirs=["/tmp"])
+    agent = AiAssistAgent(config=config)
+    agent._turn_token_usage = [
+        {
+            "turn": 1,
+            "input_tokens": 40,
+            "output_tokens": 500,
+            "cache_creation_input_tokens": 960,
+            "cache_read_input_tokens": 99000,
+        },
+    ]
+
+    data = json.loads(await agent.introspection_tools.execute_tool("get_context_usage", {}))
+
+    assert data["input_tokens"] == 100000

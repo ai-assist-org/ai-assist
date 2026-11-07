@@ -709,11 +709,13 @@ def cost_command(period: str | None = None):
 
     print(f"\nCost Summary ({result.label}, {result.query_count} queries)")
     print("=" * 50)
-    print(f"  Total cost:         ${result.total_cost:.4f}")
-    print(f"  Avg cost/query:     ${result.avg_cost:.4f}")
-    print(f"  Cost/day:           ${result.cost_per_day:.4f} ({result.num_days} days)")
-    print(f"  Total input tokens: {result.total_input_tokens:,}")
-    print(f"  Total output tokens:{result.total_output_tokens:,}")
+    print(f"  Total cost:            ${result.total_cost:.4f}")
+    print(f"  Avg cost/query:        ${result.avg_cost:.4f}")
+    print(f"  Cost/day:              ${result.cost_per_day:.4f} ({result.num_days} days)")
+    print(f"  Uncached input tokens: {result.total_input_tokens:,}")
+    print(f"  Cache write tokens:    {result.total_cache_write_tokens:,}")
+    print(f"  Cache read tokens:     {result.total_cache_read_tokens:,}")
+    print(f"  Total output tokens:   {result.total_output_tokens:,}")
 
     if result.cost_by_model:
         print("\n  By model:")
