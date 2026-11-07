@@ -68,6 +68,7 @@ class GoalRunner:
             self.agent,
             limits=RuntimeLimits(max_tool_calls=self._goal_node.max_actions),
             authorize_commands=self._authorize_commands,
+            script_path=str(Path(self.awl_path).resolve()),
         )
         result = await runtime.execute(self._workflow, variables=variables)
 

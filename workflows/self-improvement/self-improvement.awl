@@ -1,0 +1,606 @@
+# Self-improvement — mine ai-assist's own logs for defects in the AWL
+# workflows, the scheduler, ai-assist itself and its configuration, and
+# propose evidence-backed fixes. READ-ONLY: this script never edits a .awl
+# file, a config file or ai-assist; every proposal awaits human review.
+#
+# Why: AWL workflows fail silently in ways that are cheap to detect but
+# expensive to notice — a prompt referencing a variable no earlier task
+# exposes, a task that burns its turn budget, a branch that is always False,
+# a command that hits the security allowlist. All of that is already in
+# ~/.ai-assist/logs/ai-assist.log*, with per-PID script attribution
+# recoverable from the AWL lock lines.
+#
+# Design rule: EXTRACTION AND AGGREGATION ARE DETERMINISTIC (awk + jq, in
+# lib/). The LLM only *classifies* and *writes prose*. An earlier lesson:
+# LLM extraction of long lists loses ~40% of items — so no list ever passes
+# through the model's hands.
+#
+# Inputs (all optional):
+#   days   — lookback window in days (default 7). Must be a positive integer.
+#
+# Outputs (in ${reports_dir}):
+#   self-improvement-report-${date}.md    the report you read, proposals included
+#   self-improvement-signals-${date}.jsonl deterministic per-finding counts
+#   self-improvement-state.jsonl          signature ledger (idempotency)
+#   self-improvement-${date}/             proposals.md (the proposals, appended to
+#                                         the report), NN-event-schedules.json and
+#                                         NN-allowed_*.json (config), NN-ai-assist-issue.md
+#                                         (issue drafts), live-*.json (config snapshots)
+#
+# Text changes (.awl files, SKILL.md) are proposed in the report as short
+# diff excerpts, not as patches: a gate checks that each excerpt's "before"
+# text is in the current file and that an edited .awl still parses.
+#
+# Helpers (versioned with this script):
+#   lib/awl-signals-aggregate.sh   logs -> signals JSONL (extract + aggregate)
+#   lib/awl-signals-diff.sh        idempotency ledger
+#   lib/awl-check-excerpts.sh      gate for the proposed text changes + report assembly
+#   lib/awl-check-schedules.sh     scheduler config lint + gate
+#   lib/awl-check-config.sh        ai-assist config lint + allowlist gate
+#   lib/ai-assist-env.sh           locate ai-assist's python and settings
+#   lib/extract-awl-signals.awk    per-PID lock-stack attribution
+#   lib/aggregate-awl-signals.awk  grouping + mechanical baseline
+#
+# Run (<ai-assist> being ai-assist's source tree):
+#   ai-assist /run <ai-assist>/workflows/self-improvement/self-improvement.awl
+#   ai-assist /run <ai-assist>/workflows/self-improvement/self-improvement.awl days=1
+
+@start idempotent
+
+  @set lib_dir = ${script_dir}/lib
+  @set signals_file = ${reports_dir}/self-improvement-signals-${date}.jsonl
+  @set state_file = ${reports_dir}/self-improvement-state.jsonl
+  @set proposals_dir = ${reports_dir}/self-improvement-${date}
+  @set proposals_md = ${proposals_dir}/proposals.md
+  @set report_name = self-improvement-report-${date}
+  @set report_file = ${reports_dir}/${report_name}.md
+
+  # ── Step 1: deterministic extraction + aggregation ───────────────────
+  @task collect_signals @no-history @no-kg max_tool_calls=4
+    Goal: Run exactly this command and nothing else:
+
+    `bash ${lib_dir}/awl-signals-aggregate.sh "${days}" ${signals_file} ${logs_dir} ${tmpdir}/awl-signals.tsv ${source_dir} ${config_dir}`
+
+    The script defaults days to 7 when the value is missing or not a
+    positive integer, so an unset ${days} is safe.
+
+    It prints key=value lines. From its stdout, expose:
+      - signals_file  — the "output=" value
+      - scanned_files — the "scanned_files=" value
+      - signal_count  — the "distinct_signals=" value
+      - scripts_seen  — the "scripts_seen=" value
+      - scorecard     — the whole stdout, verbatim, as one string
+
+    Do not re-run the command, do not parse the JSONL yourself, do not
+    call any other tool.
+
+    Expose: signals_file, scanned_files, signal_count, scripts_seen, scorecard
+  @end
+
+  # ── Step 2: idempotency — keep only findings not yet reported ──────────
+  @task diff_vs_previous @no-history @no-kg max_tool_calls=4
+    Goal: Run exactly this command and nothing else:
+
+    `bash ${lib_dir}/awl-signals-diff.sh ${signals_file} ${state_file}`
+
+    It compares the current signatures with the ledger at ${state_file}
+    (created on first run) and prints key=value counters plus a table.
+
+    Map its stdout to three variables: new_count is the "new_signals="
+    value as an integer, known_count the "known_signatures=" value, and
+    diff_output the whole stdout verbatim as one string.
+
+    Do not call any other tool.
+
+    Expose: new_count, known_count, diff_output
+  @end
+
+  # ── Step 2b: lint the scheduled actions (deterministic) ────────────
+  @task lint_schedules @no-history @no-kg model=low max_tool_calls=3
+    Goal: Run exactly this command and nothing else:
+
+    `bash ${lib_dir}/awl-check-schedules.sh lint ${config_dir} ${proposals_dir} ${source_dir}`
+
+    It prints one "LINT <action>: <issue>" line per problem in the live
+    scheduler config, then lint_issues=<n>, and saves a snapshot of the
+    config as ${proposals_dir}/live-event-schedules.json.
+
+    Keep the whole stdout verbatim as schedule_lint and set lint_issues to
+    the printed number.
+
+    Expose: schedule_lint, lint_issues
+  @end
+
+  # ── Step 2c: lint ai-assist's own configuration (deterministic) ─────
+  @task lint_config @no-history @no-kg model=low max_tool_calls=3
+    Goal: Run exactly this command and nothing else:
+
+    `bash ${lib_dir}/awl-check-config.sh lint ${config_dir} ${signals_file} ${proposals_dir} ${source_dir}`
+
+    It prints INFO lines (facts, e.g. which models the levels use), NOTE
+    lines (report only), LINT lines (actionable problems), CANDIDATE lines
+    (allowlist changes a proposal may make), then config_issues=<n>, and
+    saves snapshots of the allowlists in ${proposals_dir}. It never prints
+    secrets.
+
+    Keep the whole stdout verbatim as config_lint, set config_issues to the
+    printed number, and set review_count to ${new_count} plus
+    ${lint_issues} plus config_issues (an integer).
+
+    Expose: config_lint, config_issues, review_count
+  @end
+
+  # An @if takes a single comparison: review_count = new signals + scheduler
+  # lint issues + config issues
+  @if review_count > 0
+
+    # ── Step 3: classify findings (judgement only, no edits) ────────────
+    @task classify @no-history @no-kg max_tool_calls=26
+      Goal: Classify each NEW finding in ${signals_file}.
+
+      Use internal__json_query with jq to read ONLY the signal records:
+        [.[] | select(.kind=="signal")]             (auto-slurped JSONL)
+
+      ${signals_file} holds ~dozens of records; ignore kind=="script"
+      rows except to compute the per-script failure rate for context.
+
+      Each signal record has: script, task, event, count, first, last,
+      sample, mechanical (a deterministic baseline you may override).
+      Besides .awl scripts, two pseudo-scripts group signals not tied to a
+      .awl file: "scheduler" (scheduled actions, task = action name) and
+      "ai-assist" (ai-assist's own errors, task = exception or component).
+
+      For each record, decide root_cause_class and whether the fix is
+      MECHANICAL (a local, safe edit to the .awl text) or JUDGEMENT
+      (needs a human decision on design/semantics).
+
+      Rules — apply them strictly:
+        * unresolved_var where the variable IS produced by an earlier
+          task in the same script -> prompt typo or missing @set.
+          MECHANICAL. Look at the script to confirm which.
+        * unresolved_var where the variable is NEVER exposed anywhere ->
+          missing "Expose:" or loop-item scoping. MECHANICAL.
+        * task_ok with sample "NO_EXPOSED_VARS", or where every exposed
+          value is an empty list -> weak "Goal:"/"Success:" wording, or a
+          legitimate empty result. JUDGEMENT (empty results are often
+          normal — say so when the task name is a load/state task).
+        * security_reject -> the prompt asks the model to run a command
+          or touch a path outside the allowlist. JUDGEMENT: either
+          rewrite the instruction or extend allowed_commands.json.
+        * budget_turn / budget_extended -> the task is too broad: split it
+          or raise max_tool_calls. JUDGEMENT.
+        * nudge_finish -> the task's Success: criterion does not tell the
+          model when to stop. JUDGEMENT.
+        * tool_desc_warn / skill_warn on script "global" -> tool/skill
+          description bloat beyond 5000 chars. These repeat on every start,
+          so they are NOT ranked findings: leave them out of findings
+          entirely — the report lists them in its own section.
+        * if_eval evaluating to False on every run of a task -> likely a
+          dead branch or an inverted condition. JUDGEMENT.
+        * near_limit -> the run ended at a query limit (the sample says
+          which: 600 s default or the configured AI_ASSIST_QUERY_TIMEOUT): a
+          scheduled action whose prompt does not end in ".awl" runs the
+          script through a capped query, or the run is simply too long.
+          Target: scheduler. JUDGEMENT.
+        * command_refused -> a command the allowlist refused (sample = the
+          command). Three different fixes — pick one:
+          - a shell loop/builtin, eval, awk, rm, inline python, find -exec:
+            the task's wording must change (target: that .awl task);
+          - a script the task legitimately runs: name it in backticks in
+            the task (approved for that task only) — the config lint lists
+            such scripts as NOTE lines, never as CANDIDATE;
+          - a skill's own script (<skill path>/scripts/...): the skill
+            finding below (skill_refused) is the fix;
+          - a refusal older than the task's last change (possibly_fixed) or
+            than the task already naming the command in backticks: likely
+            fixed already.
+          JUDGEMENT.
+        * path_refused -> a tool was refused a path outside the allowed
+          directories: usually the task should use an allowed directory.
+          JUDGEMENT.
+        * skill_refused -> a skill could not run its own script because
+          its SKILL.md does not list internal__execute_skill_script in
+          allowed-tools, or lists it comma-separated (ai-assist splits the
+          field on spaces; the config lint reports this case as "LINT
+          skill ..."); the model then falls back to running the script
+          directly, which the allowlist refuses. Target: target_kind
+          "skill", target_file <skill path>/SKILL.md. MECHANICAL.
+        * action_fail -> a scheduled action failed. Tie it to the traceback,
+          task_fail or tool error at the same time to find the real target.
+          JUDGEMENT.
+        * action_duplicate / reload_burst / lock_rejected -> the scheduler
+          started an action several times (duplicate timers, or several
+          scheduler processes). Serious for actions whose prompt is not an
+          .awl script: nothing stops them running every time. Target:
+          ai-assist. JUDGEMENT.
+        * traceback -> an exception; the sample has "Type @ file:function".
+          A frame in ai-assist's code points at ai-assist; a frame in a
+          third-party library (e.g. aiomqtt) points at its environment or
+          configuration. JUDGEMENT.
+        * tool_validation_error -> a task called a tool with an invalid
+          argument (e.g. empty content): usually the task's wording asks
+          for it. Target: that .awl task. MECHANICAL when the wording is
+          the cause.
+        * tool_loop -> a task repeats the same tool call. Target: that
+          .awl task. JUDGEMENT.
+        * dependency_missing / error_log -> an optional dependency missing,
+          or an ai-assist component logging the same error repeatedly (e.g.
+          a reconnect loop). Target: ai-assist or its environment. JUDGEMENT.
+
+      Also turn each LINT and CANDIDATE line of ${config_lint} into a
+      finding: script "config", task = the file or setting named (e.g.
+      allowed_commands.json), event "config_lint", count 1, sample = the
+      line, mechanical true for junk removals and CANDIDATE additions,
+      target_kind "config", target_file = that file — except "LINT skill
+      <name>" lines: target_kind "skill", target_file = the SKILL.md path
+      in the line, mechanical true. INFO and NOTE lines
+      are not findings: the report shows them as they are.
+
+      Also turn each "LINT <action>: <issue>" line of ${schedule_lint}
+      into a finding: script "scheduler", task = the action name, event
+      "schedule_lint", count 1, sample = the line, mechanical true,
+      target_kind "scheduler", target_file = the action name.
+
+      Also review the shell commands that an internal tool could have run:
+      the shell records of ${signals_file},
+        [.[] | select(.kind=="shell")] | sort_by(-.count) | .[:25]
+      each with the internal tool, the command form (a command and ONE of
+      the options used with it, e.g. "grep -r"; "grep |" means its output
+      was piped), a count and the task using it most. For each distinct tool among them, call introspection__get_tool_help
+      once to read its parameters; when they leave a doubt, try the tool on a
+      small file instead of guessing. Then judge each form:
+        * covered: the tool's parameters do the same (e.g. sed -n N,Mp is
+          internal__read_file with line_start/line_end) — habit;
+        * gap: the tool lacks something the form uses (e.g. searching a
+          directory tree, lines around a match, counting, byte ranges,
+          modification times); for a piped form, ask whether the tool's own
+          options would have made the pipe unnecessary.
+      Keep the verdicts as shell_verdicts, a list of
+        {"tool","form","count","top_task","verdict":"covered|gap","capability":"<missing capability, for a gap>"}.
+      And add up to 3 findings: the missing capabilities with the most
+      occurrences (script "ai-assist", task = the tool, event "tool_gap",
+      count = the total of their forms, sample = the forms, target_kind
+      "ai-assist", mechanical false); and, when covered forms add up to
+      more than gaps, one "shell_habit" finding: if the task using them most
+      names the shell command in its text, target that .awl task (its
+      wording should name the internal tool), otherwise target ai-assist
+      (its tool descriptions or system prompt should steer to the tool).
+
+      Also review the security questions the user had to answer: the
+      prompt records of ${signals_file},
+        [.[] | select(.kind=="prompt")] | sort_by(-.count) | .[:25]
+      each with the question kind ("command": approve a command; "path":
+      access a path outside the allowed ones), its form, the internal tool
+      that could have done the command ("-" when none is known), a count
+      split into approved / denied / auto_denied (asked in a workflow, where
+      nobody can answer: a refusal), the task asking most ("unknown::-":
+      an interactive session, not a workflow) and a sample question. Judge each form from its sample:
+        * tool: an internal tool could have done the job without a
+          question (reading, searching, listing, editing or writing a file,
+          querying JSON — e.g. a python3 heredoc that only edits a file is
+          internal__edit_file);
+        * false_positive: the question should not have been asked — e.g.
+          a "path" that is not a path (a sed/awk program such as
+          /^STDERR:/,$d, or a command argument such as /help), or a
+          read-only command treated as risky;
+        * allowlist: a legitimate, recurring command or path the user
+          always approves — a candidate for the allowlists;
+        * legit: the question is the right call.
+      Keep the verdicts as prompt_verdicts, a list of
+        {"prompt","form","count","approved","denied","auto_denied","top_task","verdict":"tool|false_positive|allowlist|legit","note":"<the internal tool, or why>"}.
+      And add up to 3 findings, by count: false_positive forms (script
+      "ai-assist", task "security_prompt", event "prompt_false_positive",
+      target_kind "ai-assist": how ai-assist reads the command should
+      change), and tool forms (event "prompt_avoidable": if the task asking
+      most names the shell command in its text, target that .awl task, its
+      wording should name the internal tool; otherwise target ai-assist,
+      its tool descriptions or system prompt should steer to the tool);
+      sample = the form and its sample question, mechanical false.
+
+      Ignore entirely: model_level, run_start, run_end. Do not report a
+      finding you cannot tie to a concrete script + task + event.
+
+      Check whether each target file (.awl or SKILL.md) changed after its
+      evidence: get the files' modification times in ONE command (it also
+      covers edits not committed yet), e.g.
+        `stat -c '%y %n' <workflow path> <skill path>/SKILL.md`
+      (a workflow's path is the "path" of its script record in
+      ${signals_file}; a skill's is in ${proposals_dir}/live-installed-skills.json)
+      and set possibly_fixed=true when a finding's "last" occurrence is older
+      than its file's modification time — the file may already address it.
+
+      Build findings as a list of objects:
+        {"id": "1..n", "script","task","event","count","first","last",
+         "sample","root_cause_class","mechanical":true|false,
+         "confidence":"high|medium|low","evidence":["<quoted log sample>"],
+         "target_kind":"awl|scheduler|ai-assist|config|skill",
+         "target_file":"<absolute path of the workflow or SKILL.md, action name, ai-assist module, or tool/skill name>",
+         "possibly_fixed":true|false}
+
+      Rank by min(count, 50) x (mechanical ? 3 : 1), descending — the cap
+      keeps a log flood (thousands of identical lines) from taking every
+      slot — with possibly_fixed
+      findings after all the others, keep at most 10 findings, and number
+      them 1..n in that order: this id is used for every proposal, proposal
+      file and report row. If classifying a record needs the script's text, read
+      the file with internal__read_file — do not guess.
+
+      Expose: findings, shell_verdicts, prompt_verdicts
+    @end
+
+    # ── Step 4: draft proposals (never applied) ────────────────────────
+    @task propose @no-history @no-kg max_tool_calls=30
+      Goal: Write a reviewable proposal for each of ${findings}. Nothing is
+      applied to any file: you are READ-ONLY on every .awl file, skill and
+      config file.
+
+      A finding with possibly_fixed=true gets no change, config copy or
+      issue draft: its **Change** is "none — possibly fixed by the later edit
+      of <file>; check whether it comes back after the next run". If it
+      does, the next run reports it again.
+
+      Hard constraints — a proposal that breaks one is worthless:
+        1. Use only internal__read_file and internal__write_file, and write
+           only inside ${proposals_dir} (internal__write_file creates the
+           directory). Run no shell command.
+        2. Before proposing a change to a file, read its CURRENT text with
+           internal__read_file. Quote unchanged lines verbatim from that
+           read, with their exact indentation.
+        3. Text changes (target_kind "awl", or "skill" on a SKILL.md) are
+           written in ${proposals_md} as a line
+             **File**: <the target_file: the absolute path of the workflow or SKILL.md>
+           followed by a fenced block whose opening fence is three
+           backquotes and the word diff. In that block every line starts
+           with a space (unchanged), "-" (removed) or "+" (added); put 1 to
+           3 unchanged lines before and after each change, and a line "@@"
+           between two changes far apart in the file. Keep each change
+           short: only the lines that change. A deterministic gate in Step
+           5 rejects a change whose unchanged and removed lines are not, in
+           that order, consecutive lines of the current file, or that
+           leaves a .awl file unparsable. Give one for every mechanical
+           finding, and for a judgement finding when the fix is clear.
+        4. Tool bloat findings (a tool name, not a file) get a description
+           only.
+        5. Scheduler findings that a config edit fixes (target_kind
+           "scheduler", e.g. a schedule_lint finding): read the snapshot
+           ${proposals_dir}/live-event-schedules.json (the live config dir
+           is not readable) and write the COMPLETE proposed copy to
+           ${proposals_dir}/NN-event-schedules.json, NN being the finding
+           id on two digits, changing only the actions the finding is about
+           and keeping everything else identical. Never add or remove an
+           action, and never write to ${config_dir}. Other scheduler
+           findings get a description only.
+        6. ai-assist findings (target_kind "ai-assist"): write an issue
+           draft to ${proposals_dir}/NN-ai-assist-issue.md with: a title;
+           Symptom; Evidence (counts, first/last timestamps, the log sample);
+           Location (exception and file:function when there is a traceback);
+           Suggested fix; Suggested test. ai-assist is a public project:
+           describe the mechanism generically — no internal workflow names,
+           ticket keys, job ids, hosts, repos or partner names. A tool_gap
+           finding is a feature request instead: the missing capability,
+           the shell forms used in its place with their counts, and the
+           parameter to add to the tool (name, type, behavior).
+        7. Config findings (target_kind "config") on allowed_commands.json
+           or allowed_paths.json: read the snapshot
+           ${proposals_dir}/live-<file> and write the COMPLETE proposed list
+           to ${proposals_dir}/NN-<file> (e.g. 03-allowed_commands.json),
+           whose only changes are removing the junk entries and adding the
+           CANDIDATE commands listed in ${config_lint} — nothing else, the
+           gate rejects any other change. One proposal per file covering all
+           its findings, NN being the lowest of their ids. Do not add a
+           command that a backticked mention in the .awl task would approve
+           for that task only: propose that .awl change instead. Findings
+           about .env, models, timeouts or event sources get a description
+           only: never read .env, it holds API keys.
+        8. Skill findings (target_kind "skill"): a text change on
+           <skill path>/SKILL.md fixing its allowed-tools entry.
+
+      Then write ${proposals_md}: it is appended verbatim to the report, so
+      write it for a human reader. Per finding, in finding id order:
+        ## <id>. <script> :: <task> — <event> x<count>
+        **Why** (evidence: timestamps + the quoted log sample)
+        **Root cause**: <class> · mechanical: yes/no · confidence: <>
+        **Possibly fixed**: yes/no (from possibly_fixed)
+        **Change**: the **File** line and diff block (rule 3), or the
+          config, allowlist or issue filename, or "description only"
+          followed by what to change
+        **Verify**: the exact commands a human runs afterwards, as a code
+          block, e.g. a run of the workflow with
+          ai-assist /run <workflow path> followed by a count of
+          the error in ${logs_dir}/ai-assist.log (do not run them yourself)
+        **Risk**: what could break if this is wrong.
+
+      Keep it terse: 10 proposals at most, most valuable first.
+
+      Expose: proposals_written
+    @end
+
+    # ── Step 5: deterministic gates on the proposals ───────────────────
+    @task validate_proposals @no-history @no-kg max_tool_calls=8
+      Goal: Run exactly these three commands and nothing else:
+
+      `bash ${lib_dir}/awl-check-excerpts.sh check ${proposals_md} ${signals_file} ${config_dir} ${source_dir}`
+      `bash ${lib_dir}/awl-check-schedules.sh gate ${config_dir} ${proposals_dir} ${source_dir}`
+      `bash ${lib_dir}/awl-check-config.sh gate ${config_dir} ${signals_file} ${proposals_dir} ${source_dir}`
+
+      They check the text changes in the proposals (the before text is in
+      the current file, an edited .awl still parses), the scheduler config proposals (valid JSON, every action
+      accepted by ai-assist's loader, same actions, lint clean) and the allowlist proposals
+      (only junk removals and safe CANDIDATE additions). Each prints
+      OK/REJECT lines and accepted_*= / rejected_*= counters.
+
+      Map the counters to integers and keep the three stdouts verbatim, one
+      after the other, as gate_output.
+
+      Expose: accepted_changes, rejected_changes, accepted_config, rejected_config, accepted_allowlist, rejected_allowlist, gate_output
+    @end
+
+    # ── Step 6: the report ─────────────────────────────────────────────
+    @task report @no-history @no-kg max_tool_calls=8
+      Goal: Write the report with internal__write_report, name
+      "${report_name}", format "md". The proposals themselves are NOT part
+      of what you write: the next step appends ${proposals_md} verbatim
+      after your text, so end with the "## Proposals" section below.
+
+      Use only data already gathered in this run:
+        - ${scorecard} for the per-script table
+        - ${diff_output} for the new-vs-known counters
+        - ${findings} for the ranked fixes
+        - ${gate_output} for the gate results
+        - ${proposals_dir} for the proposal file names
+
+      Sections:
+
+      # Self-Improvement Report — ${date}
+
+      **Window:** ${days} day(s) · **Log files scanned:** ${scanned_files}
+      · **Distinct signals:** ${signal_count} · **Scripts seen:** ${scripts_seen}
+      **New since last run:** ${new_count} (known: ${known_count})
+
+      ## Script scorecard
+
+      One row per script from ${scorecard}:
+      | Script | Runs | Task-fail % | Unresolved vars | Security rejections | Budget/nudge | Always-False @if |
+
+      Flag any script whose task-fail rate or unresolved-var count is
+      non-zero with ⚠️.
+
+      ## Ranked fixes
+
+      A table: finding id (the same numbers as the proposals below and the
+      proposal files), script::task, event, occurrences, mechanical?,
+      confidence, possibly fixed?, gate result (OK / REJECT / none),
+      one-line fix. The details follow in "## Proposals".
+
+      ## Proposal gates
+
+      From ${gate_output}: accepted / rejected counts for the text
+      changes, the scheduler config proposals and the allowlist
+      proposals, and every REJECT reason verbatim. Say
+      plainly what a rejection means: a stale or invented excerpt or an
+      edit that breaks the script, a config ai-assist would not load or
+      that still has the issue, or an allowlist change outside the
+      policy. Issue drafts are not gated: they are for a human to review
+      before filing.
+      For accepted config proposals, say how to apply one: compare it with
+      the live ${config_dir}/event-schedules.json, then copy it over (the
+      scheduler reloads the file on change).
+
+      ## ai-assist and scheduler
+
+      Scheduled actions: read the action records from ${signals_file} with
+      internal__json_query, [.[] | select(.kind=="action")], and show
+      | Action | Runs | OK | Failed | Duplicate starts |
+      flagging with ⚠️ any action with failures or duplicate starts.
+      Then the scheduler lint from ${schedule_lint}, and the findings whose
+      target_kind is "scheduler" or "ai-assist" with their evidence and the
+      config proposal or issue draft file written for each. ai-assist is a public project: describe its
+      problems generically (mechanism, module, exception), without naming
+      internal workflows, tickets, jobs or hosts.
+
+      ## Shell commands instead of internal tools
+
+      From ${shell_verdicts}: | Tool | Shell form | Count | Most used by |
+      Verdict | Missing capability |, sorted by count, then one line per
+      tool_gap / shell_habit finding id.
+
+      ## Security questions
+
+      From ${prompt_verdicts}: | Kind | Form | Count | Approved / denied /
+      auto-denied | Most asked by | Verdict | Note |, sorted by count, then
+      one line per prompt_false_positive / prompt_avoidable finding id.
+
+      ## Configuration
+
+      From ${config_lint}: the INFO lines as facts (models used by each
+      level, query timeout, permission mode, event sources) — state them,
+      do not judge a deliberate choice; then the LINT lines (actionable),
+      the NOTE lines (report only: entries that allow arbitrary code, broad
+      paths, refusals that need a prompt fix), and each allowlist proposal
+      with its gate result. To apply an accepted allowlist proposal: compare
+      it with the live file in ${config_dir}, copy it over, and restart
+      ai-assist (the allowlists are read at start).
+
+      ## Prompt & skill hygiene
+
+      Not ranked findings: read them from ${signals_file} with
+      internal__json_query, [.[] | select(.kind=="signal" and (.event=="tool_desc_warn" or .event=="skill_warn"))],
+      and list each tool or skill with its current length vs the 5000-char
+      maximum, one table, no proposal.
+
+      ## Artefacts
+
+      - signals: ${signals_file}
+      - ledger: ${state_file}
+      - config and allowlist proposals, issue drafts: ${proposals_dir}
+
+      ## What this run did NOT do
+
+      One line: no workflow, skill, config file or ticket was
+      modified; every change below is a proposal awaiting human review.
+
+      ## Proposals
+
+      One line: per finding, the evidence and the proposed change; a change
+      marked REJECT in "Proposal gates" must not be applied as is.
+
+      Be concise and specific. Every claim must cite a count or a log
+      timestamp from the data above. Do not invent findings. Do not restate
+      the proposals (evidence, diffs, verify steps): refer to them by
+      finding id — they follow in full after your text.
+
+      Expose: report_written
+    @end
+
+    @task assemble_report @no-history @no-kg model=low max_tool_calls=3
+      Goal: Run exactly this command and nothing else:
+
+      `bash ${lib_dir}/awl-check-excerpts.sh append ${proposals_md} ${report_file}`
+
+      It appends the proposals to the report verbatim. Expose its stdout as
+      assembled.
+
+      Expose: assembled
+    @end
+
+  @else
+
+    @task report_no_change @no-history @no-kg max_tool_calls=6
+      Goal: No new findings since the last run (new_count=0 for a
+      ${days}-day window), no scheduler lint issue and no config issue.
+      Still show the INFO lines of ${config_lint}. Write a short report with
+      internal__write_report, name "${report_name}", format "md":
+
+      # Self-Improvement Report — ${date}
+
+      **No new findings.** The ${known_count} known signatures are
+      unchanged over the last ${days} day(s); nothing to propose.
+
+      Then show the scorecard from ${scorecard} (per-script table, same
+      columns as usual) so a stable-but-bad baseline stays visible, and
+      state that the ledger at ${state_file} already covers every finding.
+
+      Expose: report_written
+    @end
+
+  @end
+
+  # ── Step 7: close the loop (deterministic ledger update) ────────────
+  # --record-state appends only signatures absent from the ledger, so a
+  # second run in the same window records nothing. `accepted` starts as
+  # "unknown"; flipping it to true/false later builds a labelled training
+  # set for tuning the classifier.
+  @task record_state @no-history @no-kg max_tool_calls=4
+    Goal: Run exactly this command and nothing else:
+
+    `bash ${lib_dir}/awl-signals-diff.sh ${signals_file} ${state_file} --record-state`
+
+    Confirm from its stdout that known_signatures and total_signals are
+    present, then expose the final ledger size.
+
+    Expose: ledger_size
+  @end
+
+  @return findings
+
+@end

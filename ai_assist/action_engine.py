@@ -60,9 +60,18 @@ class ActionEngine:
                     raise_on_api_error=True,
                 )
             else:
-                output = await self.agent.query(
-                    prompt, max_turns=action.max_turns, max_time_seconds=NO_TIME_LIMIT, raise_on_api_error=True
-                )
+                from .awl_executor import action_script_failure, trusted_action_prompt
+
+                # The action is user-approved: the scripts its own prompt names are
+                # trusted like a prompt that is a script path. Not the event data.
+                with trusted_action_prompt(action.prompt):
+                    output = await self.agent.query(
+                        prompt, max_turns=action.max_turns, max_time_seconds=NO_TIME_LIMIT, raise_on_api_error=True
+                    )
+                    # The model may carry on after its script failed: the action still failed
+                    failure = action_script_failure()
+                if failure:
+                    raise RuntimeError(f"AWL script failed: {failure}")
 
             evaluator = ConditionEvaluator()
             metadata = evaluator.extract_metadata(output)

@@ -288,7 +288,13 @@ Commands in backticks are **auto-authorized** by the runtime: they are temporari
 This only applies to scripts the user started: `ai-assist /run`, and actions
 (`internal__create_action`) whose AWL prompt the user confirmed. When the agent
 runs a script itself (`introspection__execute_awl_script`), its commands go
-through the normal allowlist and confirmation.
+through the normal allowlist and confirmation — unless an action is running
+whose own prompt names that script (e.g. "1. Run ~/flows/weekly.awl with
+days=7. 2. Email the report."): creating such an action asks for the same
+confirmation, and the script then runs as if it were the action's prompt.
+Only the action's prompt counts, not the event data added to it, and the
+paths must match once resolved. If the last run of such a script failed, the
+action is reported as failed even when the agent carries on and ends normally.
 
 Commands are taken from the script text, never from interpolated values. A
 `${var}` may only choose a directory, with the script name written literally
@@ -354,6 +360,9 @@ AWL automatically injects built-in variables into every execution. These are ava
 | `reports_dir` | Reports directory (`~/ai-assist/reports`) |
 | `logs_dir` | Logs directory (`~/.ai-assist/logs`) |
 | `tmpdir` | Session-scoped temporary directory (created at startup, cleaned up on exit) |
+| `source_dir` | Top directory of the ai-assist source tree (parent of the `ai_assist` package) |
+| `script_path` | Absolute path of the running `.awl` script |
+| `script_dir` | Absolute directory containing the running `.awl` script |
 
 ## User-Defined Variables (`variables.yaml`)
 

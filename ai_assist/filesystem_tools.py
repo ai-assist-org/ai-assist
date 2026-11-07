@@ -752,6 +752,15 @@ def compute_allowlist_prefixes(command: str) -> list[str]:
     return prefixes
 
 
+def _code_execution_entry(interpreter: str, marker: str) -> str | None:
+    """The allowlist entry permitting a python invocation (see _gate_code_execution), or None."""
+    if marker.startswith("<script:"):
+        return f"{interpreter} {Path(marker[len('<script:') : -1]).expanduser().resolve()}"
+    if marker.startswith("<module:"):
+        return f"{interpreter} -m {marker[len('<module:') : -1]}"
+    return None
+
+
 def compute_allowlist_prefix(command: str) -> str | None:
     """Compute a meaningful allowlist prefix from a command string.
 
@@ -1490,6 +1499,9 @@ class FilesystemTools:
         self.awl_authorized_commands: set[str] = set()
         self._confirmations: list[dict] = []
         self._saved_outputs = 0  # command outputs saved by _save_full_output
+        # question -> the allowlist entry that permits it (None: cannot be allowed
+        # permanently); see allowlist_entry_for
+        self._allowlist_entries: dict[str, str | None] = {}
 
     def set_permission_mode(self, mode: str) -> str | None:
         """Set a session-only permission mode, returning an error if invalid."""
@@ -1931,6 +1943,17 @@ class FilesystemTools:
         """Return confirmation events since the last drain and clear the buffer."""
         events, self._confirmations = self._confirmations, []
         return events
+
+    def allowlist_entry_for(self, question: str) -> str | None:
+        """The allowlist entry that would permit what a question asked, for an "always allow" answer.
+
+        None when it cannot be allowed permanently (arbitrary code: python -c,
+        stdin, awk programs...). Questions about an ordinary command fall back to
+        its command prefix.
+        """
+        if question in self._allowlist_entries:
+            return self._allowlist_entries[question]
+        return compute_allowlist_prefix(question)
 
     async def _ask_command(self, description: str) -> bool:
         """Invoke the command-approval callback and record the question + answer."""
@@ -2611,15 +2634,17 @@ class FilesystemTools:
             return None
         if path_or_marker.startswith("<module:") and self._is_python_module_allowlisted(cmd_name, path_or_marker[8:-1]):
             return None
-        if path_or_marker.startswith("<script:") and self._is_invocation_allowlisted(
-            [cmd_name, path_or_marker[len("<script:") : -1]]
+        if path_or_marker.startswith("<script:") and self._is_script_allowlisted(
+            cmd_name, path_or_marker[len("<script:") : -1]
         ):
             return None
         if self.confirmation_callback is None:
             # A bare interpreter on the allowlist is not enough to run arbitrary
             # code non-interactively; the specific invocation must be allowlisted.
             return f"Error: {cmd_name} {path_or_marker} execution is not allowed in non-interactive mode."
-        if not await self._ask_command(f"{cmd_name} {path_or_marker.strip('<>')} execution: {command}"):
+        question = f"{cmd_name} {path_or_marker.strip('<>')} execution: {command}"
+        self._allowlist_entries[question] = _code_execution_entry(cmd_name, path_or_marker)
+        if not await self._ask_command(question):
             return f"Error: {cmd_name} {path_or_marker} execution rejected by user."
         return None
 
@@ -2680,9 +2705,28 @@ class FilesystemTools:
                 continue
             if self.confirmation_callback is None:
                 return f"Error: {name} runs arbitrary code and needs confirmation; not allowed non-interactively."
-            if not await self._ask_command(f"{name} runs arbitrary code/package: {command}"):
+            question = f"{name} runs arbitrary code/package: {command}"
+            self._allowlist_entries[question] = None
+            if not await self._ask_command(question):
                 return f"Error: {name} invocation rejected by user."
         return None
+
+    def _is_script_allowlisted(self, interpreter: str, script: str) -> bool:
+        """Whether an entry "<interpreter> <script path>" names this script.
+
+        Paths are compared once resolved, so "python3 tools/x.py" matches an entry
+        with its absolute path. Entries "<interpreter> script:<path>", saved by
+        older versions on "always allow", are honored.
+        """
+        target = Path(script).expanduser().resolve()
+        for entry in self.allowed_commands:
+            parts = entry.split()
+            if len(parts) != 2 or parts[0] != interpreter:
+                continue
+            path = parts[1].removeprefix("script:")
+            if Path(path).expanduser().resolve() == target:
+                return True
+        return False
 
     def _is_invocation_allowlisted(self, tokens: list[str]) -> bool:
         """Whether a multi-token allowlist entry explicitly permits this invocation."""
@@ -2909,12 +2953,7 @@ class FilesystemTools:
         if not command:
             return "Error: command parameter is required"
 
-        # Block commands that target protected security config files
-        config_dir = str(get_config_dir().resolve())
-        for protected in PROTECTED_CONFIG_FILES:
-            protected_path = f"{config_dir}/{protected}"
-            if protected_path in command or f"~/.ai-assist/{protected}" in command:
-                return f"Error: {protected} is a protected security config file and cannot be modified by the agent."
+        # Block commands that write protected security config files (reading them is fine)
         for cmd_name, path in _extract_command_argument_paths(command, working_dir):
             if cmd_name in _WRITE_TARGET_SOURCES and self._is_protected_config(path):
                 return (

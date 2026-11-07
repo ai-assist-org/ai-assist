@@ -95,6 +95,7 @@ def test_generate_builtin_variables_keys():
         "reports_dir",
         "logs_dir",
         "tmpdir",
+        "source_dir",
     }
     assert set(result.keys()) == expected_keys
 
@@ -270,3 +271,96 @@ async def test_cli_run_succeeds_with_builtin_date_var(tmp_path):
 
             mock_exec.return_value = WorkflowResult(success=True, return_value="ok")
             await run_awl_script(agent, str(script), variables={})
+
+
+# ── script_path / script_dir ─────────────────────────────────────
+
+
+def test_merge_all_variables_includes_script_location(tmp_path):
+    script = tmp_path / "sub" / "flow.awl"
+    with patch("ai_assist.awl_executor.load_local_variables", return_value={}):
+        result = _merge_all_variables(script_path=script)
+    assert result["script_path"] == str(script.resolve())
+    assert result["script_dir"] == str(script.resolve().parent)
+
+
+def test_merge_all_variables_without_script_has_no_script_location():
+    with patch("ai_assist.awl_executor.load_local_variables", return_value={}):
+        result = _merge_all_variables()
+    assert "script_path" not in result
+    assert "script_dir" not in result
+
+
+def test_script_location_vars_not_reported_as_missing(tmp_path):
+    from ai_assist.awl_parser import AWLParser
+
+    source = "@start\n@set p = ${script_dir}/data ${script_path}\n@end\n"
+    workflow = AWLParser(source).parse()
+
+    with patch("ai_assist.awl_executor.load_local_variables", return_value={}):
+        missing = get_missing_variables(workflow, script_path=tmp_path / "flow.awl")
+    assert missing == set()
+
+
+@pytest.mark.asyncio
+async def test_run_awl_script_exposes_script_location(tmp_path):
+    from ai_assist.awl_executor import run_awl_script
+    from ai_assist.awl_runtime import WorkflowResult
+
+    script = tmp_path / "flow.awl"
+    script.write_text("@start\n@set p = ${script_dir}\n@end\n")
+
+    with (
+        patch("ai_assist.awl_executor.load_local_variables", return_value={}),
+        patch("ai_assist.awl_runtime.AWLRuntime.execute") as mock_exec,
+    ):
+        mock_exec.return_value = WorkflowResult(success=True, return_value="ok")
+        await run_awl_script(str(script), MagicMock())
+
+    variables = mock_exec.call_args.kwargs["variables"]
+    assert variables["script_path"] == str(script.resolve())
+    assert variables["script_dir"] == str(tmp_path.resolve())
+
+
+@pytest.mark.asyncio
+async def test_cli_run_accepts_script_dir_var(tmp_path):
+    from ai_assist.awl_runtime import WorkflowResult
+    from ai_assist.main import run_awl_script
+
+    script = tmp_path / "flow.awl"
+    script.write_text("@start\n@set p = ${script_dir}/data\n@end\n")
+
+    with (
+        patch("ai_assist.awl_executor.load_local_variables", return_value={}),
+        patch("ai_assist.awl_runtime.AWLRuntime.execute") as mock_exec,
+    ):
+        mock_exec.return_value = WorkflowResult(success=True, return_value="ok")
+        await run_awl_script(MagicMock(), str(script), variables={})
+    mock_exec.assert_called_once()
+
+
+def test_generate_builtin_variables_source_dir():
+    import ai_assist
+
+    result = _generate_builtin_variables()
+    assert result["source_dir"] == str(Path(ai_assist.__file__).resolve().parent.parent)
+    assert (Path(result["source_dir"]) / "ai_assist" / "awl_executor.py").exists()
+
+
+@pytest.mark.asyncio
+async def test_run_awl_script_gives_the_runtime_its_script_path(tmp_path):
+    """The runtime needs the script to attribute audited tool calls to it."""
+    from ai_assist.awl_executor import run_awl_script
+    from ai_assist.awl_runtime import WorkflowResult
+
+    script = tmp_path / "flow.awl"
+    script.write_text("@start\n@set p = x\n@end\n")
+
+    with (
+        patch("ai_assist.awl_executor.load_local_variables", return_value={}),
+        patch("ai_assist.awl_runtime.AWLRuntime") as runtime_cls,
+    ):
+        runtime_cls.return_value.execute = AsyncMock(return_value=WorkflowResult(success=True, return_value="ok"))
+        await run_awl_script(str(script), MagicMock())
+
+    assert runtime_cls.call_args.kwargs["script_path"] == str(script.resolve())

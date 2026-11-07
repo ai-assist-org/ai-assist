@@ -1786,6 +1786,52 @@ Task blocks show brief description; hover reveals full goal, context, constraint
 \end{columns}
 \end{frame}
 
+% ── Slide: Self-Improvement Workflow ──────────────────────────────
+\begin{frame}[fragile]{Self-Improvement: ai-assist Reviews Itself}
+\begin{columns}[T]
+\begin{column}{0.48\textwidth}
+\textbf{Mines its own logs and configuration}
+\begin{itemize}\scriptsize\setlength{\itemsep}{1pt}
+  \item \textbf{Workflows}: failed tasks, unresolved variables, refused commands, tasks that never report
+  \item \textbf{Skills}: scripts a skill cannot run, oversized descriptions
+  \item \textbf{Scheduler}: failures, double starts, config mistakes
+  \item \textbf{Config}: junk allowlist entries, exposed \texttt{.env}, failing event sources
+  \item \textbf{ai-assist}: repeated errors $\rightarrow$ issue drafts
+  \item \textbf{Tools}: shell used instead of an internal tool $\rightarrow$ habit or missing feature
+\end{itemize}
+
+\smallskip
+\textbf{Read-only}
+\begin{itemize}\scriptsize\setlength{\itemsep}{1pt}
+  \item One report: ranked findings + proposals
+  \item A human reviews and applies every change
+  \item Ledger: each finding reported once
+\end{itemize}
+\end{column}
+\begin{column}{0.48\textwidth}
+\centering
+\begin{tikzpicture}[
+  step/.style={draw=#1, fill=#1!15, rounded corners=4pt,
+    font=\scriptsize\sffamily, minimum width=3.6cm, minimum height=0.6cm,
+    align=center, text=#1!80!black},
+  arr/.style={-{Stealth}, thick, gray},
+  node distance=3mm
+]
+  \node[step=rhblue] (ext) {Extract + count signals\\{\tiny deterministic (awk)}};
+  \node[step=rhorange, below=of ext] (cls) {Classify + propose\\{\tiny model}};
+  \node[step=rhgreen, below=of cls] (gate) {Gates\\{\tiny excerpt exists, still parses,}\\{\tiny loader accepts, allowlist policy}};
+  \node[step=rhpurple, below=of gate] (rep) {Report\\{\tiny human review}};
+  \draw[arr] (ext) -- (cls);
+  \draw[arr] (cls) -- (gate);
+  \draw[arr] (gate) -- (rep);
+\end{tikzpicture}
+
+\smallskip
+{\scriptsize\texttt{ai-assist /run workflows/self-improvement/\\self-improvement.awl days=14}}
+\end{column}
+\end{columns}
+\end{frame}
+
 % ══════════════════════════════════════════════════════════════════
 \section{What's Next?}
 % ══════════════════════════════════════════════════════════════════

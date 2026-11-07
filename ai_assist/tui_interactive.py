@@ -1202,14 +1202,14 @@ async def tui_interactive_mode(agent: AiAssistAgent, state_manager: StateManager
         approved = choice in ("y", "yes", "a", "always")
         logger.info("Security prompt: command %s by user: %s", "approved" if approved else "denied", command[:200])
         if choice in ("a", "always"):
-            from .filesystem_tools import compute_allowlist_prefix
-
-            prefix = compute_allowlist_prefix(command)
+            prefix = agent.filesystem_tools.allowlist_entry_for(command)
             if prefix and prefix not in agent.filesystem_tools.allowed_commands:
                 agent.filesystem_tools.add_permanent_allowed_command(prefix)
                 console.print(f"[green]'{prefix}' permanently added to allowed commands[/green]")
             elif not prefix:
-                console.print("[yellow]Approved for this session only[/yellow]")
+                console.print(
+                    "[yellow]Approved this time only: running arbitrary code cannot be always allowed[/yellow]"
+                )
         return approved
 
     async def path_confirmation_callback(description: str) -> bool:

@@ -2459,3 +2459,26 @@ async def test_task_without_max_time_has_no_time_limit(mock_agent, runtime):
     task_calls = [c for c in mock_agent.query.call_args_list if "You are executing task" in c[0][0]]
     assert task_calls[0].kwargs["max_time_seconds"] == NO_TIME_LIMIT
     assert task_calls[1].kwargs["max_time_seconds"] == 900
+
+
+@pytest.mark.asyncio
+async def test_task_tool_calls_are_audited_with_script_and_task(mock_agent, tmp_path):
+    import json
+
+    from ai_assist.audit import AuditLogger
+
+    mock_agent.audit_logger = AuditLogger(audit_dir=tmp_path)
+
+    async def query(*args, **kwargs):
+        mock_agent.audit_logger.log_tool_call("internal__read_file", {"path": "/tmp/f"}, "ok", success=True)
+        return "done"
+
+    mock_agent.query = AsyncMock(side_effect=query)
+    workflow = WorkflowNode(body=[TaskNode(task_id="gather", goal="Gather things.")])
+
+    await AWLRuntime(mock_agent, script_path="/flows/demo.awl").execute(workflow)
+    mock_agent.audit_logger.log_tool_call("internal__read_file", {"path": "/tmp/g"}, "ok", success=True)
+
+    entries = [json.loads(line) for line in (tmp_path / "tool_calls.jsonl").read_text().splitlines()]
+    assert (entries[0]["script"], entries[0]["task"]) == ("/flows/demo.awl", "gather")
+    assert "task" not in entries[1]

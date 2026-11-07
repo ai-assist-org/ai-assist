@@ -183,3 +183,53 @@ def test_log_tool_call_omits_confirmations_when_none(tmp_path):
     logger.log_tool_call("x__y", {}, "ok", success=True)
     entry = json.loads((tmp_path / "tool_calls.jsonl").read_text().strip())
     assert "confirmations" not in entry
+
+
+def _entries(audit_dir):
+    return [json.loads(line) for line in (audit_dir / "tool_calls.jsonl").read_text().splitlines()]
+
+
+def test_entries_outside_a_workflow_have_no_task(logger, audit_dir):
+    logger.log_tool_call("internal__read_file", {"path": "/tmp/f"}, "ok", success=True)
+    [entry] = _entries(audit_dir)
+    assert "script" not in entry
+    assert "task" not in entry
+
+
+def test_task_context_attributes_entries_to_the_workflow_task(logger, audit_dir):
+    with logger.task_context("/flows/outer.awl", "gather"):
+        logger.log_tool_call("internal__read_file", {"path": "/tmp/f"}, "ok", success=True)
+        with logger.task_context("/flows/inner.awl", "fetch"):
+            logger.log_tool_call("internal__read_file", {"path": "/tmp/g"}, "ok", success=True)
+        logger.log_tool_call("internal__read_file", {"path": "/tmp/h"}, "ok", success=True)
+    logger.log_tool_call("internal__read_file", {"path": "/tmp/i"}, "ok", success=True)
+
+    tasks = [(e.get("script"), e.get("task")) for e in _entries(audit_dir)]
+    assert tasks == [
+        ("/flows/outer.awl", "gather"),
+        ("/flows/inner.awl", "fetch"),
+        ("/flows/outer.awl", "gather"),
+        (None, None),
+    ]
+
+
+def test_task_context_is_restored_on_error(logger, audit_dir):
+    with pytest.raises(RuntimeError), logger.task_context("/flows/a.awl", "t"):
+        raise RuntimeError("boom")
+    logger.log_tool_call("internal__read_file", {"path": "/tmp/f"}, "ok", success=True)
+    assert "task" not in _entries(audit_dir)[0]
+
+
+def test_confirmation_questions_are_sanitized(logger, audit_dir):
+    logger.log_tool_call(
+        "internal__execute_command",
+        {"command": "x"},
+        "ran",
+        success=True,
+        confirmations=[
+            {"kind": "command", "question": "curl -H 'Authorization: ghp_abc123secret'", "decision": "approved"}
+        ],
+    )
+    [entry] = _entries(audit_dir)
+    assert "ghp_abc123secret" not in entry["confirmations"][0]["question"]
+    assert entry["confirmations"][0]["decision"] == "approved"
