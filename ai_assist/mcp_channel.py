@@ -73,4 +73,5 @@ class MCPChannelRouter:
             description=f"Channel message from {server}",
             max_turns=20,
             max_time_seconds=300,
+            notify_agent=False,  # it replies through the channel tool itself
         )

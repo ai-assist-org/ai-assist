@@ -42,6 +42,9 @@ class SystemPromptBuilder:
                     try:
                         entry = json_module.loads(line)
                         ts = datetime.fromisoformat(entry["timestamp"])
+                        # The session's own background tasks are handed to the agent directly
+                        if str(entry.get("action_name", "")).startswith("background:"):
+                            continue
                         if ts >= cutoff:
                             recent.append(entry)
                     except json_module.JSONDecodeError, KeyError, ValueError:
