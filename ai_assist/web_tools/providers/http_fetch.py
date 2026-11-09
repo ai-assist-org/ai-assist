@@ -69,6 +69,11 @@ class HttpFetchProvider:
             # normal logs with expected dead ends.
             logger.debug("HTTP fetch of %s returned %s", url, e.response.status_code)
             raise ProviderError(f"HTTP {e.response.status_code}") from e
+        except httpx.TransportError as e:
+            # Same for an unreachable site (timeout, refused connection, DNS, TLS):
+            # an ordinary dead end, reported to the agent. Traceback kept at debug.
+            logger.debug("HTTP fetch of %s failed", url, exc_info=True)
+            raise ProviderError(f"HTTP request failed: {type(e).__name__}: {e}".rstrip(": ")) from e
         except httpx.HTTPError as e:
             logger.exception("HTTP fetch of %s failed", url)
             raise ProviderError(f"HTTP request failed: {e}") from e
