@@ -80,7 +80,10 @@ class ActionScheduler:
             elif action.is_event_based:
                 logger.info("Loaded event action: %s (trigger: %s)", action.name, action.trigger_type)
 
-        await self._start_event_sources()
+        # Under the reload lock: a reload during start-up would otherwise create a
+        # second manager and orphan the listeners of the first one.
+        async with self._reload_lock:
+            await self._start_event_sources()
 
         return tasks
 
@@ -134,6 +137,9 @@ class ActionScheduler:
         self.timer_handles.clear()
 
     async def _start_event_sources(self) -> None:
+        # Never leave a previous manager's listeners running (e.g. duplicate MQTT
+        # clients knocking each other off the broker)
+        await self._stop_event_sources()
         event_configs = self.loader.load_event_source_configs()
         event_actions = [a for a in self.actions if a.is_event_based and a.enabled]
 

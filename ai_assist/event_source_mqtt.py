@@ -3,6 +3,8 @@
 import asyncio
 import logging
 import os
+import time
+import uuid
 from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import Any
@@ -11,6 +13,17 @@ from .event_sources import EventContext, EventSource
 
 logger = logging.getLogger(__name__)
 
+_INITIAL_BACKOFF = 5.0
+_MAX_BACKOFF = 300.0
+# A connection must stay up this long before the backoff starts over: a broker
+# that accepts then drops at once (e.g. another client took over the session)
+# must slow the retries down, not loop every 5 s.
+_STABLE_CONNECTION_SECONDS = 60.0
+
+# Seams for tests
+_sleep = asyncio.sleep
+_now = time.monotonic
+
 
 class MqttEventSource(EventSource):
     """Event source that subscribes to MQTT topics and dispatches messages as events"""
@@ -18,7 +31,9 @@ class MqttEventSource(EventSource):
     def __init__(self, config: dict[str, Any]) -> None:
         self.broker = config.get("broker", "localhost")
         self.port = config.get("port", 1883)
-        default_id = f"ai-assist-{os.getpid()}"
+        # Unique per listener: two listeners with the same id knock each other
+        # off the broker (it drops the existing session) in an endless loop.
+        default_id = f"ai-assist-{os.getpid()}-{uuid.uuid4().hex[:8]}"
         self.client_id = config.get("client_id", default_id)
         self.username = config.get("username")
         self.password = config.get("password")
@@ -39,6 +54,7 @@ class MqttEventSource(EventSource):
         self._subscriptions.clear()
 
     async def start(self, dispatch: Callable[[str, EventContext], Awaitable[None]]) -> None:
+        await self._cancel_task(self._task)  # never two listeners for one source
         self._dispatch = dispatch
         self._running = True
         self._task = asyncio.create_task(self._listen())
@@ -50,10 +66,10 @@ class MqttEventSource(EventSource):
     async def _listen(self) -> None:
         import aiomqtt
 
-        backoff = 5.0
-        max_backoff = 300.0
+        backoff = _INITIAL_BACKOFF
 
         while self._running:
+            connected_at: float | None = None
             try:
                 async with aiomqtt.Client(
                     self.broker,
@@ -65,7 +81,7 @@ class MqttEventSource(EventSource):
                     for topic_pattern in self._subscriptions:
                         await client.subscribe(topic_pattern)
                     logger.info("MQTT connected to %s:%d", self.broker, self.port)
-                    backoff = 5.0
+                    connected_at = _now()
 
                     async for message in client.messages:
                         event = EventContext(
@@ -88,6 +104,8 @@ class MqttEventSource(EventSource):
             except asyncio.CancelledError:
                 break
             except Exception:
+                if connected_at is not None and _now() - connected_at >= _STABLE_CONNECTION_SECONDS:
+                    backoff = _INITIAL_BACKOFF
                 logger.exception("MQTT connection error, reconnecting in %.0fs", backoff)
-                await asyncio.sleep(backoff)
-                backoff = min(backoff * 2, max_backoff)
+                await _sleep(backoff)
+                backoff = min(backoff * 2, _MAX_BACKOFF)

@@ -115,3 +115,83 @@ class TestMqttEventSource:
         assert dispatched[0][1].payload == "CPU at 95%"
         assert dispatched[0][1].source_type == "mqtt"
         assert dispatched[0][1].metadata["topic"] == "alerts/cpu"
+
+
+# --- Hardening: a flapping broker or a leaked listener must not spin ---
+
+
+def _dropping_client():
+    """A client that connects, then is disconnected at once (as when another client takes the session)."""
+
+    async def messages():
+        raise aiomqtt.MqttError("Disconnected during message iteration")
+        yield  # pragma: no cover
+
+    client = MagicMock()
+    client.__aenter__ = AsyncMock(return_value=client)
+    client.__aexit__ = AsyncMock(return_value=False)
+    client.subscribe = AsyncMock()
+    client.messages = messages()
+    return client
+
+
+async def _sleeps_until(source, attempts, now_values=None):
+    """Run _listen until it has slept `attempts` times; return the sleep durations."""
+    sleeps = []
+
+    async def fake_sleep(seconds):
+        sleeps.append(seconds)
+        if len(sleeps) >= attempts:
+            source._running = False
+
+    now = iter(now_values) if now_values else None
+    with (
+        patch("aiomqtt.Client", side_effect=lambda *a, **k: _dropping_client()),
+        patch("ai_assist.event_source_mqtt._sleep", fake_sleep),
+        patch("ai_assist.event_source_mqtt._now", (lambda: next(now)) if now else (lambda: 0.0)),
+    ):
+        source._running = True
+        source._dispatch = AsyncMock()
+        await asyncio.wait_for(source._listen(), timeout=2.0)
+    return sleeps
+
+
+class TestMqttHardening:
+    def test_default_client_ids_are_unique_per_listener(self):
+        """Two listeners sharing a client id knock each other off the broker forever."""
+        first, second = MqttEventSource({}), MqttEventSource({})
+        assert first.client_id != second.client_id
+        assert first.client_id.startswith("ai-assist-")
+
+    def test_configured_client_id_is_kept(self):
+        assert MqttEventSource({"client_id": "fixed"}).client_id == "fixed"
+
+    @pytest.mark.asyncio
+    async def test_backoff_grows_when_the_connection_drops_right_after_connecting(self, mqtt_source):
+        assert await _sleeps_until(mqtt_source, 4) == [5.0, 10.0, 20.0, 40.0]
+
+    @pytest.mark.asyncio
+    async def test_backoff_resets_after_a_stable_connection(self, mqtt_source):
+        # connect/fail times: 0/1, 10/11, then a connection that stayed up 180 s
+        sleeps = await _sleeps_until(mqtt_source, 3, now_values=[0, 1, 10, 11, 20, 200])
+        assert sleeps == [5.0, 10.0, 5.0]
+
+    @pytest.mark.asyncio
+    async def test_starting_again_stops_the_previous_listener(self, mqtt_source):
+        started = []
+
+        async def listen_forever():
+            started.append(asyncio.current_task())
+            await asyncio.Event().wait()
+
+        mqtt_source._listen = listen_forever
+        await mqtt_source.start(AsyncMock())
+        await asyncio.sleep(0)
+        await mqtt_source.start(AsyncMock())
+        await asyncio.sleep(0)
+        try:
+            assert len(started) == 2
+            assert started[0].done()
+            assert not started[1].done()
+        finally:
+            await mqtt_source.stop()
