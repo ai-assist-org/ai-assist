@@ -907,9 +907,9 @@ Search priority: Tavily > Brave > Exa > Perplexity > SearXNG > DuckDuckGo. Fetch
 - `read_file` - Read files with line-range support
 - `write_file` - Write content to files (creates parent directories)
 - `edit_file` - Surgical string replacement in files (exact match, must be unique)
-- `search_in_file` - Regex search in files
+- `search_in_file` - Regex search in a file or a directory tree (ignore case, invert, count, only matching, matching files, context lines)
 - `create_directory` - Create directories
-- `list_directory` - List directory contents
+- `list_directory` - List directory contents (long format, sort by time or size, limit)
 - `execute_command` - Execute bash commands
 
 ### MCP Server Tools
