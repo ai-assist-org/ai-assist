@@ -632,3 +632,44 @@ async def test_concurrent_reloads_leave_one_timer_per_action(mock_agent, state_m
         assert [h.get_name() for h in s.timer_handles].count("daily") == 1
     finally:
         await s.stop()
+
+
+# --- Event sources: a restart must never leave the previous ones running ---
+
+
+async def test_starting_event_sources_stops_the_previous_manager(scheduler):
+    scheduler.actions = [_mqtt_action()]
+    scheduler.loader.load_event_source_configs = MagicMock(return_value={"mqtt": {"broker": "localhost"}})
+    previous = MagicMock()
+    previous.stop = AsyncMock()
+    scheduler.event_source_manager = previous
+
+    manager = MagicMock()
+    manager.start = AsyncMock()
+    manager._sources = {"mqtt": object()}
+    with patch("ai_assist.action_scheduler.EventSourceManager", return_value=manager):
+        await scheduler._start_event_sources()
+
+    previous.stop.assert_awaited_once()
+    assert scheduler.event_source_manager is manager
+
+
+async def test_start_and_reload_never_start_event_sources_concurrently(mock_agent, state_manager, schedule_file):
+    """A reload during start-up would create a second manager and orphan the first one's listeners."""
+    s = ActionScheduler(mock_agent, state_manager, schedule_file)
+    active, overlaps = [], []
+
+    async def slow_start_sources():
+        if active:
+            overlaps.append(True)
+        active.append(True)
+        await asyncio.sleep(0.01)
+        active.pop()
+
+    s._start_event_sources = slow_start_sources
+    s._stop_event_sources = AsyncMock()
+    try:
+        await asyncio.gather(s.start(), s.reload(), s.reload())
+        assert not overlaps
+    finally:
+        await s.stop()
