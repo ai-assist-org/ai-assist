@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -266,6 +267,214 @@ def test_ledger_reports_a_signal_again_when_it_comes_back(signals, tmp_path):
     assert counters(run("awl-signals-diff.sh", str(later), state))["new_signals"] == "0"
 
 
+# --- Review verdicts: what a reviewer concluded feeds the next runs ---
+
+
+def run_failing(script: str, *args: str) -> subprocess.CompletedProcess:
+    result = subprocess.run(["bash", str(LIB / script), *args], capture_output=True, text=True, check=False)
+    assert result.returncode != 0, result.stdout
+    return result
+
+
+@pytest.fixture
+def ledger(signals, tmp_path):
+    """A ledger recorded from the signals fixture, a verdicts file, and a signature per event."""
+    state = tmp_path / "state.jsonl"
+    run("awl-signals-diff.sh", str(signals), str(state), "--record-state")
+    sigs = {r["event"]: r["signature"] for r in records(signals, "signal")}
+    return state, tmp_path / "verdicts.jsonl", sigs
+
+
+def recurred(signals, tmp_path, events, when="2099-01-01T06:00:00,000"):
+    """The signals fixture where the given events occurred again later."""
+    lines = [json.loads(line) for line in signals.read_text().splitlines()]
+    for rec in lines:
+        if rec.get("event") in events:
+            rec["last"] = when
+    later = tmp_path / "later.jsonl"
+    later.write_text("\n".join(json.dumps(rec) for rec in lines) + "\n")
+    return later
+
+
+def verdict(ledger, event, value, note="because"):
+    state, verdicts, sigs = ledger
+    return run("awl-verdict.sh", str(state), str(verdicts), sigs[event], value, note, "agent:test")
+
+
+def diff(signals_file, ledger, *extra):
+    state, verdicts, _ = ledger
+    return run("awl-signals-diff.sh", str(signals_file), str(state), "--verdicts", str(verdicts), *extra)
+
+
+def test_verdict_is_appended_with_reviewer_and_note(ledger):
+    state, verdicts, sigs = ledger
+    verdict(ledger, "unresolved_var", "false_positive", "variable comes from variables.yaml")
+    [line] = [json.loads(x) for x in verdicts.read_text().splitlines()]
+    assert line["signature"] == sigs["unresolved_var"]
+    assert (line["verdict"], line["reviewer"]) == ("false_positive", "agent:test")
+    assert line["note"] == "variable comes from variables.yaml"
+    assert line["at"][:4].isdigit()
+
+
+@pytest.mark.parametrize(
+    ("signature", "value", "note", "message"),
+    [
+        ("000000000000", "real", "x", "not in the ledger"),
+        (None, "maybe", "x", "verdict must be one of"),
+        (None, "real", "", "note"),
+    ],
+)
+def test_invalid_verdicts_are_refused(ledger, signature, value, note, message):
+    state, verdicts, sigs = ledger
+    result = run_failing(
+        "awl-verdict.sh", str(state), str(verdicts), signature or sigs["task_fail"], value, note, "human:x"
+    )
+    assert message in result.stderr
+    assert not verdicts.exists()
+
+
+@pytest.mark.parametrize("value", ["false_positive", "wont_fix"])
+def test_dismissed_signal_is_suppressed_when_it_recurs(signals, tmp_path, ledger, value):
+    verdict(ledger, "unresolved_var", value)
+    out = counters(diff(recurred(signals, tmp_path, {"unresolved_var"}), ledger))
+    assert (out["new_signals"], out["suppressed"]) == ("0", "1")
+
+
+def test_fixed_signal_that_recurs_is_a_regression_once(signals, tmp_path, ledger):
+    verdict(ledger, "task_fail", "fixed")
+    later = recurred(signals, tmp_path, {"task_fail"})
+    review = tmp_path / "review.jsonl"
+
+    out = counters(diff(later, ledger, "--review-out", str(review), "--record-state"))
+    assert (out["new_signals"], out["regressions"]) == ("1", "1")
+    [rec] = [r for r in map(json.loads, review.read_text().splitlines()) if r["kind"] == "signal"]
+    assert (rec["event"], rec["regression"], rec["prior_verdict"]) == ("task_fail", True, "fixed")
+
+    again = counters(diff(later, ledger))  # idempotent: reported once
+    assert (again["new_signals"], again["regressions"]) == ("0", "0")
+
+
+def test_fixed_signal_that_stays_quiet_is_not_reported(signals, ledger):
+    verdict(ledger, "task_fail", "fixed")
+    out = counters(diff(signals, ledger))
+    assert (out["new_signals"], out["regressions"]) == ("0", "0")
+
+
+def test_confirmed_real_signal_is_open_not_new(signals, tmp_path, ledger):
+    verdict(ledger, "command_refused", "real", "tool.sh must be allowlisted")
+    output = diff(recurred(signals, tmp_path, {"command_refused"}), ledger)
+    out = counters(output)
+    assert (out["new_signals"], out["open"]) == ("0", "1")
+    assert "tool.sh must be allowlisted" in output.split("=== open")[1]
+
+
+def test_review_file_has_only_new_signals_and_counter_examples(signals, tmp_path):
+    state, verdicts = tmp_path / "s.jsonl", tmp_path / "v.jsonl"
+    review = tmp_path / "review.jsonl"
+    run("awl-signals-diff.sh", str(signals), str(state), "--record-state")
+    sig = {r["event"]: r["signature"] for r in records(signals, "signal")}
+    run("awl-verdict.sh", str(state), str(verdicts), sig["skill_refused"], "false_positive", "demo skill", "h:x")
+    later = recurred(signals, tmp_path, {"unresolved_var", "skill_refused"})
+
+    run("awl-signals-diff.sh", str(later), str(state), "--verdicts", str(verdicts), "--review-out", str(review))
+    recs = [json.loads(x) for x in review.read_text().splitlines()]
+    assert [r["event"] for r in recs if r["kind"] == "signal"] == ["unresolved_var"]
+    [example] = [r for r in recs if r["kind"] == "counter_example"]
+    assert (example["event"], example["verdict"], example["note"]) == ("skill_refused", "false_positive", "demo skill")
+
+
+def test_precision_by_event(ledger, signals):
+    verdict(ledger, "unresolved_var", "false_positive")
+    verdict(ledger, "task_fail", "fixed")
+    verdict(ledger, "command_refused", "real")
+    output = diff(signals, ledger)
+    lines = [x for x in output.splitlines() if x.startswith("PRECISION ")]
+    assert "PRECISION unresolved_var reviewed=1 real=0 false_positive=1" in lines
+    assert "PRECISION task_fail reviewed=1 real=1 false_positive=0" in lines
+
+
+def test_latest_verdict_wins(signals, tmp_path, ledger):
+    verdict(ledger, "unresolved_var", "false_positive")
+    verdict(ledger, "unresolved_var", "real", "it was real after all")
+    out = counters(diff(recurred(signals, tmp_path, {"unresolved_var"}), ledger))
+    assert (out["suppressed"], out["open"]) == ("0", "1")
+
+
+def test_diff_without_verdicts_keeps_working(signals, tmp_path):
+    state = str(tmp_path / "state.jsonl")
+    out = counters(run("awl-signals-diff.sh", str(signals), state, "--verdicts", str(tmp_path / "none.jsonl")))
+    assert int(out["new_signals"]) > 0
+    assert (out["regressions"], out["open"], out["suppressed"]) == ("0", "0", "0")
+
+
+# --- Rolled-up records (shell forms, security questions) can be reviewed too ---
+
+
+def rollup(signals, kind, **match):
+    return next(r for r in records(signals, kind) if all(r[k] == v for k, v in match.items()))
+
+
+def test_rollups_have_stable_signatures_and_a_last_occurrence(signals, tmp_path):
+    shell = rollup(signals, "shell", tool="internal__search_in_file", form="grep -r")
+    prompt = rollup(signals, "prompt", form="cat")
+    for rec in (shell, prompt):
+        assert re.fullmatch(r"[0-9a-f]{12}", rec["signature"])
+        assert rec["last"].startswith(("2026-", "20"))
+    sigs = [r["signature"] for r in records(signals, "shell") + records(signals, "prompt")]
+    assert len(sigs) == len(set(sigs))
+    assert (shell["event"], prompt["event"]) == ("shell_instead_of_tool", "security_prompt")
+
+
+def test_record_state_adds_rollups_so_verdicts_accept_them(ledger, signals):
+    state, verdicts, _ = ledger
+    shell = rollup(signals, "shell", tool="internal__search_in_file", form="grep -r")
+    run("awl-verdict.sh", str(state), str(verdicts), shell["signature"], "real", "needs recursive search", "h:x")
+    assert json.loads(verdicts.read_text().splitlines()[-1])["signature"] == shell["signature"]
+
+
+def review_records(signals_file, ledger, tmp_path):
+    review = tmp_path / "review.jsonl"
+    output = diff(signals_file, ledger, "--review-out", str(review))
+    return counters(output), [json.loads(x) for x in review.read_text().splitlines()], output
+
+
+def test_rollups_go_to_review_unless_dismissed_or_confirmed(ledger, signals, tmp_path):
+    grep_r = rollup(signals, "shell", tool="internal__search_in_file", form="grep -r")
+    grep_l = rollup(signals, "shell", tool="internal__search_in_file", form="grep -l")
+    cat = rollup(signals, "prompt", form="cat")
+    state, verdicts, _ = ledger
+    run("awl-verdict.sh", str(state), str(verdicts), grep_r["signature"], "false_positive", "fine", "h:x")
+    run("awl-verdict.sh", str(state), str(verdicts), cat["signature"], "real", "use read_file", "h:x")
+
+    out, recs, output = review_records(signals, ledger, tmp_path)
+    reviewed = {r["signature"] for r in recs if r["kind"] in ("shell", "prompt")}
+    assert grep_l["signature"] in reviewed
+    assert grep_r["signature"] not in reviewed and cat["signature"] not in reviewed
+    assert int(out["suppressed"]) >= 1 and int(out["open"]) >= 1
+    assert "use read_file" in output.split("=== open")[1]
+    assert out["new_signals"] == "0"  # rollups never count as new signals
+
+
+def test_fixed_rollup_seen_again_is_a_regression(ledger, signals, tmp_path):
+    grep_l = rollup(signals, "shell", tool="internal__search_in_file", form="grep -l")
+    state, verdicts, _ = ledger
+    run("awl-verdict.sh", str(state), str(verdicts), grep_l["signature"], "fixed", "tool has output=files", "h:x")
+
+    _, quiet, _ = review_records(signals, ledger, tmp_path)  # last occurrence before the fix
+    assert grep_l["signature"] not in {r["signature"] for r in quiet}
+
+    later = tmp_path / "later.jsonl"
+    lines = [json.loads(x) for x in signals.read_text().splitlines()]
+    for rec in lines:
+        if rec.get("signature") == grep_l["signature"]:
+            rec["last"] = "2099-01-01T00:00:00,000"
+    later.write_text("\n".join(map(json.dumps, lines)) + "\n")
+    out, recs, _ = review_records(later, ledger, tmp_path)
+    [rec] = [r for r in recs if r["signature"] == grep_l["signature"]]
+    assert (rec["regression"], rec["prior_verdict"]) == (True, "fixed")
+    assert out["regressions"] == "1"
+
+
 @pytest.fixture
 def config(tmp_path):
     cfg = tmp_path / "cfg"
@@ -428,3 +637,14 @@ def test_helpers_run_on_bash_3(script):
     text = (LIB / script).read_text()
     bash4 = re.compile(r"\b(mapfile|readarray|coproc|declare -A|local -A)\b|\$\{\w+(,,|\^\^)\}")
     assert not bash4.findall(text)
+
+
+def test_review_skill_loads_without_warnings():
+    from ai_assist.security import validate_tool_description
+    from ai_assist.skills_loader import SkillsLoader
+
+    skill = SkillsLoader().load_skill_from_local(WORKFLOW_DIR.parent.parent / "skills" / "self-improvement-review")
+    assert skill.metadata.name == "self-improvement-review"
+    assert not validate_tool_description("skill", skill.metadata.description)
+    assert not validate_tool_description("skill/body", skill.body)
+    assert "awl-verdict.sh" in skill.body

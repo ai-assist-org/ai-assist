@@ -44,7 +44,9 @@ env/
 *.swp
 *.swo
 *~
-.claude
+# local Claude Code settings stay private; shared skills are tracked
+.claude/*
+!.claude/skills/
 
 # OS
 .DS_Store

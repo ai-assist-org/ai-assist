@@ -52,6 +52,7 @@ In `~/ai-assist/reports`:
 | `self-improvement-<date>/` | Proposed `allowed_commands.json`, `allowed_paths.json` and `event-schedules.json` copies, ai-assist issue drafts |
 | `self-improvement-signals-<date>.jsonl` | The counted log signals |
 | `self-improvement-state.jsonl` | Signals already reported: the next run only reports new ones |
+| `self-improvement-verdicts.jsonl` | Reviewers' verdicts on findings (see below) |
 
 Text and configuration proposals are checked before they reach the report:
 
@@ -69,3 +70,40 @@ Text and configuration proposals are checked before they reach the report:
   over and restart ai-assist.
 - Scheduled actions: compare and copy over `~/.ai-assist/event-schedules.json`;
   the scheduler reloads it.
+
+## Review and feedback
+
+Each finding in the report has a signature (12 hex characters, stable across
+runs). A reviewer, human or AI, records what a finding really was:
+
+| Verdict | Meaning | Next runs |
+|---------|---------|-----------|
+| `real` | real, not fixed yet | listed under "Open findings", not reviewed again |
+| `fixed` | the fix is in | a later occurrence is reported as a regression, ranked first |
+| `wont_fix` | real but deliberate or accepted | no longer reported |
+| `false_positive` | should never have been a finding | no longer reported; shown to the classifier as a counter-example |
+
+Record a verdict with the command printed in the report's "Review" section:
+
+```bash
+bash workflows/self-improvement/lib/awl-verdict.sh \
+  ~/ai-assist/reports/self-improvement-state.jsonl \
+  ~/ai-assist/reports/self-improvement-verdicts.jsonl \
+  4436a75fbc3e false_positive "the refusal is intended" human:alice
+```
+
+or install the `self-improvement-review` skill and tell the agent ("finding 3
+is intended, not a problem"):
+
+```
+/skill/install ./skills/self-improvement-review@main
+```
+
+Shell forms an internal tool could run (e.g. `grep -i` instead of
+`internal__search_in_file`) and kinds of security questions have signatures
+too, shown in their report tables: marking one `fixed` after improving a tool
+tells you on the next runs whether agents really stopped using the shell.
+
+Verdicts are appended, never rewritten: the latest one for a signature wins and
+the history stays. The report's precision table (reviewed / real / false
+positive per kind of finding) shows which detection rules are noisy.

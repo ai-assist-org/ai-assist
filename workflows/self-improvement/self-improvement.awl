@@ -22,6 +22,7 @@
 #   self-improvement-report-${date}.md    the report you read, proposals included
 #   self-improvement-signals-${date}.jsonl deterministic per-finding counts
 #   self-improvement-state.jsonl          signature ledger (idempotency)
+#   self-improvement-verdicts.jsonl       reviewers' verdicts (lib/awl-verdict.sh)
 #   self-improvement-${date}/             proposals.md (the proposals, appended to
 #                                         the report), NN-event-schedules.json and
 #                                         NN-allowed_*.json (config), NN-ai-assist-issue.md
@@ -33,7 +34,8 @@
 #
 # Helpers (versioned with this script):
 #   lib/awl-signals-aggregate.sh   logs -> signals JSONL (extract + aggregate)
-#   lib/awl-signals-diff.sh        idempotency ledger
+#   lib/awl-signals-diff.sh        idempotency ledger + reviewers' verdicts
+#   lib/awl-verdict.sh             record a verdict on a finding (for reviewers)
 #   lib/awl-check-excerpts.sh      gate for the proposed text changes + report assembly
 #   lib/awl-check-schedules.sh     scheduler config lint + gate
 #   lib/awl-check-config.sh        ai-assist config lint + allowlist gate
@@ -50,8 +52,10 @@
   @set lib_dir = ${script_dir}/lib
   @set signals_file = ${reports_dir}/self-improvement-signals-${date}.jsonl
   @set state_file = ${reports_dir}/self-improvement-state.jsonl
+  @set verdicts_file = ${reports_dir}/self-improvement-verdicts.jsonl
   @set proposals_dir = ${reports_dir}/self-improvement-${date}
   @set proposals_md = ${proposals_dir}/proposals.md
+  @set review_file = ${proposals_dir}/review.jsonl
   @set report_name = self-improvement-report-${date}
   @set report_file = ${reports_dir}/${report_name}.md
 
@@ -81,18 +85,22 @@
   @task diff_vs_previous @no-history @no-kg max_tool_calls=4
     Goal: Run exactly this command and nothing else:
 
-    `bash ${lib_dir}/awl-signals-diff.sh ${signals_file} ${state_file}`
+    `bash ${lib_dir}/awl-signals-diff.sh ${signals_file} ${state_file} --verdicts ${verdicts_file} --review-out ${review_file}`
 
     It compares the current signatures with the ledger at ${state_file}
-    (created on first run) and prints key=value counters plus a table.
+    (created on first run) and the reviewers' verdicts at ${verdicts_file},
+    writes the records to review to ${review_file}, and prints key=value
+    counters plus tables.
 
-    Map its stdout to three variables: new_count is the "new_signals="
-    value as an integer, known_count the "known_signatures=" value, and
-    diff_output the whole stdout verbatim as one string.
+    Map its stdout to variables: new_count is the "new_signals=" value as
+    an integer, known_count the "known_signatures=" value, regression_count
+    the "regressions=" value, open_count the "open=" value,
+    suppressed_count the "suppressed=" value, and diff_output the whole
+    stdout verbatim as one string.
 
     Do not call any other tool.
 
-    Expose: new_count, known_count, diff_output
+    Expose: new_count, known_count, regression_count, open_count, suppressed_count, diff_output
   @end
 
   # ── Step 2b: lint the scheduled actions (deterministic) ────────────
@@ -136,13 +144,24 @@
 
     # ── Step 3: classify findings (judgement only, no edits) ────────────
     @task classify @no-history @no-kg max_tool_calls=26
-      Goal: Classify each NEW finding in ${signals_file}.
+      Goal: Classify each finding to review in ${review_file}.
 
-      Use internal__json_query with jq to read ONLY the signal records:
-        [.[] | select(.kind=="signal")]             (auto-slurped JSONL)
+      Use internal__json_query with jq to read ${review_file} (auto-slurped
+      JSONL). Its kind=="signal" records are the findings to classify: new
+      signals, and regressions (regression true: a reviewer marked the
+      signal fixed and it occurred again). Signals the reviewers dismissed
+      or already confirmed are not in it: do not look for them elsewhere.
+      Its kind=="counter_example" records are past findings a reviewer
+      dismissed (verdict false_positive or wont_fix) with the reason in
+      "note": do not raise a finding of the same kind for the same reason;
+      when a new finding looks like one, give it confidence low and say
+      which counter-example it resembles in its evidence.
 
-      ${signals_file} holds ~dozens of records; ignore kind=="script"
-      rows except to compute the per-script failure rate for context.
+      Read ${signals_file} only for its kind=="script" rows (per-script
+      failure rate, for context). The shell / prompt records below also
+      come from ${review_file}: the ones a reviewer dismissed or confirmed
+      are left out; regression true means a reviewer marked the form fixed
+      and agents still use it (say so in the finding).
 
       Each signal record has: script, task, event, count, first, last,
       sample, mechanical (a deterministic baseline you may override).
@@ -242,7 +261,7 @@
       target_kind "scheduler", target_file = the action name.
 
       Also review the shell commands that an internal tool could have run:
-      the shell records of ${signals_file},
+      the shell records of ${review_file},
         [.[] | select(.kind=="shell")] | sort_by(-.count) | .[:25]
       each with the internal tool, the command form (a command and ONE of
       the options used with it, e.g. "grep -r"; "grep |" means its output
@@ -256,7 +275,7 @@
           modification times); for a piped form, ask whether the tool's own
           options would have made the pipe unnecessary.
       Keep the verdicts as shell_verdicts, a list of
-        {"tool","form","count","top_task","verdict":"covered|gap","capability":"<missing capability, for a gap>"}.
+        {"signature","tool","form","count","top_task","regression","verdict":"covered|gap","capability":"<missing capability, for a gap>"}.
       And add up to 3 findings: the missing capabilities with the most
       occurrences (script "ai-assist", task = the tool, event "tool_gap",
       count = the total of their forms, sample = the forms, target_kind
@@ -267,7 +286,7 @@
       (its tool descriptions or system prompt should steer to the tool).
 
       Also review the security questions the user had to answer: the
-      prompt records of ${signals_file},
+      prompt records of ${review_file},
         [.[] | select(.kind=="prompt")] | sort_by(-.count) | .[:25]
       each with the question kind ("command": approve a command; "path":
       access a path outside the allowed ones), its form, the internal tool
@@ -287,7 +306,7 @@
           always approves — a candidate for the allowlists;
         * legit: the question is the right call.
       Keep the verdicts as prompt_verdicts, a list of
-        {"prompt","form","count","approved","denied","auto_denied","top_task","verdict":"tool|false_positive|allowlist|legit","note":"<the internal tool, or why>"}.
+        {"signature","prompt","form","count","approved","denied","auto_denied","top_task","regression","verdict":"tool|false_positive|allowlist|legit","note":"<the internal tool, or why>"}.
       And add up to 3 findings, by count: false_positive forms (script
       "ai-assist", task "security_prompt", event "prompt_false_positive",
       target_kind "ai-assist": how ai-assist reads the command should
@@ -310,16 +329,17 @@
       than its file's modification time — the file may already address it.
 
       Build findings as a list of objects:
-        {"id": "1..n", "script","task","event","count","first","last",
+        {"id": "1..n", "signature" (for a finding built from shell or prompt
+         records: their signatures, comma-separated), "regression":true|false, "script","task","event","count","first","last",
          "sample","root_cause_class","mechanical":true|false,
          "confidence":"high|medium|low","evidence":["<quoted log sample>"],
          "target_kind":"awl|scheduler|ai-assist|config|skill",
          "target_file":"<absolute path of the workflow or SKILL.md, action name, ai-assist module, or tool/skill name>",
          "possibly_fixed":true|false}
 
-      Rank by min(count, 50) x (mechanical ? 3 : 1), descending — the cap
-      keeps a log flood (thousands of identical lines) from taking every
-      slot — with possibly_fixed
+      Rank regressions first, then by min(count, 50) x (mechanical ? 3 : 1),
+      descending — the cap keeps a log flood (thousands of identical lines)
+      from taking every slot — with possibly_fixed
       findings after all the others, keep at most 10 findings, and number
       them 1..n in that order: this id is used for every proposal, proposal
       file and report row. If classifying a record needs the script's text, read
@@ -444,7 +464,8 @@
 
       Use only data already gathered in this run:
         - ${scorecard} for the per-script table
-        - ${diff_output} for the new-vs-known counters
+        - ${diff_output} for the new-vs-known counters, the open findings
+          and the precision by event
         - ${findings} for the ranked fixes
         - ${gate_output} for the gate results
         - ${proposals_dir} for the proposal file names
@@ -455,7 +476,9 @@
 
       **Window:** ${days} day(s) · **Log files scanned:** ${scanned_files}
       · **Distinct signals:** ${signal_count} · **Scripts seen:** ${scripts_seen}
-      **New since last run:** ${new_count} (known: ${known_count})
+      **New since last run:** ${new_count} (known: ${known_count}) ·
+      **Regressions:** ${regression_count} · **Open:** ${open_count} ·
+      **Suppressed by reviewers:** ${suppressed_count}
 
       ## Script scorecard
 
@@ -468,9 +491,24 @@
       ## Ranked fixes
 
       A table: finding id (the same numbers as the proposals below and the
-      proposal files), script::task, event, occurrences, mechanical?,
+      proposal files), signature, script::task, event (mark regressions
+      🔁 REGRESSION), occurrences, mechanical?,
       confidence, possibly fixed?, gate result (OK / REJECT / none),
       one-line fix. The details follow in "## Proposals".
+
+      ## Open findings
+
+      The "=== open" section of ${diff_output}: findings a reviewer confirmed
+      real and not fixed yet, with the reviewer's note. "(none)" if empty.
+
+      ## Review
+
+      How to record a verdict on a finding (the next runs use it): run
+        `bash ${lib_dir}/awl-verdict.sh ${state_file} ${verdicts_file} <signature> <real|fixed|wont_fix|false_positive> "<why>" <reviewer>`
+      or ask the agent to do it. Then the "=== precision by event" lines of
+      ${diff_output} as a table: | Event | Reviewed | Real | False positive |;
+      an event with mostly false positives points at a detection rule to
+      tighten. Omit the table when no finding was reviewed yet.
 
       ## Proposal gates
 
@@ -500,13 +538,13 @@
 
       ## Shell commands instead of internal tools
 
-      From ${shell_verdicts}: | Tool | Shell form | Count | Most used by |
+      From ${shell_verdicts}: | Signature | Tool | Shell form (🔁 when a regression) | Count | Most used by |
       Verdict | Missing capability |, sorted by count, then one line per
       tool_gap / shell_habit finding id.
 
       ## Security questions
 
-      From ${prompt_verdicts}: | Kind | Form | Count | Approved / denied /
+      From ${prompt_verdicts}: | Signature | Kind | Form (🔁 when a regression) | Count | Approved / denied /
       auto-denied | Most asked by | Verdict | Note |, sorted by count, then
       one line per prompt_false_positive / prompt_avoidable finding id.
 
@@ -579,6 +617,9 @@
       Then show the scorecard from ${scorecard} (per-script table, same
       columns as usual) so a stable-but-bad baseline stays visible, and
       state that the ledger at ${state_file} already covers every finding.
+      Then the ${open_count} open findings (the "=== open" section of
+      ${diff_output}: confirmed real by a reviewer, not fixed yet) so they
+      are not forgotten.
 
       Expose: report_written
     @end

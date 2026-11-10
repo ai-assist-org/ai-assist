@@ -17,12 +17,12 @@
 #   action records — "-" as first column, per scheduled action:
 #     {"kind":"action","action","runs","ok","fail","duplicate"}
 #
-#   shell records — "-" as first column, per shell command and single
+#   shell records — "@ROLLUP@" as first column (hashed like signals), per shell command and single
 #   option (or "| " for a pipe) that an internal tool could replace (rolled
 #   up, not signals: one per task would flood the findings and the ledger):
 #     {"kind":"shell","tool","form","count","top_task","top_task_count"}
 #
-#   prompt records — "-" as first column, per security question form (see
+#   prompt records — "@ROLLUP@" as first column (hashed), per security question form (see
 #   section 10 of the extractor), rolled up like the shell records:
 #     {"kind":"prompt","prompt":"command|path","form","tool","count",
 #      "approved","denied","auto_denied","top_task","top_task_count","sample"}
@@ -127,6 +127,7 @@ BEGIN { FS = "\t" }
       if ((sk, NR) in seen_line) continue
       seen_line[sk, NR] = 1
       sh_count[sk]++
+      if (date "T" time > sh_last[sk]) sh_last[sk] = date "T" time
       sh_task[sk, script "::" task]++
       if (sh_task[sk, script "::" task] > sh_top_n[sk]) { sh_top_n[sk] = sh_task[sk, script "::" task]; sh_top[sk] = script "::" task }
     }
@@ -139,6 +140,7 @@ BEGIN { FS = "\t" }
     pk = pf[1] SUBSEP pf[3] SUBSEP pf[4]
     if (!(pk in pr_count)) pr_sample[pk] = pf[5]
     pr_count[pk]++
+    if (date "T" time > pr_last[pk]) pr_last[pk] = date "T" time
     if (pf[2] == "approved") pr_ok[pk]++
     else if (pf[2] == "denied") pr_no[pk]++
     else pr_auto[pk]++
@@ -187,18 +189,22 @@ END {
   }
 
   # ── per shell command form ─────────────────────────────────────────
+  # "@ROLLUP@" lines get a signature like signal records (the caller hashes
+  # the key in the last column), so a reviewer can record a verdict on them.
   for (sk in sh_count) {
     split(sk, parts, SUBSEP)
-    printf("-\t{\"kind\":\"shell\",\"tool\":\"%s\",\"form\":\"%s\",\"count\":%d,\"top_task\":\"%s\",\"top_task_count\":%d}\n",
-      jesc(parts[1]), jesc(parts[2]), sh_count[sk], jesc(sh_top[sk]), sh_top_n[sk])
+    printf("@ROLLUP@\t{\"kind\":\"shell\",\"signature\":\"@SIG@\",\"script\":\"ai-assist\",\"task\":\"%s\",\"event\":\"shell_instead_of_tool\",\"tool\":\"%s\",\"form\":\"%s\",\"sample\":\"%s\",\"count\":%d,\"last\":\"%s\",\"top_task\":\"%s\",\"top_task_count\":%d}\t%s\n",
+      jesc(parts[1]), jesc(parts[1]), jesc(parts[2]), jesc(parts[2]), sh_count[sk], sh_last[sk],
+      jesc(sh_top[sk]), sh_top_n[sk], jesc("shell|" parts[1] "|" parts[2]))
   }
 
   # ── per security question form ────────────────────────────────────
   for (pk in pr_count) {
     split(pk, parts, SUBSEP)
-    printf("-\t{\"kind\":\"prompt\",\"prompt\":\"%s\",\"form\":\"%s\",\"tool\":\"%s\",\"count\":%d,\"approved\":%d,\"denied\":%d,\"auto_denied\":%d,\"top_task\":\"%s\",\"top_task_count\":%d,\"sample\":\"%s\"}\n",
-      jesc(parts[1]), jesc(parts[2]), jesc(parts[3]), pr_count[pk], pr_ok[pk], pr_no[pk], pr_auto[pk],
-      jesc(pr_top[pk]), pr_top_n[pk], jesc(pr_sample[pk]))
+    printf("@ROLLUP@\t{\"kind\":\"prompt\",\"signature\":\"@SIG@\",\"script\":\"ai-assist\",\"task\":\"%s\",\"event\":\"security_prompt\",\"prompt\":\"%s\",\"form\":\"%s\",\"tool\":\"%s\",\"count\":%d,\"last\":\"%s\",\"approved\":%d,\"denied\":%d,\"auto_denied\":%d,\"top_task\":\"%s\",\"top_task_count\":%d,\"sample\":\"%s\"}\t%s\n",
+      jesc(parts[2]), jesc(parts[1]), jesc(parts[2]), jesc(parts[3]), pr_count[pk], pr_last[pk],
+      pr_ok[pk], pr_no[pk], pr_auto[pk], jesc(pr_top[pk]), pr_top_n[pk], jesc(pr_sample[pk]),
+      jesc("prompt|" parts[1] "|" parts[2] "|" parts[3]))
   }
 
   # ── per-action rollup ──────────────────────────────────────────────

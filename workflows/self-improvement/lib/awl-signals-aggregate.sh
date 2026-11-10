@@ -98,14 +98,16 @@ raw_out=$(mktemp)
 awk -f "$here/aggregate-awl-signals.awk" "$tsv_out" > "$raw_out"
 
 # signal records: keep awk grouping order (deterministic); hash the key
-grep -v '^-' "$raw_out" |
-while IFS=$'\t' read -r tag json sigkey; do
-  h=$(printf '%s' "$sigkey" | sha1sum | cut -c1-12)
-  printf '%s\n' "${json//@SIG@/$h}"
-done > "$out"
-
-# script rollups: awk `for (s in seen)` order is unspecified -> sort.
-grep '^-' "$raw_out" | sort | cut -f2- >> "$out"
+hash_sigs() {  # "<tag>\t<json with @SIG@>\t<key>" -> json with the key's hash
+  while IFS=$'\t' read -r tag json sigkey; do
+    h=$(printf '%s' "$sigkey" | sha1sum | cut -c1-12)
+    printf '%s\n' "${json//@SIG@/$h}"
+  done
+}
+{ grep '^@SIG@' "$raw_out" || true; } | hash_sigs > "$out"
+# rollups and script records: awk `for (k in a)` order is unspecified -> sort.
+{ grep '^@ROLLUP@' "$raw_out" || true; } | sort | hash_sigs >> "$out"
+{ grep '^-' "$raw_out" || true; } | sort | cut -f2- >> "$out"
 
 # 5. report
 n_files="${#files[@]}"
