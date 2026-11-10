@@ -1,6 +1,7 @@
 """Filesystem tools for ai-assist agent"""
 
 import asyncio
+import fnmatch
 import glob
 import json
 import logging
@@ -8,7 +9,9 @@ import os
 import re
 import shlex
 import signal
+import stat
 from collections.abc import Awaitable, Callable
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -920,6 +923,73 @@ def _is_secret_filename(name: str) -> bool:
     return name in _SECRET_FILENAMES or name == ".env" or name.startswith(".env.") or name.startswith(".env")
 
 
+_SEARCH_OUTPUTS = ("lines", "count", "only_matching", "files")
+_LIST_SORTS = ("name", "time", "size")
+_MAX_SEARCHED_FILES = 5000
+
+
+def _resolve_line_range(total: int, line_start: int | None, line_end: int | None) -> tuple[int, int]:
+    """0-based [start, end) from 1-based line_start/line_end (negative: from the end)."""
+    if line_start is None:
+        start = 0
+    elif line_start < 0:
+        start = max(0, total + line_start)
+    else:
+        start = max(0, line_start - 1)
+    if line_end is None:
+        end = total
+    elif line_end < 0:
+        end = max(0, total + line_end + 1)
+    else:
+        end = min(total, line_end)
+    return start, end
+
+
+def _lines_with_context(lines: list[str], hits: list[int], context: int, prefix: str) -> list[str]:
+    """grep-style output: "N: line" for hits, "N- line" for context, "--" between groups."""
+    if not context:
+        return [f"{prefix}{i + 1}: {lines[i].rstrip()}" for i in hits]
+    hit_set = set(hits)
+    shown: list[int] = []
+    for i in hits:
+        shown.extend(range(max(0, i - context), min(len(lines), i + context + 1)))
+    out: list[str] = []
+    previous = None
+    for i in sorted(set(shown)):
+        if previous is not None and i > previous + 1:
+            out.append("--")
+        mark = ":" if i in hit_set else "-"
+        out.append(f"{prefix}{i + 1}{mark} {lines[i].rstrip()}")
+        previous = i
+    return out
+
+
+def _searchable_files(root: Path, name_glob: str | None) -> list[Path]:
+    """Text files under root for a tree search, like ripgrep: no hidden directories,
+    no binary files, no symlink leading out of root, no secret files (.env, keys)."""
+    real_root = root.resolve()
+    found: list[Path] = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = sorted(d for d in dirnames if not d.startswith("."))
+        for name in sorted(filenames):
+            if name_glob and not fnmatch.fnmatch(name, name_glob):
+                continue
+            file_path = Path(dirpath) / name
+            real = file_path.resolve()
+            if not real.is_file() or not real.is_relative_to(real_root) or is_sensitive_path(real):
+                continue
+            try:
+                with open(real, "rb") as f:
+                    if b"\0" in f.read(8192):
+                        continue
+            except OSError:
+                continue
+            found.append(file_path)
+            if len(found) >= _MAX_SEARCHED_FILES:
+                return found
+    return found
+
+
 def is_sensitive_path(path: Path) -> bool:
     """Whether a path is (inside) a credential location the agent may never access."""
     resolved = path.expanduser().resolve()
@@ -1568,7 +1638,15 @@ class FilesystemTools:
             {
                 "name": "internal__search_in_file",
                 "_readonly": True,
-                "description": "Search for a regex pattern in a file. Returns matching lines with line numbers. Use this to find specific patterns, errors, or keywords in log files. Supports line ranges to search only a portion of the file (e.g., last 100 lines with line_start=-100).",
+                "description": (
+                    "Search a file, or a whole directory tree, for a regex pattern (Python regex: "
+                    "alternation and \\d work as with grep -E). Returns matching lines with line numbers. "
+                    "Use it instead of grep on files: grep -n is the default, -i is ignore_case, -v invert, "
+                    "-c output=count, -o output=only_matching, -l output=files, -A/-B/-C context, "
+                    "-r a directory path (with glob for --include), | head max_results. "
+                    "A directory search skips hidden directories, binary and secret files. "
+                    "Line ranges search part of one file (e.g. the last 100 lines with line_start=-100)."
+                ),
                 "input_schema": {
                     "type": "object",
                     "properties": {
@@ -1581,6 +1659,25 @@ class FilesystemTools:
                             "type": "integer",
                             "description": "Maximum number of matching lines to return (default: 100)",
                             "default": 100,
+                        },
+                        "ignore_case": {"type": "boolean", "description": "Case-insensitive match (grep -i)"},
+                        "invert": {"type": "boolean", "description": "Select non-matching lines (grep -v)"},
+                        "output": {
+                            "type": "string",
+                            "enum": list(_SEARCH_OUTPUTS),
+                            "description": (
+                                "lines (default): matching lines; count: number of matching lines (per file "
+                                "for a directory); only_matching: just the matched text; files: names of the "
+                                "files that match"
+                            ),
+                        },
+                        "context": {
+                            "type": "integer",
+                            "description": "Lines of context before and after each match (grep -C)",
+                        },
+                        "glob": {
+                            "type": "string",
+                            "description": "Directory search only: file name pattern to search, e.g. '*.py'",
                         },
                         "line_start": {
                             "type": "integer",
@@ -1616,7 +1713,11 @@ class FilesystemTools:
             {
                 "name": "internal__list_directory",
                 "_readonly": True,
-                "description": "List files and directories in a directory with type and size details. Always prefer this over execute_command for listing directory contents.",
+                "description": (
+                    "List files and directories (hidden ones included) with type and size. Always prefer "
+                    "this over ls in execute_command: ls -a is the default, -l is long (permissions and "
+                    "modification time), -t is sort=time (newest first), -S sort=size, | head max_results."
+                ),
                 "input_schema": {
                     "type": "object",
                     "properties": {
@@ -1629,6 +1730,13 @@ class FilesystemTools:
                             "description": "Optional glob pattern to filter results (e.g., '*.log')",
                             "default": "*",
                         },
+                        "long": {"type": "boolean", "description": "Add permissions and modification time (ls -l)"},
+                        "sort": {
+                            "type": "string",
+                            "enum": list(_LIST_SORTS),
+                            "description": "name (default), time (newest first) or size (largest first)",
+                        },
+                        "max_results": {"type": "integer", "description": "Show only the first N entries"},
                     },
                     "required": ["path"],
                 },
@@ -1849,15 +1957,23 @@ class FilesystemTools:
             return f"Error reading file: {str(e)}"
 
     async def _search_in_file(self, args: dict) -> str:
-        """Search for a pattern in a file, optionally within a line range"""
+        """Search a file, or a directory tree, for a pattern (the grep forms agents use)."""
         path = args.get("path")
         pattern = args.get("pattern")
         max_results = args.get("max_results", 100)
         line_start = args.get("line_start")
         line_end = args.get("line_end")
+        output = args.get("output", "lines")
+        invert = bool(args.get("invert", False))
+        context = max(0, int(args.get("context") or 0))
+        name_glob = args.get("glob")
 
         if not path or not pattern:
             return "Error: path and pattern parameters are required"
+        if output not in _SEARCH_OUTPUTS:
+            return f"Error: output must be one of: {', '.join(_SEARCH_OUTPUTS)} (got '{output}')"
+        if invert and output == "only_matching":
+            return "Error: invert cannot be combined with output=only_matching"
 
         path_error = await self._validate_path(path)
         if path_error:
@@ -1869,59 +1985,55 @@ class FilesystemTools:
             if not path_obj.exists():
                 return f"Error: File not found: {path}"
 
-            if not path_obj.is_file():
-                return f"Error: Not a file: {path}"
-
             try:
-                regex = re.compile(pattern)
+                regex = re.compile(pattern, re.IGNORECASE if args.get("ignore_case") else 0)
             except re.error as e:
                 return f"Error: Invalid regex pattern: {e}"
 
-            # Read all lines to support negative indices
-            with open(path_obj, encoding="utf-8", errors="replace") as f:
-                all_lines = f.readlines()
-
-            total_lines = len(all_lines)
-
-            # Resolve line range (1-based, negative counts from end)
-            if line_start is not None:
-                if line_start < 0:
-                    start_idx = max(0, total_lines + line_start)
-                else:
-                    start_idx = max(0, line_start - 1)
+            # (file, label shown before each result: its path in the tree, None for a single file)
+            files: list[tuple[Path, str | None]]
+            if path_obj.is_dir():
+                files = [(f, str(f.relative_to(path_obj))) for f in _searchable_files(path_obj, name_glob)]
+                line_start = line_end = None  # a line range only makes sense for one file
+            elif path_obj.is_file():
+                files = [(path_obj, None)]
             else:
-                start_idx = 0
+                return f"Error: Not a file or directory: {path}"
 
-            if line_end is not None:
-                if line_end < 0:
-                    end_idx = max(0, total_lines + line_end + 1)
-                else:
-                    end_idx = min(total_lines, line_end)
-            else:
-                end_idx = total_lines
-
-            # Search within range
-            matches = []
-            for idx in range(start_idx, end_idx):
-                line = all_lines[idx]
-                if regex.search(line):
-                    matches.append(f"{idx + 1}: {line.rstrip()}")
-                    if len(matches) >= max_results:
-                        break
-
+            entries: list[str] = []
+            total = 0
             range_info = ""
-            if line_start is not None or line_end is not None:
-                range_info = f" (lines {start_idx + 1}-{end_idx} of {total_lines})"
+            for file_path, label in files:
+                with open(file_path, encoding="utf-8", errors="replace") as f:
+                    all_lines = f.readlines()
+                start_idx, end_idx = _resolve_line_range(len(all_lines), line_start, line_end)
+                if line_start is not None or line_end is not None:
+                    range_info = f" (lines {start_idx + 1}-{end_idx} of {len(all_lines)})"
+                hits = [i for i in range(start_idx, end_idx) if bool(regex.search(all_lines[i])) != invert]
+                if not hits:
+                    continue
+                total += len(hits)
+                prefix = f"{label}:" if label else ""
+                if output == "count":
+                    entries.append(f"{label}: {len(hits)}" if label else str(len(hits)))
+                elif output == "files":
+                    entries.append(label or str(file_path))
+                elif output == "only_matching":
+                    entries.extend(f"{prefix}{i + 1}: {m.group(0)}" for i in hits for m in regex.finditer(all_lines[i]))
+                else:
+                    entries.extend(_lines_with_context(all_lines, hits, context, prefix))
+                if output != "count" and len(entries) >= max_results:
+                    break
 
-            if not matches:
-                return f"No matches found for pattern: {pattern}{range_info}"
+            where = f" in {len(files)} file(s)" if path_obj.is_dir() else ""
+            if total == 0:
+                return f"No matches found for pattern: {pattern}{range_info}{where}"
 
-            result = f"Found {len(matches)} match(es) for pattern '{pattern}'{range_info}:\n\n"
-            result += "\n".join(matches)
-
-            if len(matches) >= max_results:
+            limited = output != "count" and len(entries) >= max_results
+            result = f"Found {total} matching line(s) for pattern '{pattern}'{range_info}{where}:\n\n"
+            result += "\n".join(entries[:max_results] if limited else entries)
+            if limited:
                 result += f"\n\n... (limited to {max_results} results)"
-
             return result
 
         except Exception as e:
@@ -1952,12 +2064,17 @@ class FilesystemTools:
             return f"Error creating directory: {str(e)}"
 
     async def _list_directory(self, args: dict) -> str:
-        """List files and directories"""
+        """List files and directories (the ls forms agents use: -l, -t, -S, | head)"""
         path = args.get("path")
         pattern = args.get("pattern", "*")
+        long_format = bool(args.get("long", False))
+        sort = args.get("sort", "name")
+        max_results = args.get("max_results")
 
         if not path:
             return "Error: path parameter is required"
+        if sort not in _LIST_SORTS:
+            return f"Error: sort must be one of: {', '.join(_LIST_SORTS)} (got '{sort}')"
 
         path_error = await self._validate_path(path)
         if path_error:
@@ -1972,20 +2089,32 @@ class FilesystemTools:
             if not path_obj.is_dir():
                 return f"Error: Not a directory: {path}"
 
-            items = list(path_obj.glob(pattern))
-            items.sort()
+            items = [(item, item.lstat()) for item in path_obj.glob(pattern)]
+            if sort == "time":
+                items.sort(key=lambda x: x[1].st_mtime, reverse=True)
+            elif sort == "size":
+                items.sort(key=lambda x: x[1].st_size, reverse=True)
+            else:
+                items.sort()
 
             if not items:
                 return f"No items found matching pattern '{pattern}' in {path}"
 
+            shown = items[:max_results] if max_results else items
             result = f"Contents of {path_obj} (pattern: {pattern}):\n\n"
 
-            for item in items:
+            for item, st in shown:
                 if item.is_dir():
-                    result += f"  [DIR]  {item.name}/\n"
+                    line = f"  [DIR]  {item.name}/"
                 else:
-                    size = item.stat().st_size
-                    result += f"  [FILE] {item.name} ({size} bytes)\n"
+                    line = f"  [FILE] {item.name} ({item.stat().st_size} bytes)"
+                if long_format:
+                    mtime = datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%d %H:%M")
+                    line += f"  {stat.filemode(st.st_mode)}  {mtime}"
+                result += line + "\n"
+
+            if len(shown) < len(items):
+                result += f"  ... ({len(items) - len(shown)} more)\n"
 
             return result
 
