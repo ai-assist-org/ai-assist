@@ -5,6 +5,8 @@ import logging
 import os
 import re
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -35,6 +37,8 @@ class AuditLogger:
 
         audit_dir.mkdir(parents=True, exist_ok=True)
         self.log_file = audit_dir / "tool_calls.jsonl"
+        # (script, task) of the AWL tasks running, innermost last (see task_context)
+        self._task_stack: list[tuple[str, str]] = []
         # Keep the audit trail readable only by the owner (it holds tool args/results)
         try:
             os.chmod(audit_dir, 0o700)
@@ -58,6 +62,15 @@ class AuditLogger:
             else:
                 sanitized[key] = value
         return sanitized
+
+    @contextmanager
+    def task_context(self, script: str, task: str) -> Iterator[None]:
+        """Attribute the tool calls logged inside the block to an AWL script's task."""
+        self._task_stack.append((script, task))
+        try:
+            yield
+        finally:
+            self._task_stack.pop()
 
     def log_tool_call(
         self,
@@ -90,8 +103,12 @@ class AuditLogger:
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
             "pid": os.getpid(),
         }
+        if self._task_stack:
+            entry["script"], entry["task"] = self._task_stack[-1]
         if confirmations:
-            entry["confirmations"] = confirmations
+            entry["confirmations"] = [
+                {**c, "question": self._sanitize_value(c.get("question", ""))} for c in confirmations
+            ]
 
         # Log to standard logger for log file visibility
         args_full = json.dumps(sanitized_args)

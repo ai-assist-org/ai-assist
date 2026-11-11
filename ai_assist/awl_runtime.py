@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import re
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -400,14 +401,18 @@ class AWLRuntime:
         limits: RuntimeLimits | None = None,
         verbose: bool = False,
         authorize_commands: bool = False,
+        script_path: str = "",
     ):
         """
         Args:
             authorize_commands: auto-authorize the commands written in the script.
                 Only for scripts the user started (CLI, user-approved actions),
                 never for scripts the model chose to run.
+            script_path: the script being run; the audit log attributes each
+                task's tool calls to it.
         """
         self._agent = agent
+        self._script_path = script_path
         self._authorize_commands = authorize_commands
         self._limits = limits or RuntimeLimits()
         self._variables: dict[str, Any] = {}
@@ -562,6 +567,15 @@ class AWLRuntime:
                 pass
         fs_tools.awl_authorized_commands -= newly_authorized
 
+    def _audit_task_context(self, task_id: str):
+        """Attribute the audited tool calls of a task to this script (no-op without an audit log)."""
+        from .audit import AuditLogger
+
+        audit = getattr(self._agent, "audit_logger", None)
+        if isinstance(audit, AuditLogger):
+            return audit.task_context(self._script_path, task_id)
+        return nullcontext()
+
     async def _execute_task(self, task: TaskNode):
         prompt = self._build_task_prompt(task)
 
@@ -617,14 +631,15 @@ class AWLRuntime:
                 previous_result_state = self._agent.task_result_tool.begin()
                 stopped_early: QueryIncompleteError | None = None
                 try:
-                    response = await self._agent.query(
-                        prompt,
-                        max_turns=max_turns,
-                        progress_callback=callback,
-                        max_time_seconds=task.max_time or NO_TIME_LIMIT,
-                        raise_on_api_error=True,
-                        raise_on_incomplete=True,
-                    )
+                    with self._audit_task_context(task.task_id):
+                        response = await self._agent.query(
+                            prompt,
+                            max_turns=max_turns,
+                            progress_callback=callback,
+                            max_time_seconds=task.max_time or NO_TIME_LIMIT,
+                            raise_on_api_error=True,
+                            raise_on_incomplete=True,
+                        )
                 except QueryIncompleteError as e:
                     stopped_early = e
                     response = str(e)

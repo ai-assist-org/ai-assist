@@ -1,5 +1,6 @@
 # Personal ideas
 TODO.md
+improvements/
 
 # MkDocs build output
 site/
@@ -17,6 +18,7 @@ downloads/
 eggs/
 .eggs/
 lib/
+!workflows/*/lib/
 lib64/
 parts/
 sdist/
@@ -43,7 +45,9 @@ env/
 *.swp
 *.swo
 *~
-.claude
+# local Claude Code settings stay private; shared skills are tracked
+.claude/*
+!.claude/skills/
 
 # OS
 .DS_Store

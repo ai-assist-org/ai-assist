@@ -821,6 +821,16 @@ uv run ai-assist /awl-viz                 # Discover and select from available s
 
 The visualization shows task blocks connected by arrows with variable names on edges, if/else decision diamonds, loop clusters with back-arrows, and mouse-over tooltips with full task details.
 
+### Self-Improvement Workflow
+
+ai-assist ships a workflow that reads its own logs and configuration and proposes fixes for your workflows, skills, scheduled actions, allowlists and ai-assist itself:
+
+```bash
+uv run ai-assist /run workflows/self-improvement/self-improvement.awl days=14
+```
+
+It changes nothing: the report in `~/ai-assist/reports/self-improvement-report-<date>.md` ranks the findings and ends with the proposals (short diffs, allowlist and scheduled-actions copies, ai-assist issue drafts), each checked by a deterministic gate before you review it. It also reports shell commands an internal tool could run, output piped into `head`/`cut`/`tail` and pipelines that may hide a failure, inline scripts a tool could replace, and the security questions you had to answer (including commands ai-assist could approve automatically). Record what a finding really was (real, fixed, won't fix, false positive) with the `self-improvement-review` skill, or by telling the agent: dismissed findings stay quiet, fixed ones that come back are reported as regressions. See [docs/SELF_IMPROVEMENT.md](docs/SELF_IMPROVEMENT.md).
+
 ### Knowledge Graph
 
 Query temporal data and track changes:
@@ -1087,6 +1097,7 @@ ai-assist/
 │   ├── awl_visualization.py # AWL workflow flowchart visualization
 │   └── filesystem_tools.py # Filesystem operations
 ├── emacs/                  # Emacs major mode for AWL files
+├── workflows/              # AWL workflows shipped with ai-assist (self-improvement)
 ├── litellm-proxy/          # Containerized LiteLLM example (Gemini/GPT-5 access)
 ├── tests/                  # Test suite
 ├── .env.example           # Example environment variables
@@ -1103,6 +1114,7 @@ ai-assist/
 - **[docs/PLUGINS.md](docs/PLUGINS.md)** - Installing Claude Code plugins (skills + MCP + marketplace)
 - **[docs/PERMISSION_MODES.md](docs/PERMISSION_MODES.md)** - Command approval and autonomous sandbox modes
 - **[docs/QUERY_DIAGNOSTICS.md](docs/QUERY_DIAGNOSTICS.md)** - Debugging stalled model streams and tool calls
+- **[docs/SELF_IMPROVEMENT.md](docs/SELF_IMPROVEMENT.md)** - Self-improvement workflow: proposals from ai-assist's own logs
 - **[docs/IDENTITY.md](docs/IDENTITY.md)** - Complete guide to identity.yaml configuration
 - **[docs/LOGGING.md](docs/LOGGING.md)** - Logging configuration and troubleshooting
 - **[docs/MULTI_INSTANCE.md](docs/MULTI_INSTANCE.md)** - Running multiple ai-assist instances

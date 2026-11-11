@@ -812,3 +812,48 @@ async def test_audit_and_logs_reads_allowed(tmp_path, monkeypatch):
     result = await tools.execute_tool("execute_command", {"command": f"grep log {cfg}/logs/ai-assist.log"})
 
     assert "log" in result and not result.startswith("Error")
+
+
+def _protected_config_tools(workdir, config_dir):
+    config = AiAssistConfig(
+        anthropic_api_key="test",
+        allowed_commands=["cat", "cp", "tee", "grep"],
+        allowed_paths=[str(workdir), str(config_dir)],
+    )
+    return FilesystemTools(config, load_user_config=False)
+
+
+@pytest.mark.asyncio
+async def test_reading_protected_config_is_allowed(workdir, isolate_config_dir):
+    """Protected config files are write-protected; reading them is not a modification."""
+    protected = isolate_config_dir / "event-schedules.json"
+    protected.write_text('{"actions": []}\n')
+    tools = _protected_config_tools(workdir, isolate_config_dir)
+
+    result = await tools.execute_tool("execute_command", {"command": f"cat {protected}"})
+
+    assert "Exit code: 0" in result, result
+    assert '{"actions": []}' in result
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "command",
+    [
+        "echo '[]' > {p}",
+        "cp f {p}",
+        "grep x f | tee {p}",
+        "cd {d} && cp {w}/f event-schedules.json",
+    ],
+)
+async def test_writing_protected_config_is_rejected(workdir, isolate_config_dir, command):
+    protected = isolate_config_dir / "event-schedules.json"
+    protected.write_text("original\n")
+    tools = _protected_config_tools(workdir, isolate_config_dir)
+
+    result = await tools.execute_tool(
+        "execute_command", {"command": command.format(p=protected, d=isolate_config_dir, w=workdir)}
+    )
+
+    assert "protected security config file" in result, result
+    assert protected.read_text() == "original\n"

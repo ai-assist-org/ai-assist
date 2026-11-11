@@ -1,5 +1,6 @@
 """Tests for TUI interactive mode"""
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -1115,3 +1116,137 @@ async def test_help_command_lists_user_skills(mock_agent):
     text = output.getvalue()
     assert "Interactive Mode Help" in text
     assert "demo" in text
+
+
+# --- Background task results reach the agent ---
+
+
+def _streaming_agent(mock_agent, prompts, on_first_turn=None):
+    """Record the prompt of each turn; run on_first_turn(agent) during the first one."""
+
+    async def streaming(prompt=None, messages=None, progress_callback=None, cancel_event=None):
+        prompts.append(prompt if prompt is not None else messages[-1]["content"])
+        if on_first_turn and len(prompts) == 1:
+            await on_first_turn(mock_agent)
+        yield "ok"
+        yield {"type": "done", "turns": 1}
+
+    mock_agent.query_streaming = streaming
+    return mock_agent
+
+
+async def _finish_background_task(agent, result="Found 12 sources."):
+    manager = agent.background_task_tools.manager
+    agent.query = AsyncMock(return_value=result)
+    task = await manager.spawn_task(prompt="research", description="Source scan")
+    running = manager._asyncio_tasks.get(task.id)
+    if running is not None:
+        await running
+
+
+@pytest.mark.asyncio
+async def test_task_finished_during_a_turn_wakes_the_agent(mock_agent, mock_state_manager, tmp_path):
+    prompts = []
+    _streaming_agent(mock_agent, prompts, on_first_turn=_finish_background_task)
+    with (
+        patch("ai_assist.tui_interactive.PromptSession") as session_class,
+        patch("ai_assist.tui_interactive.get_config_dir", return_value=tmp_path),
+    ):
+        session_class.return_value.prompt_async = AsyncMock(side_effect=["Start the research", "/exit"])
+        await tui_interactive_mode(mock_agent, mock_state_manager)
+
+    assert len(prompts) == 2, prompts
+    assert prompts[0] == "Start the research"
+    assert "Source scan" in prompts[1] and "Found 12 sources." in prompts[1]
+
+
+@pytest.mark.asyncio
+async def test_task_finished_while_typing_is_prepended_to_the_message(mock_agent, mock_state_manager, tmp_path):
+    prompts = []
+    _streaming_agent(mock_agent, prompts)
+
+    async def typed_after_task_finished():
+        await _finish_background_task(mock_agent)
+        return "What next?"
+
+    with (
+        patch("ai_assist.tui_interactive.PromptSession") as session_class,
+        patch("ai_assist.tui_interactive.get_config_dir", return_value=tmp_path),
+    ):
+        replies = iter([typed_after_task_finished, lambda: "/exit"])
+
+        async def prompt_async(*args, **kwargs):
+            reply = next(replies)()
+            return await reply if asyncio.iscoroutine(reply) else reply
+
+        session_class.return_value.prompt_async = prompt_async
+        await tui_interactive_mode(mock_agent, mock_state_manager)
+
+    assert len(prompts) == 1, prompts
+    assert "Found 12 sources." in prompts[0]
+    assert prompts[0].endswith("What next?")
+
+
+def test_wake_only_an_idle_empty_prompt():
+    from types import SimpleNamespace
+
+    from ai_assist.tui_interactive import WAKE, wake_idle_prompt
+
+    def session(running, text):
+        app = SimpleNamespace(is_running=running, exit=MagicMock())
+        return SimpleNamespace(app=app, default_buffer=SimpleNamespace(text=text))
+
+    idle = session(True, "")
+    wake_idle_prompt(idle)
+    idle.app.exit.assert_called_once_with(result=WAKE)
+
+    for busy in (session(True, "half a sentence"), session(False, "")):
+        wake_idle_prompt(busy)
+        busy.app.exit.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_foreground_questions_are_asked_while_a_background_task_runs(
+    mock_agent, mock_state_manager, tmp_path, caplog
+):
+    """Only questions coming from the background task itself are auto-denied."""
+    import logging
+
+    with (
+        patch("ai_assist.tui_interactive.PromptSession") as session_class,
+        patch("ai_assist.tui_interactive.get_config_dir", return_value=tmp_path),
+    ):
+        session_class.return_value.prompt_async = AsyncMock(side_effect=["/exit"])
+        await tui_interactive_mode(mock_agent, mock_state_manager)
+
+    mock_agent._background_task_count = 1  # a background task is running elsewhere
+    with caplog.at_level(logging.INFO, logger="ai_assist.tui_interactive"):
+        try:
+            await mock_agent.filesystem_tools.confirmation_callback("rm -rf /tmp/x")
+        except Exception:
+            pass  # the terminal prompt itself is not set up in this test
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("approval requested" in m for m in messages), messages
+    assert not any("auto-denied" in m for m in messages)
+
+
+@pytest.mark.asyncio
+async def test_background_questions_are_auto_denied(mock_agent, mock_state_manager, tmp_path):
+    from ai_assist.background_tasks import _in_background_task
+
+    with (
+        patch("ai_assist.tui_interactive.PromptSession") as session_class,
+        patch("ai_assist.tui_interactive.get_config_dir", return_value=tmp_path),
+    ):
+        session_class.return_value.prompt_async = AsyncMock(side_effect=["/exit"])
+        await tui_interactive_mode(mock_agent, mock_state_manager)
+
+    callback = mock_agent.filesystem_tools.confirmation_callback
+    path_callback = mock_agent.filesystem_tools.path_confirmation_callback
+    token = _in_background_task.set(True)
+    try:
+        with patch("ai_assist.tui_interactive.asyncio.to_thread", AsyncMock(side_effect=AssertionError("asked"))):
+            assert await callback("rm -rf /tmp/x") is False
+            assert await path_callback("Access path: /etc") is False
+    finally:
+        _in_background_task.reset(token)

@@ -6,8 +6,12 @@ import hashlib
 import json
 import logging
 import os
+import re
 import shutil
 import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import UTC, datetime
 from io import TextIOWrapper
 from pathlib import Path
@@ -87,16 +91,107 @@ def _generate_builtin_variables() -> dict[str, str]:
         "reports_dir": str(get_reports_dir()),
         "logs_dir": str(config_dir / "logs"),
         "tmpdir": _get_session_tmpdir(),
+        # Top dir of the ai-assist source tree (parent of the ai_assist package)
+        "source_dir": str(Path(__file__).resolve().parent.parent),
     }
 
 
-def _merge_all_variables(variables: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Merge builtin, local, and caller-provided variables (caller wins)."""
+# Built-ins derived from the running script's location (see _merge_all_variables)
+SCRIPT_LOCATION_VARIABLES = frozenset({"script_path", "script_dir"})
+
+
+def _merge_all_variables(variables: dict[str, Any] | None = None, script_path: Path | None = None) -> dict[str, Any]:
+    """Merge builtin, local, and caller-provided variables (caller wins).
+
+    When script_path is given, ${script_path} and ${script_dir} are added as
+    built-ins pointing to the resolved script file and its directory.
+    """
     merged = _generate_builtin_variables()
+    if script_path is not None:
+        resolved = Path(script_path).resolve()
+        merged["script_path"] = str(resolved)
+        merged["script_dir"] = str(resolved.parent)
     merged.update(load_local_variables())
     if variables:
         merged.update(variables)
     return merged
+
+
+def resolve_awl_path(prompt: str) -> Path:
+    """Where load_awl_workflow looks for a script: ~ expanded, relative to cwd, else the config dir."""
+    awl_path = Path(prompt).expanduser()
+    if not awl_path.is_absolute():
+        cwd_path = Path.cwd() / prompt
+        awl_path = cwd_path if cwd_path.exists() else get_config_dir() / prompt
+    return awl_path
+
+
+_AWL_PATH_RE = re.compile(r"[^\s'\"`()<>,;]+\.awl\b")
+
+
+def awl_paths_in(text: str) -> list[str]:
+    """The .awl paths written in a text (e.g. an action prompt)."""
+    return _AWL_PATH_RE.findall(text)
+
+
+class _ActionTrust:
+    """The user-approved action running in an asyncio task: its prompt, and how its scripts ran."""
+
+    def __init__(self, prompt: str) -> None:
+        self.prompt = prompt
+        # resolved path of each script it named and ran -> error of its last run (None: succeeded)
+        self.last_errors: dict[Path, str | None] = {}
+
+
+_action_trust: ContextVar[_ActionTrust | None] = ContextVar("action_trust", default=None)
+
+
+@contextmanager
+def trusted_action_prompt(prompt: str) -> Iterator[None]:
+    """Run a user-approved action's prompt: the scripts it names are trusted (see is_trusted_by_action).
+
+    Pass the prompt as the user approved it, never with event data appended.
+    A ContextVar keeps actions running concurrently from sharing their trust.
+    """
+    token = _action_trust.set(_ActionTrust(prompt))
+    try:
+        yield
+    finally:
+        _action_trust.reset(token)
+
+
+def is_trusted_by_action(awl_path: Path) -> bool:
+    """Whether the running user-approved action's prompt names this script.
+
+    Such a script is run as if the action's prompt were its path: its commands
+    are authorized. Paths are compared once resolved, so the model cannot get a
+    different script trusted.
+    """
+    trust = _action_trust.get()
+    if trust is None or not trust.prompt:
+        return False
+    target = Path(awl_path).resolve()
+    return any(resolve_awl_path(p).resolve() == target for p in awl_paths_in(trust.prompt))
+
+
+def record_action_script_run(awl_path: Path, error: str | None) -> None:
+    """Record how a script named by the running action ended (error None: it succeeded)."""
+    trust = _action_trust.get()
+    if trust is not None and is_trusted_by_action(awl_path):
+        trust.last_errors[Path(awl_path).resolve()] = error
+
+
+def action_script_failure() -> str | None:
+    """Why the running action failed: a script it names whose last run failed, else None.
+
+    The model may carry on after such a failure and end normally; the action
+    must still be reported as failed. A successful retry clears the failure.
+    """
+    trust = _action_trust.get()
+    if trust is None:
+        return None
+    failures = [f"{path}: {error}" for path, error in trust.last_errors.items() if error]
+    return "; ".join(failures) or None
 
 
 def load_awl_workflow(prompt: str):
@@ -108,14 +203,7 @@ def load_awl_workflow(prompt: str):
     """
     from .awl_parser import AWLParser
 
-    awl_path = Path(prompt).expanduser()
-    if not awl_path.is_absolute():
-        cwd_path = Path.cwd() / prompt
-        if cwd_path.exists():
-            awl_path = cwd_path
-        else:
-            awl_path = get_config_dir() / prompt
-
+    awl_path = resolve_awl_path(prompt)
     if not awl_path.exists():
         raise FileNotFoundError(f"AWL script not found: {awl_path}")
 
@@ -145,12 +233,14 @@ def _try_lock_script(resolved_path: Path) -> TextIOWrapper | None:
         return None
 
 
-def get_missing_variables(workflow, variables: dict[str, Any] | None = None) -> set[str]:
+def get_missing_variables(
+    workflow, variables: dict[str, Any] | None = None, script_path: Path | None = None
+) -> set[str]:
     """Return input variables required by the workflow but absent from the provided dict."""
     from .awl_runtime import _compute_input_variables
 
     required = _compute_input_variables(workflow)
-    provided = set(_merge_all_variables(variables).keys())
+    provided = set(_merge_all_variables(variables, script_path).keys())
     return required - provided
 
 
@@ -172,17 +262,17 @@ async def run_awl_script(
     Variables are merged from three sources (highest precedence wins):
     1. Caller-provided variables (CLI key=value, agent tool)
     2. User-defined variables from ~/.ai-assist/variables.yaml
-    3. Built-in variables (date/time, paths)
+    3. Built-in variables (date/time, paths, script_path/script_dir)
 
     authorize_commands auto-authorizes the commands written in the script: pass
     True only for scripts the user started, never for the agent tool.
     """
     from .awl_ast import GoalNode
 
-    merged = _merge_all_variables(variables)
     _allow_session_tmpdir(agent)
 
     workflow, _awl_path = load_awl_workflow(prompt)
+    merged = _merge_all_variables(variables, _awl_path)
 
     lock_fh = _try_lock_script(_awl_path)
     if lock_fh is None:
@@ -238,7 +328,9 @@ async def run_awl_script(
 
         from .awl_runtime import AWLRuntime, AWLRuntimeError
 
-        runtime = AWLRuntime(agent, verbose=verbose, authorize_commands=authorize_commands)
+        runtime = AWLRuntime(
+            agent, verbose=verbose, authorize_commands=authorize_commands, script_path=str(_awl_path.resolve())
+        )
         try:
             result = await runtime.execute(workflow, variables=merged)
         except AWLRuntimeError as e:

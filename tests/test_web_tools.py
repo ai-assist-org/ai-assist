@@ -5,6 +5,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import httpx
+import pytest
 
 from ai_assist.web_tools import WebTools, web_search_configured
 from ai_assist.web_tools.providers import brave, duckduckgo, exa, firecrawl, http_fetch, perplexity, searxng, tavily
@@ -296,6 +297,26 @@ class TestWebFetchExecution:
 
         assert "HTTP 403" in out
         assert not [record for record in caplog.records if record.levelname == "WARNING"]
+
+    @pytest.mark.parametrize(
+        ("error", "expected"),
+        [
+            (httpx.ConnectTimeout(""), "ConnectTimeout"),
+            (httpx.ConnectError("Connection refused"), "Connection refused"),
+        ],
+    )
+    async def test_fetch_unreachable_site_is_not_an_error(self, mocker, caplog, error, expected):
+        """Timeouts and refused connections are ordinary dead ends: the agent is told, the console stays quiet."""
+        import logging
+
+        mocker.patch.object(http_fetch.httpx, "AsyncClient", _FakeClient(get_error=error))
+
+        with caplog.at_level(logging.DEBUG):
+            out = await WebTools(make_config()).execute_tool("web_fetch", {"url": "https://e.com"})
+
+        assert expected in out
+        assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+        assert [r for r in caplog.records if r.exc_info and "e.com" in r.getMessage()]  # traceback kept at debug
 
     async def test_fetch_provider_override(self, mocker):
         # Forcing firecrawl skips HTTP entirely.

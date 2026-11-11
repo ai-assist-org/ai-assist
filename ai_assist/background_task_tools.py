@@ -3,7 +3,7 @@
 import json
 import logging
 
-from .background_tasks import BackgroundTaskManager
+from .background_tasks import BackgroundTaskManager, in_background_task
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +19,8 @@ class BackgroundTaskTools:
                 "description": (
                     "Spawn a long-running query as a background task. "
                     "The user can continue chatting while it runs. "
-                    "Results are delivered via notification when complete."
+                    "When it finishes, its result is handed to you automatically (you are woken up if idle): "
+                    "do not poll internal__list_background_tasks or internal__get_background_task to wait for it."
                 ),
                 "input_schema": {
                     "type": "object",
@@ -91,20 +92,25 @@ class BackgroundTaskTools:
             },
         ]
 
+    async def _run_background(self, arguments: dict) -> str:
+        if in_background_task():
+            return "Error: a background task cannot start another one: do the work directly."
+        task = await self.manager.spawn_task(
+            prompt=arguments["prompt"],
+            description=arguments["description"],
+            save_to_report=arguments.get("save_to_report"),
+            max_turns=arguments.get("max_turns", 50),
+            max_time_seconds=arguments.get("max_time_seconds", 300),
+        )
+        return (
+            f"Background task spawned (id: {task.id}). "
+            f"Description: {task.description}. "
+            "Its result will be handed to you automatically when it finishes: do not poll."
+        )
+
     async def execute_tool(self, tool_name: str, arguments: dict) -> str:
         if tool_name == "run_background":
-            task = await self.manager.spawn_task(
-                prompt=arguments["prompt"],
-                description=arguments["description"],
-                save_to_report=arguments.get("save_to_report"),
-                max_turns=arguments.get("max_turns", 50),
-                max_time_seconds=arguments.get("max_time_seconds", 300),
-            )
-            return (
-                f"Background task spawned (id: {task.id}). "
-                f"Description: {task.description}. "
-                f"You will be notified when it completes."
-            )
+            return await self._run_background(arguments)
 
         if tool_name == "list_background_tasks":
             tasks = self.manager.list_tasks(status_filter=arguments.get("status"))

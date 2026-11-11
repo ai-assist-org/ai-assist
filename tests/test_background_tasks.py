@@ -91,6 +91,21 @@ class TestBackgroundTaskManager:
         assert called_prompt.startswith("@no-kg @no-history ")
 
     @pytest.mark.asyncio
+    async def test_background_agent_is_told_it_is_the_background_task(self, manager, mock_agent):
+        """Otherwise it reports "I did it directly, not in the background" and confuses the main agent."""
+        mock_agent.query = AsyncMock(return_value="Done")
+        task = await manager.spawn_task(prompt="Test the background pipeline", description="Pipeline test")
+        await asyncio.sleep(0.1)
+
+        called_prompt = mock_agent.query.call_args[0][0]
+        assert called_prompt.startswith("@no-kg @no-history ")
+        assert called_prompt.endswith("Test the background pipeline")
+        assert task.id in called_prompt
+        assert "Pipeline test" in called_prompt
+        assert "background" in called_prompt.lower()
+        assert "main conversation" in called_prompt
+
+    @pytest.mark.asyncio
     async def test_spawn_task_increments_background_count(self, manager, mock_agent):
         count_during_query = None
 
@@ -211,6 +226,93 @@ class TestBackgroundTaskManager:
         assert task.id not in manager._tasks
 
 
+class TestCompletionDelivery:
+    """A finished task is handed to the agent once, and can wake it up."""
+
+    async def _finish(self, manager, **spawn):
+        task = await manager.spawn_task(prompt="research", description="Source scan", **spawn)
+        running = manager._asyncio_tasks.get(task.id)
+        if running is not None:
+            await running
+        return task
+
+    @pytest.mark.asyncio
+    async def test_finished_task_note_is_delivered_once(self, manager, mock_agent):
+        mock_agent.query = AsyncMock(return_value="Found 12 sources.")
+        task = await self._finish(manager)
+
+        assert manager.has_finished()
+        note = manager.take_finished_note()
+        assert task.id in note
+        assert "Source scan" in note
+        assert "completed" in note
+        assert "Found 12 sources." in note
+        assert not manager.has_finished()
+        assert manager.take_finished_note() is None
+
+    @pytest.mark.asyncio
+    async def test_failed_task_note_has_the_error(self, manager, mock_agent):
+        mock_agent.query = AsyncMock(side_effect=RuntimeError("API down"))
+        await self._finish(manager)
+
+        note = manager.take_finished_note()
+        assert "failed" in note
+        assert "API down" in note
+
+    @pytest.mark.asyncio
+    async def test_note_points_to_the_full_result(self, manager, mock_agent):
+        mock_agent.query = AsyncMock(return_value="x" * 10_000)
+        task = await self._finish(manager)
+
+        note = manager.take_finished_note()
+        assert len(note) < 5_000
+        assert f'internal__get_background_task(task_id="{task.id}")' in note
+
+    @pytest.mark.asyncio
+    async def test_finishing_calls_the_wake_hook(self, manager):
+        woken = []
+        manager.on_finished = lambda: woken.append(manager.has_finished())
+        await self._finish(manager)
+        assert woken == [True]
+
+    @pytest.mark.asyncio
+    async def test_tasks_not_for_the_agent_do_not_wake_it(self, manager):
+        """E.g. MCP channel messages: they reply through their own tool."""
+        woken = []
+        manager.on_finished = lambda: woken.append(True)
+        await self._finish(manager, notify_agent=False)
+        assert woken == []
+        assert not manager.has_finished()
+
+    @pytest.mark.asyncio
+    async def test_cancelled_task_is_not_reported_back(self, manager, mock_agent):
+        """The agent cancelled it itself: no need to tell it."""
+
+        async def slow(*args, **kwargs):
+            await asyncio.sleep(10)
+
+        mock_agent.query = AsyncMock(side_effect=slow)
+        task = await manager.spawn_task(prompt="p", description="d")
+        await asyncio.sleep(0)
+        await manager.cancel_task(task.id)
+        assert not manager.has_finished()
+
+    @pytest.mark.asyncio
+    async def test_only_the_background_task_runs_in_background_context(self, manager, mock_agent):
+        from ai_assist.background_tasks import in_background_task
+
+        seen = []
+
+        async def query(*args, **kwargs):
+            seen.append(in_background_task())
+            return "ok"
+
+        mock_agent.query = AsyncMock(side_effect=query)
+        await self._finish(manager)
+        assert seen == [True]
+        assert in_background_task() is False
+
+
 class TestBackgroundTaskTools:
     def test_get_tool_definitions(self, tools):
         defs = tools.get_tool_definitions()
@@ -283,9 +385,44 @@ class TestBackgroundTaskTools:
         assert "cancelled" in result.lower()
 
     @pytest.mark.asyncio
+    async def test_background_task_cannot_spawn_another(self, tools, manager, mock_agent):
+        seen = []
+
+        async def query(*args, **kwargs):
+            seen.append(await tools.execute_tool("run_background", {"prompt": "nested", "description": "nested"}))
+            return "ok"
+
+        mock_agent.query = AsyncMock(side_effect=query)
+        await tools.execute_tool("run_background", {"prompt": "outer", "description": "outer"})
+        await asyncio.sleep(0.1)
+
+        assert seen and seen[0].startswith("Error")
+        assert len(manager.list_tasks()) == 1
+
+    @pytest.mark.asyncio
     async def test_get_nonexistent_task(self, tools):
         result = await tools.execute_tool(
             "get_background_task",
             {"task_id": "no-such-id"},
         )
         assert "not found" in result.lower()
+
+
+def test_monitor_notifications_section_leaves_out_background_tasks(isolate_config_dir):
+    """The session's background tasks reach the agent directly, not as /monitor reports."""
+    import json
+    from datetime import datetime
+
+    from ai_assist.system_prompt_builder import SystemPromptBuilder
+
+    now = datetime.now().isoformat()
+    entries = [
+        {"timestamp": now, "action_name": "background:abc123", "title": "Background: scan", "message": "bg result"},
+        {"timestamp": now, "action_name": "nightly", "title": "Nightly report", "message": "monitor result"},
+    ]
+    (isolate_config_dir / "notifications.jsonl").write_text("\n".join(map(json.dumps, entries)) + "\n")
+
+    section = SystemPromptBuilder(MagicMock())._get_recent_notifications_context()
+
+    assert "Nightly report" in section
+    assert "bg result" not in section

@@ -752,6 +752,116 @@ def compute_allowlist_prefixes(command: str) -> list[str]:
     return prefixes
 
 
+# Words that start shell syntax, not a command an allowlist entry could name
+_SHELL_WORDS = frozenset(
+    {"for", "while", "until", "do", "done", "if", "then", "else", "elif", "fi", "case", "esac", "select"}
+    | {"function", "in", "time", "!", "{", "}", "[[", "]]", "mapfile", "readarray"}
+)
+_COMMAND_NAME = re.compile(r"^[A-Za-z0-9_.+~/][A-Za-z0-9_.+~/@:-]*$")
+_SHELL_SYNTAX = re.compile(r"[$`'\"(){}<>|;&\\]")
+_SUBCOMMAND = re.compile(r"^[a-z][a-z0-9-]*$")
+
+
+def _effective_segments(command: str) -> list[list[str]]:
+    """The tokens of each command segment that allowlist entries are matched against.
+
+    Env assignments and transparent wrappers are stripped and the command name
+    resolved; segments of inert builtins (cd, echo...) are left out.
+    """
+    found = []
+    for segment in _split_shell_commands(_expand_shell_invocations(command)):
+        try:
+            tokens = shlex.split(segment)
+        except ValueError:
+            tokens = segment.split()
+        idx = 0
+        while idx < len(tokens) and ENV_VAR_PATTERN.match(tokens[idx]):
+            idx += 1
+        if idx >= len(tokens):
+            continue
+        idx = _strip_transparent_wrappers(tokens, idx)
+        if idx >= len(tokens) or _resolve_command_token(tokens[idx]) in INERT_SHELL_BUILTINS:
+            continue
+        found.append([_resolve_command_token(tokens[idx])] + tokens[idx + 1 :])
+    return found
+
+
+def _entry_matches(entry: str, effective: list[str]) -> bool:
+    """Whether an allowlist entry permits a segment: a token prefix, or an
+    "<interpreter> <script>" entry naming the same file once resolved."""
+    parts = entry.split()
+    if parts and effective[: len(parts)] == parts:
+        return True
+    if len(parts) != 2 or len(effective) < 2 or parts[0] != effective[0]:
+        return False
+    target = Path(parts[1].removeprefix("script:")).expanduser().resolve()
+    return Path(effective[1]).expanduser().resolve() == target
+
+
+def matching_allowlist_entries(command: str, entries: list[str]) -> set[str]:
+    """The allowlist entries that permit the segments of a command (the longest ones per segment)."""
+    used: set[str] = set()
+    for effective in _effective_segments(command):
+        matches = [e for e in entries if _entry_matches(e, effective)]
+        if matches:
+            longest = max(len(e.split()) for e in matches)
+            used.update(e for e in matches if len(e.split()) == longest)
+    return used
+
+
+def is_valid_allowlist_entry(entry: str) -> bool:
+    """Whether an allowlist entry names a command (not a shell fragment left by a bad parse).
+
+    Junk: a first word that cannot be a command (shell syntax, an option, a
+    redirection, a keyword, an assignment), or later words with shell syntax.
+    """
+    words = entry.split()
+    if not words or "\n" in entry:
+        return False
+    first = words[0]
+    if not _COMMAND_NAME.match(first) or first.startswith("-") or first in _SHELL_WORDS:
+        return False
+    return all(w != "=" and not w.endswith("=") and not _SHELL_SYNTAX.search(w) for w in words[1:])
+
+
+def allowlist_entry_from_segment(segment: str) -> str | None:
+    """The entry "always allow" saves for an approved command, or None (approve once).
+
+    The command name and the subcommands right after it (`git worktree list`,
+    `docker ps`), or the bare name of a command without arguments (`whoami`):
+    an entry that matches the approved command again without allowing more.
+    `wc -l f` gets none: "wc f" would never match it, "wc" would allow any wc.
+    """
+    try:
+        tokens = shlex.split(segment)
+    except ValueError:
+        return None
+    idx = 0
+    while idx < len(tokens) and ENV_VAR_PATTERN.match(tokens[idx]):
+        idx += 1
+    idx = _strip_transparent_wrappers(tokens, idx) if idx < len(tokens) else idx
+    if idx >= len(tokens):
+        return None
+    parts = [_resolve_command_token(tokens[idx])]
+    nxt = idx + 1
+    while nxt < len(tokens) and len(parts) < 3 and _SUBCOMMAND.match(tokens[nxt]):
+        parts.append(tokens[nxt])
+        nxt += 1
+    if len(parts) == 1 and nxt < len(tokens):
+        return None
+    entry = " ".join(parts)
+    return entry if is_valid_allowlist_entry(entry) else None
+
+
+def _code_execution_entry(interpreter: str, marker: str) -> str | None:
+    """The allowlist entry permitting a python invocation (see _gate_code_execution), or None."""
+    if marker.startswith("<script:"):
+        return f"{interpreter} {Path(marker[len('<script:') : -1]).expanduser().resolve()}"
+    if marker.startswith("<module:"):
+        return f"{interpreter} -m {marker[len('<module:') : -1]}"
+    return None
+
+
 def compute_allowlist_prefix(command: str) -> str | None:
     """Compute a meaningful allowlist prefix from a command string.
 
@@ -1490,6 +1600,9 @@ class FilesystemTools:
         self.awl_authorized_commands: set[str] = set()
         self._confirmations: list[dict] = []
         self._saved_outputs = 0  # command outputs saved by _save_full_output
+        # question -> the allowlist entry that permits it (None: cannot be allowed
+        # permanently); see allowlist_entry_for
+        self._allowlist_entries: dict[str, str | None] = {}
 
     def set_permission_mode(self, mode: str) -> str | None:
         """Set a session-only permission mode, returning an error if invalid."""
@@ -1932,6 +2045,16 @@ class FilesystemTools:
         events, self._confirmations = self._confirmations, []
         return events
 
+    def allowlist_entry_for(self, question: str) -> str | None:
+        """The allowlist entry that would permit what a question asked, for an "always allow" answer.
+
+        Recorded when the question is asked (see allowlist_entry_from_segment and
+        _code_execution_entry). None when nothing should be saved: arbitrary code
+        (python -c, stdin, awk programs), an entry that would allow more than
+        approved, or a question that is not about a command.
+        """
+        return self._allowlist_entries.get(question)
+
     async def _ask_command(self, description: str) -> bool:
         """Invoke the command-approval callback and record the question + answer."""
         if self.confirmation_callback is None:
@@ -2211,55 +2334,11 @@ class FilesystemTools:
         Returns an empty list if all commands are allowed, or a list of
         rejected command names.
         """
-        segments = _split_shell_commands(_expand_shell_invocations(full_command))
         rejected: list[str] = []
-
-        for segment in segments:
-            try:
-                tokens = shlex.split(segment)
-            except ValueError:
-                tokens = segment.split()
-
-            if not tokens:
-                continue
-
-            # Skip env var assignments
-            idx = 0
-            while idx < len(tokens) and ENV_VAR_PATTERN.match(tokens[idx]):
-                idx += 1
-
-            if idx >= len(tokens):
-                continue
-
-            # Strip transparent wrappers and their arguments
-            idx = _strip_transparent_wrappers(tokens, idx)
-
-            if idx >= len(tokens):
-                continue
-
-            cmd_name = _resolve_command_token(tokens[idx])
-            if cmd_name in INERT_SHELL_BUILTINS:
-                continue
-
-            # Build the effective token list for matching (preserve full paths)
-            effective: list[str] = []
-            for t in tokens[idx:]:
-                if effective:
-                    effective.append(t)
-                else:
-                    effective.append(_resolve_command_token(t))
-
+        for effective in _effective_segments(full_command):
             # Check if any allowlist entry is a prefix of the effective tokens
-            matched = False
-            for entry in self.allowed_commands:
-                entry_parts = entry.split()
-                if effective[: len(entry_parts)] == entry_parts:
-                    matched = True
-                    break
-
-            if not matched:
-                rejected.append(cmd_name)
-
+            if not any(effective[: len(entry.split())] == entry.split() for entry in self.allowed_commands):
+                rejected.append(effective[0])
         return rejected
 
     async def _check_command_allowed(self, cmd_names: list[str], full_command: str) -> str | None:
@@ -2335,6 +2414,7 @@ class FilesystemTools:
 
             # Prompt for this specific segment
             if self.confirmation_callback is not None:
+                self._allowlist_entries[segment.strip()] = allowlist_entry_from_segment(segment)
                 approved = await self._ask_command(segment.strip())
                 if not approved:
                     return f"Error: Command '{segment.strip()}' was rejected by the user. Try a different approach or use only allowed commands: {', '.join(self.allowed_commands)}."
@@ -2611,15 +2691,17 @@ class FilesystemTools:
             return None
         if path_or_marker.startswith("<module:") and self._is_python_module_allowlisted(cmd_name, path_or_marker[8:-1]):
             return None
-        if path_or_marker.startswith("<script:") and self._is_invocation_allowlisted(
-            [cmd_name, path_or_marker[len("<script:") : -1]]
+        if path_or_marker.startswith("<script:") and self._is_script_allowlisted(
+            cmd_name, path_or_marker[len("<script:") : -1]
         ):
             return None
         if self.confirmation_callback is None:
             # A bare interpreter on the allowlist is not enough to run arbitrary
             # code non-interactively; the specific invocation must be allowlisted.
             return f"Error: {cmd_name} {path_or_marker} execution is not allowed in non-interactive mode."
-        if not await self._ask_command(f"{cmd_name} {path_or_marker.strip('<>')} execution: {command}"):
+        question = f"{cmd_name} {path_or_marker.strip('<>')} execution: {command}"
+        self._allowlist_entries[question] = _code_execution_entry(cmd_name, path_or_marker)
+        if not await self._ask_command(question):
             return f"Error: {cmd_name} {path_or_marker} execution rejected by user."
         return None
 
@@ -2680,9 +2762,28 @@ class FilesystemTools:
                 continue
             if self.confirmation_callback is None:
                 return f"Error: {name} runs arbitrary code and needs confirmation; not allowed non-interactively."
-            if not await self._ask_command(f"{name} runs arbitrary code/package: {command}"):
+            question = f"{name} runs arbitrary code/package: {command}"
+            self._allowlist_entries[question] = None
+            if not await self._ask_command(question):
                 return f"Error: {name} invocation rejected by user."
         return None
+
+    def _is_script_allowlisted(self, interpreter: str, script: str) -> bool:
+        """Whether an entry "<interpreter> <script path>" names this script.
+
+        Paths are compared once resolved, so "python3 tools/x.py" matches an entry
+        with its absolute path. Entries "<interpreter> script:<path>", saved by
+        older versions on "always allow", are honored.
+        """
+        target = Path(script).expanduser().resolve()
+        for entry in self.allowed_commands:
+            parts = entry.split()
+            if len(parts) != 2 or parts[0] != interpreter:
+                continue
+            path = parts[1].removeprefix("script:")
+            if Path(path).expanduser().resolve() == target:
+                return True
+        return False
 
     def _is_invocation_allowlisted(self, tokens: list[str]) -> bool:
         """Whether a multi-token allowlist entry explicitly permits this invocation."""
@@ -2909,12 +3010,7 @@ class FilesystemTools:
         if not command:
             return "Error: command parameter is required"
 
-        # Block commands that target protected security config files
-        config_dir = str(get_config_dir().resolve())
-        for protected in PROTECTED_CONFIG_FILES:
-            protected_path = f"{config_dir}/{protected}"
-            if protected_path in command or f"~/.ai-assist/{protected}" in command:
-                return f"Error: {protected} is a protected security config file and cannot be modified by the agent."
+        # Block commands that write protected security config files (reading them is fine)
         for cmd_name, path in _extract_command_argument_paths(command, working_dir):
             if cmd_name in _WRITE_TARGET_SOURCES and self._is_protected_config(path):
                 return (

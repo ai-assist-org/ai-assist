@@ -36,17 +36,25 @@ class ActionTools:
         self.confirm = confirm
 
     async def _confirm_awl_prompt(self, name: str, prompt: str) -> str | None:
-        """Return an error unless the user approves an action running an AWL script."""
-        if not prompt.endswith(".awl"):
+        """Return an error unless the user approves an action running an AWL script.
+
+        Covers a prompt that is a script path and one that names scripts: the
+        action runs those with their commands authorized (see is_trusted_by_action).
+        """
+        from .awl_executor import awl_paths_in
+
+        scripts = [prompt] if prompt.endswith(".awl") else awl_paths_in(prompt)
+        if not scripts:
             return None
+        listed = ", ".join(dict.fromkeys(scripts))
         if self.confirm is None:
             return f"Error: Action '{name}' runs an AWL script and requires user confirmation, which is not available."
         description = (
-            f"Schedule action '{name}' running AWL script {prompt} "
+            f"Schedule action '{name}' running AWL script {listed} "
             "(commands written in the script will run without further confirmation)"
         )
         if not await self.confirm(description):
-            return f"Error: Action '{name}' running {prompt} was rejected by the user."
+            return f"Error: Action '{name}' running {listed} was rejected by the user."
         return None
 
     def get_tool_definitions(self) -> list[dict]:

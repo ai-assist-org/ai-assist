@@ -23,6 +23,7 @@ from rich.table import Table
 from rich.text import Text
 
 from .agent import AiAssistAgent
+from .background_tasks import in_background_task
 from .commands import get_command_suggestion, is_valid_interactive_command
 from .config import EFFORT_SETTINGS, EffortSetting, _split_model_effort, get_config_dir
 from .config_watcher import ConfigWatcher
@@ -69,6 +70,20 @@ async def display_notification(console: Console, notification: dict):
     console.print("\n")
     console.print(panel)
     console.print("\n")
+
+
+# Returned by the prompt when a background task finished while it was idle
+WAKE = object()
+
+
+def wake_idle_prompt(session: Any) -> None:
+    """End an idle, empty prompt with WAKE so the agent gets a finished background task's result.
+
+    Never interrupts typing: the result then goes with the next message.
+    """
+    app = getattr(session, "app", None)
+    if app is not None and app.is_running and not session.default_buffer.text:
+        app.exit(result=WAKE)
 
 
 class NotificationWatcher:
@@ -1047,6 +1062,8 @@ async def tui_interactive_mode(agent: AiAssistAgent, state_manager: StateManager
         notifications_file=notification_watcher.notification_log,
     )
     agent.background_task_tools = BackgroundTaskTools(bg_manager)
+    # A finished task's result goes to the agent: at once if the prompt is idle
+    bg_manager.on_finished = lambda: wake_idle_prompt(session)
     agent.available_tools.extend(agent.background_task_tools.get_tool_definitions())
 
     from .mcp_channel import MCPChannelRouter
@@ -1189,7 +1206,7 @@ async def tui_interactive_mode(agent: AiAssistAgent, state_manager: StateManager
 
     async def command_confirmation_callback(command: str) -> bool:
         """Prompt user to approve non-allowlisted commands or destructive actions"""
-        if agent._background_task_count > 0:
+        if in_background_task():  # nobody can answer a background task's question
             logger.info("Security: auto-denied command in background task: %s", command[:200])
             return False
         logger.info("Security prompt: command approval requested: %s", command[:200])
@@ -1202,19 +1219,19 @@ async def tui_interactive_mode(agent: AiAssistAgent, state_manager: StateManager
         approved = choice in ("y", "yes", "a", "always")
         logger.info("Security prompt: command %s by user: %s", "approved" if approved else "denied", command[:200])
         if choice in ("a", "always"):
-            from .filesystem_tools import compute_allowlist_prefix
-
-            prefix = compute_allowlist_prefix(command)
+            prefix = agent.filesystem_tools.allowlist_entry_for(command)
             if prefix and prefix not in agent.filesystem_tools.allowed_commands:
                 agent.filesystem_tools.add_permanent_allowed_command(prefix)
                 console.print(f"[green]'{prefix}' permanently added to allowed commands[/green]")
             elif not prefix:
-                console.print("[yellow]Approved for this session only[/yellow]")
+                console.print(
+                    "[yellow]Approved this time only: no allowlist entry would permit just this command[/yellow]"
+                )
         return approved
 
     async def path_confirmation_callback(description: str) -> bool:
         """Prompt user to approve access to a path outside allowed directories"""
-        if agent._background_task_count > 0:
+        if in_background_task():  # nobody can answer a background task's question
             logger.info("Security: auto-denied path access in background task: %s", description[:200])
             return False
         logger.info("Security prompt: path approval requested: %s", description[:200])
@@ -1248,8 +1265,17 @@ async def tui_interactive_mode(agent: AiAssistAgent, state_manager: StateManager
     try:
         while True:
             try:
-                user_input = await session.prompt_async()
-                user_input = user_input.strip()
+                # A background task that finished during the last turn wakes the
+                # agent before the prompt; one finishing at an idle prompt ends it
+                entered = WAKE if bg_manager.has_finished() else await session.prompt_async()
+                if entered is WAKE:
+                    user_input = bg_manager.take_finished_note() or ""
+                    if user_input:
+                        console.print("\n[cyan]Background task finished: handing its result to the agent[/cyan]")
+                else:
+                    user_input = str(entered).strip()
+                    if user_input and not user_input.startswith("/") and bg_manager.has_finished():
+                        user_input = f"{bg_manager.take_finished_note()}\n\n{user_input}"
 
                 if not user_input:
                     continue
