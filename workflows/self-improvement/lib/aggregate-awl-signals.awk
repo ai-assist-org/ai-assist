@@ -26,6 +26,10 @@
 #   into (`head -#`, `cut -c#-#`...), any command:
 #     {"kind":"pipe","reducer","count","stderr_merged","last","top_producer","top_task"}
 #
+#   inline records — "@ROLLUP@" (hashed), per inline-script language and
+#   purpose (see audit-scripts.py):
+#     {"kind":"inline","language","purpose","count","last","top_task","sample"}
+#
 #   prompt records — "@ROLLUP@" as first column (hashed), per security question form (see
 #   section 10 of the extractor), rolled up like the shell records:
 #     {"kind":"prompt","prompt":"command|path","form","tool","count",
@@ -152,6 +156,18 @@ BEGIN { FS = "\t" }
     next
   }
 
+  # ── inline scripts: rolled up per language and purpose ───────────
+  if (event == "inline_script") {
+    split(detail, sp, "\037")
+    ik = sp[1] SUBSEP sp[2]
+    if (!(ik in in_count)) in_sample[ik] = sp[3]
+    in_count[ik]++
+    if (date "T" time > in_last[ik]) in_last[ik] = date "T" time
+    in_task[ik, script "::" task]++
+    if (in_task[ik, script "::" task] > in_top_n[ik]) { in_top_n[ik] = in_task[ik, script "::" task]; in_top[ik] = script "::" task }
+    next
+  }
+
   # ── security questions: rolled up per form ───────────────────────
   if (event == "security_prompt") {
     split(detail, pf, "\037")
@@ -230,6 +246,14 @@ END {
     printf("@ROLLUP@\t{\"kind\":\"pipe\",\"signature\":\"@SIG@\",\"script\":\"ai-assist\",\"task\":\"execute_command\",\"event\":\"pipe_reducer\",\"reducer\":\"%s\",\"sample\":\"| %s\",\"count\":%d,\"stderr_merged\":%d,\"last\":\"%s\",\"top_producer\":\"%s\",\"top_task\":\"%s\",\"top_task_count\":%d}\t%s\n",
       jesc(rk), jesc(rk), pi_count[rk], pi_merged[rk], pi_last[rk], jesc(pi_top_prod[rk]),
       jesc(pi_top[rk]), pi_top_n[rk], jesc("pipe|" rk))
+  }
+
+  # ── per inline-script language and purpose ───────────────────────
+  for (ik in in_count) {
+    split(ik, parts, SUBSEP)
+    printf("@ROLLUP@\t{\"kind\":\"inline\",\"signature\":\"@SIG@\",\"script\":\"ai-assist\",\"task\":\"execute_command\",\"event\":\"inline_script\",\"language\":\"%s\",\"purpose\":\"%s\",\"count\":%d,\"last\":\"%s\",\"top_task\":\"%s\",\"top_task_count\":%d,\"sample\":\"%s\"}\t%s\n",
+      jesc(parts[1]), jesc(parts[2]), in_count[ik], in_last[ik], jesc(in_top[ik]), in_top_n[ik],
+      jesc(in_sample[ik]), jesc("script|" parts[1] "|" parts[2]))
   }
 
   # ── per-action rollup ──────────────────────────────────────────────

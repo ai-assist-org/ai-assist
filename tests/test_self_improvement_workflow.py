@@ -176,6 +176,17 @@ def signals(tmp_path, flow, awk_dir):
         ),
         old,
         {"tool_name": "internal__read_file", "arguments": {}, "timestamp": "2026-11-05T06:00:00", "pid": 100},
+        audit_entry("internal__execute_command", "command", "approved", "git worktree list"),
+        audit_entry("internal__execute_command", "command", "approved", "cd /srv && git worktree list --porcelain"),
+        audit_entry("internal__execute_command", "command", "approved", "whoami"),
+        audit_entry("internal__execute_command", "command", "approved", "LC_ALL=C git branch -a | head -5"),
+        audit_entry("internal__execute_command", "command", "approved", "2>&1 git log --oneline"),
+        command_entry("python3 -c \"import json,sys; print(json.load(open('a.json'))['x'])\"", "Exit code: 0"),
+        command_entry("python3 - <<'EOF'\nimport yaml\nprint(yaml.safe_load(open('c.yaml')))\nEOF", "Exit code: 0"),
+        command_entry("python3 -c 'import json; print(json.dumps({}))'", "Exit code: 0"),
+        command_entry("awk -F, '{s+=$3} END{print s}' data.csv", "Exit code: 0"),
+        command_entry("cat x | awk '{print $2}'", "Exit code: 0"),
+        command_entry("python3 tools/report.py --all", "Exit code: 0"),
         command_entry(
             "make build 2>&1 | tail -3",
             "Command: make build 2>&1 | tail -3\nExit code: 0\n\nSTDOUT:\nmake: *** [all] Error 2\nerror: build failed\n",
@@ -255,6 +266,10 @@ def test_security_prompts_are_rolled_up(signals):
         ("command", "internal__create_action", "-"),
         ("command", "python3 module:pytest execution", "-"),
         ("path", "path for tool", "-"),
+        ("command", "git worktree list", "-"),
+        ("command", "whoami", "-"),
+        ("command", "git branch", "-"),
+        ("command", "git log", "-"),
     }
     cat = prompts[("command", "cat", "internal__read_file")]
     assert (cat["count"], cat["approved"], cat["denied"], cat["auto_denied"]) == (2, 1, 0, 1)  # not /old: too old
@@ -283,6 +298,56 @@ def test_hidden_pipeline_failures_are_candidates_but_not_probes(signals):
     assert "curl -s https://example.com/x" in samples
     assert "grep -n" not in samples
     assert all(r["script"] == "demo.awl" for r in masked)
+
+
+@pytest.mark.parametrize(
+    ("question", "form"),
+    [
+        ("git -C /srv/repo worktree list", "git worktree list"),
+        ("git -c core.pager=cat log -3", "git log"),
+        ("timeout 30 whoami", "whoami"),
+        ("env LC_ALL=C sort f", "sort"),
+        ("for f in *.log; do wc -l $f; done", "(shell construct)"),
+        ("mapfile -t x < f", "(shell construct)"),
+    ],
+)
+def test_command_question_forms(tmp_path, question, form):
+    row = "\t".join(
+        [
+            "2026-11-05",
+            "06:00:00,000",
+            "1",
+            "demo.awl",
+            "t",
+            "internal__execute_command",
+            "command",
+            "approved",
+            question,
+        ]
+    )
+    out = subprocess.run(
+        ["awk", "-f", str(LIB / "signals-common.awk"), "-f", str(LIB / "extract-prompts.awk")],
+        input=row + "\n",
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    assert out.split("\t")[6].split("\037")[2] == form
+
+
+def test_command_questions_keep_the_subcommand(signals):
+    prompts = {(r["prompt"], r["form"]): r for r in records(signals, "prompt")}
+    worktree = prompts[("command", "git worktree list")]
+    assert (worktree["count"], worktree["approved"], worktree["denied"]) == (2, 2, 0)
+
+
+def test_inline_scripts_are_rolled_up_by_language_and_purpose(signals):
+    scripts = {(r["language"], r["purpose"]): r for r in records(signals, "inline")}
+    assert set(scripts) == {("python", "json"), ("python", "yaml"), ("awk", "aggregate+fields"), ("awk", "fields")}
+    js = scripts[("python", "json")]
+    assert (js["count"], js["top_task"], js["event"]) == (2, "demo.awl::gather", "inline_script")
+    assert "json.load" in js["sample"]
+    assert re.fullmatch(r"[0-9a-f]{12}", js["signature"])
 
 
 def test_ledger_reports_each_signal_once(signals, tmp_path):
@@ -521,7 +586,7 @@ def test_fixed_rollup_seen_again_is_a_regression(ledger, signals, tmp_path):
 def config(tmp_path):
     cfg = tmp_path / "cfg"
     cfg.mkdir(exist_ok=True)
-    (cfg / "allowed_commands.json").write_text(json.dumps(["ls", "\nfor f", "bash"]))
+    (cfg / "allowed_commands.json").write_text(json.dumps(["ls", "\nfor f", "bash", "-r .access_token", "wc $f"]))
     (cfg / "allowed_paths.json").write_text(json.dumps([str(tmp_path), "/does/not/exist"]))
     skill = tmp_path / "skills" / "demo-skill"
     skill.mkdir(parents=True)
@@ -562,13 +627,32 @@ def test_config_lint(tmp_path, config):
     out = run("awl-check-config.sh", "lint", str(config), str(signals), str(tmp_path / "p"), SOURCE_DIR, home=tmp_path)
 
     assert 'junk entry "\\nfor f"' in out
+    assert 'junk entry "-r .access_token"' in out and 'junk entry "wc $f"' in out
     assert 'junk entry "/does/not/exist"' in out
     assert '"bash" allows arbitrary code' in out
     assert f'CANDIDATE allowed_commands.json add "{tool}"' in out
     assert f'NOTE "{in_flow}"' in out and "name it in backticks" in out
     assert "LINT skill demo-skill: allowed-tools" in out
-    assert counters(out)["config_issues"] == "4"
+    assert counters(out)["config_issues"] == "6"
     assert (tmp_path / "p" / "live-installed-skills.json").exists()
+
+
+def test_config_lint_notes_entries_never_used_in_the_logs(tmp_path, config):
+    signals = tmp_path / "s.jsonl"
+    signals.write_text("")
+    lint = ["lint", str(config), str(signals), str(tmp_path / "p"), SOURCE_DIR]
+    without_logs = run("awl-check-config.sh", *lint, home=tmp_path)
+    logs = config / "logs"
+    logs.mkdir()
+    (logs / "ai-assist.log").write_text(shell_call("06:00:00", "ls -la /tmp") + "\n")
+
+    out = run("awl-check-config.sh", *lint, home=tmp_path)
+
+    [note] = [x for x in out.splitlines() if "never matched" in x]
+    assert note.startswith("NOTE allowed_commands.json: 1 of 2 valid entries never matched")
+    assert '"bash"' in note and '"ls"' not in note
+    assert "rare use looks the same" in note
+    assert counters(out)["config_issues"] == counters(without_logs)["config_issues"]  # a NOTE is no issue
 
 
 def test_allowlist_gate_accepts_only_policy_changes(tmp_path, config):

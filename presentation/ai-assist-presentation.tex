@@ -1813,13 +1813,14 @@ Task blocks show brief description; hover reveals full goal, context, constraint
 \begin{columns}[T]
 \begin{column}{0.48\textwidth}
 \textbf{Mines its own logs and configuration}
-\begin{itemize}\scriptsize\setlength{\itemsep}{1pt}
+\begin{itemize}\scriptsize\setlength{\itemsep}{0pt}
   \item \textbf{Workflows}: failed tasks, unresolved variables, refused commands, tasks that never report
   \item \textbf{Skills}: scripts a skill cannot run, oversized descriptions
   \item \textbf{Scheduler}: failures, double starts, config mistakes
   \item \textbf{Config}: junk allowlist entries, exposed \texttt{.env}, failing event sources
   \item \textbf{ai-assist}: repeated errors $\rightarrow$ issue drafts
-  \item \textbf{Tools}: shell instead of an internal tool, pipes hiding failures, security questions
+  \item \textbf{Tools}: shell instead of an internal tool, inline scripts a tool could replace, pipes hiding failures
+  \item \textbf{Permissions}: questions ai-assist could have auto-approved
 \end{itemize}
 
 \smallskip
@@ -1943,8 +1944,8 @@ one deterministic script (never by editing the files).
 \midrule
 130k MQTT reconnect errors in 2 weeks & Reload storm started duplicate listeners sharing one client id & Serialized reloads, unique client ids, backoff reset only after a stable connection \\
 1,100 \texttt{grep -i}, 650 \texttt{grep -o}, 480 \texttt{grep -r} run in the shell & The internal search tool lacked these options, or did not say it had them & Search a whole tree, ignore case, count, only matching, context; descriptions map grep options \\
-1,500 \texttt{| head}, 580 \texttt{| cut}, 550 \texttt{| tail} & Commands had no output limit & Output limits on \texttt{execute\_command} (in review) \\
-48 pipelines exiting 0 while a stage failed & A pipe reports the last command's exit code & Per-stage exit statuses, hidden failures reported (in review) \\
+1,500 \texttt{| head}, 580 \texttt{| cut}, 550 \texttt{| tail} & Commands had no output limit & Output limits on \texttt{execute\_command} \\
+48 pipelines exiting 0 while a stage failed & A pipe reports the last command's exit code & Per-stage exit statuses, hidden failures reported \\
 A weekly workflow step failing every run, reported as a success & Skill scripts disabled; the action trusted the agent's last word & Scripts named by an approved action are trusted; a failed script fails the action \\
 ``Always allow'' never sticking & The saved allowlist entry could never match & The entry that really permits the command is saved \\
 \bottomrule

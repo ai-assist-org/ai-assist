@@ -143,7 +143,7 @@
   @if review_count > 0
 
     # ── Step 3: classify findings (judgement only, no edits) ────────────
-    @task classify @no-history @no-kg max_tool_calls=28
+    @task classify @no-history @no-kg max_tool_calls=30
       Goal: Classify each finding to review in ${review_file}.
 
       Use internal__json_query with jq to read ${review_file} (auto-slurped
@@ -300,14 +300,27 @@
           internal__edit_file);
         * false_positive: the question should not have been asked — e.g.
           a "path" that is not a path (a sed/awk program such as
-          /^STDERR:/,$d, or a command argument such as /help), or a
-          read-only command treated as risky;
+          /^STDERR:/,$d, or a command argument such as /help);
+        * auto_approve: a command form ai-assist could approve for every
+          user without asking: its effects are understood and harmless
+          (e.g. "whoami", "git worktree list", "git branch", "which",
+          "readlink", "cmp"), and the user approved it every time. A form
+          is the command and its subcommands: judge "git push" and "git
+          log" apart. Never for a form that runs code (an interpreter,
+          awk), writes, deletes or reaches the network (rm, cp, curl...);
         * allowlist: a legitimate, recurring command or path the user
-          always approves — a candidate for the allowlists;
+          always approves but that is not safe for everyone (their own
+          scripts, a specific database) — a candidate for their allowlists;
         * legit: the question is the right call.
       Keep the verdicts as prompt_verdicts, a list of
-        {"signature","prompt","form","count","approved","denied","auto_denied","top_task","regression","verdict":"tool|false_positive|allowlist|legit","note":"<the internal tool, or why>"}.
-      And add up to 3 findings, by count: false_positive forms (script
+        {"signature","prompt","form","count","approved","denied","auto_denied","top_task","regression","verdict":"tool|false_positive|auto_approve|allowlist|legit","note":"<the internal tool, or why>"}.
+      And add up to 3 findings, by count: auto_approve forms together (one
+      finding: script "ai-assist", task "security_prompt", event
+      "prompt_auto_approve", count = their total, sample = the forms,
+      signature = their signatures comma-separated, target_kind
+      "ai-assist", target_file "ai_assist/config.py and filesystem_tools.py":
+      the default allowlist or the command classifier should approve them);
+      false_positive forms (script
       "ai-assist", task "security_prompt", event "prompt_false_positive",
       target_kind "ai-assist": how ai-assist reads the command should
       change), and tool forms (event "prompt_avoidable": if the task asking
@@ -334,6 +347,33 @@
       signatures comma-separated, target_kind "ai-assist", mechanical
       false; for covered forms the fix is the tool description or the system
       prompt, for a gap the tool itself).
+
+      Also review the inline scripts: the inline records of ${review_file},
+        [.[] | select(.kind=="inline")] | sort_by(-.count) | .[:15]
+      each with a language (python, awk, node...), a purpose read from the
+      code ("+"-joined tags: json, yaml, regex, csv, date, table, xml,
+      sqlite, http, subprocess, file-write; for awk fields, aggregate,
+      filter, text; "other"), a count, the task using it most and a sample
+      command. An inline script is code an agent wrote because no tool did
+      the job. Judge each purpose:
+        * existing_tool: an internal tool or an allowlisted command already
+          does it (json: internal__json_query or jq; yaml: yq; regex
+          extraction: internal__search_in_file output=only_matching; awk
+          fields / filters: search or json tools; file-write:
+          internal__edit_file / internal__write_file) — a habit;
+        * tool_candidate: a recurring, safe purpose no tool covers (e.g.
+          reading CSV or Parquet tables, date arithmetic): describe the
+          tool in one line;
+        * one_off: an exploration or a one-time transformation;
+        * unsafe: it would be dangerous as a tool (subprocess, network,
+          writes outside the workspace).
+      Keep the verdicts as inline_verdicts, a list of
+        {"signature","language","purpose","count","top_task","regression","verdict":"existing_tool|tool_candidate|one_off|unsafe","note":"<the tool, or why>"}.
+      Add at most one finding per verdict existing_tool and tool_candidate,
+      by total count (script "ai-assist", task "inline_script", event
+      "script_habit" or "tool_candidate", sample = the purposes and the
+      proposed tool, signature = their signatures comma-separated,
+      target_kind "ai-assist", mechanical false).
 
       The signal records with event "pipe_masked" are pipelines whose exit
       code 0 may hide a failure (the exit code is the last command's).
@@ -375,7 +415,7 @@
       file and report row. If classifying a record needs the script's text, read
       the file with internal__read_file — do not guess.
 
-      Expose: findings, shell_verdicts, prompt_verdicts, pipe_verdicts
+      Expose: findings, shell_verdicts, prompt_verdicts, pipe_verdicts, inline_verdicts
     @end
 
     # ── Step 4: draft proposals (never applied) ────────────────────────
@@ -579,11 +619,18 @@
       count, then one line per pipe_tax / masked_failure finding id. A pipe
       reports the exit code of its last command: say so once.
 
+      ## Inline scripts
+
+      From ${inline_verdicts}: | Signature | Language | Purpose (🔁 when a
+      regression) | Count | Most used by | Verdict | Note |, sorted by count,
+      then one line per script_habit / tool_candidate finding id.
+
       ## Security questions
 
       From ${prompt_verdicts}: | Signature | Kind | Form (🔁 when a regression) | Count | Approved / denied /
       auto-denied | Most asked by | Verdict | Note |, sorted by count, then
-      one line per prompt_false_positive / prompt_avoidable finding id.
+      one line per prompt_auto_approve / prompt_false_positive /
+      prompt_avoidable finding id.
 
       ## Configuration
 

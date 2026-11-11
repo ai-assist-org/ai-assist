@@ -20,8 +20,9 @@
 # all safe CANDIDATE additions and whose removals are all junk entries.
 #
 # Policy (the same for lint and gate):
-#   commands — junk:  contains a newline, starts with "(" or "$(", or is a
-#                     refusal message fragment ("... runs", "... is not ...")
+#   commands — junk:  not a command for ai-assist's is_valid_allowlist_entry
+#                     (shell fragment, option, redirection, keyword,
+#                     assignment...), or a refusal message fragment
 #              risky: a lone shell, interpreter or file-changing command
 #                     (bash, awk, python3, rm, chmod, curl ...): allows
 #                     arbitrary code — report only, never proposed
@@ -48,6 +49,11 @@ pdir="${4:?usage: $0 lint|gate <config_dir> <signals_jsonl> <proposals_dir> <sou
 src="${5:-}"
 # shellcheck source=ai-assist-env.sh
 . "$(dirname "${BASH_SOURCE[0]}")/ai-assist-env.sh"
+# ai-assist's python: junk allowlist entries are judged by ai-assist's own
+# validator (is_valid_allowlist_entry), the one "always allow" uses
+py=$(ai_assist_python "$src" || true)
+"${py:-false}" -E -P -c "from ai_assist.filesystem_tools import is_valid_allowlist_entry" 2>/dev/null \
+  || { echo "ERROR: cannot find the python running ai-assist (got '$py'): set AI_ASSIST_PYTHON" >&2; exit 2; }
 
 case "$mode" in lint|gate) ;; *) echo "ERROR: unknown mode $mode" >&2; exit 2 ;; esac
 [ -f "$signals" ] || { echo "ERROR: signals file not found: $signals" >&2; exit 2; }
@@ -59,12 +65,15 @@ env_lines=$(for k in AI_ASSIST_MODEL AI_ASSIST_MODEL_LOW AI_ASSIST_MODEL_MEDIUM 
   v=$(ai_assist_setting "$k" "$src" "$cfg"); [ -z "$v" ] || echo "$k=$v"
 done)
 
-exec python3 -I - "$mode" "$cfg" "$signals" "$pdir" "$env_files" "$env_lines" <<'EOF'
+exec "$py" -E -P - "$mode" "$cfg" "$signals" "$pdir" "$env_files" "$env_lines" <<'EOF'
 import glob
 import json
 import os
+import re
 import sys
 from collections import Counter
+
+from ai_assist.filesystem_tools import is_valid_allowlist_entry, matching_allowlist_entries
 
 mode, cfg, signals_path, pdir, env_files, env_lines = sys.argv[1:7]
 HOME = os.path.expanduser("~")
@@ -83,8 +92,7 @@ def load_json(path, default):
 
 
 def command_class(entry):
-    if not entry.strip() or "\n" in entry or entry.lstrip().startswith(("(", "$(")) \
-            or " runs" in entry or " is not " in entry:
+    if not is_valid_allowlist_entry(entry) or " runs" in entry or " is not " in entry:
         return "junk"
     if entry.split()[0] in RISKY and len(entry.split()) == 1:
         return "risky"
@@ -171,6 +179,28 @@ if mode == "lint":
         n += 1
     for c in sorted(c for c in allowed_cmds if command_class(c) == "risky"):
         print(f"NOTE allowed_commands.json: {json.dumps(c)} allows arbitrary code")
+    # entries no command matched in the logs (the same matching as the allowlist
+    # check): evidence of disuse only, never proposed for removal
+    valid = [c for c in allowed_cmds if command_class(c) != "junk"]
+    used, days = set(), set()
+    call = re.compile(r"^(\d{4}-\d\d-\d\d) .*Tool call: internal__execute_command\((\{.*\})\) -> ")
+    for log in glob.glob(os.path.join(cfg, "logs", "ai-assist.log*")):
+        with open(log, errors="replace") as f:
+            for line in f:
+                m = call.match(line)
+                if not m:
+                    continue
+                try:
+                    command = json.loads(m.group(2)).get("command", "")
+                except ValueError:
+                    continue
+                days.add(m.group(1))
+                used |= matching_allowlist_entries(command, valid)
+    unused = sorted(c for c in valid if c not in used)
+    if days and unused:
+        print(f"NOTE allowed_commands.json: {len(unused)} of {len(valid)} valid entries never matched a command "
+              f"in {len(days)} day(s) of logs (rare use looks the same: review before removing): "
+              + ", ".join(json.dumps(c) for c in unused))
     for p in sorted(junk_paths):
         print(f"LINT allowed_paths.json: junk entry {json.dumps(p)} (not an existing absolute path): remove it")
         n += 1

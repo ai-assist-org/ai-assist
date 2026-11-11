@@ -67,13 +67,10 @@ async def test_arbitrary_code_cannot_be_allowed_permanently(workdir, command):
 
 
 @pytest.mark.asyncio
-async def test_ordinary_command_question_keeps_its_prefix(workdir):
+async def test_command_with_options_before_its_arguments_gets_no_entry(workdir):
+    """`tool-x --verbose run`: "tool-x run" would never match it again, "tool-x" would allow more."""
     tools = _tools(workdir, commands=())
-    from ai_assist.filesystem_tools import compute_allowlist_prefix
-
-    question, entry = await _question_and_entry(tools, "tool-x --verbose run")
-    assert entry == compute_allowlist_prefix(question) == "tool-x run"
-    assert tools.allowlist_entry_for("tool-y build now") == compute_allowlist_prefix("tool-y build now")
+    assert await _entry_for_refused(tools, "tool-x --verbose run") is None
 
 
 @pytest.mark.asyncio
@@ -95,3 +92,113 @@ async def test_script_entry_does_not_allow_another_script(workdir):
 
     result = await tools.execute_tool("execute_command", {"command": "python3 tools/other.py"})
     assert "not allowed in non-interactive mode" in result
+
+
+# --- "always allow" never saves an entry that is junk or allows more than approved ---
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        "git status",
+        "whoami",
+        "git worktree list",
+        "python3 -m pytest",
+        "python3 /home/u/tools/x.py",
+        "uv run garmin-golf",
+        ".venv/bin/python scripts/health_query.py",
+        "sqlite3 ~/data/app.db",
+        "grep ^#",
+    ],
+)
+def test_valid_allowlist_entries(entry):
+    from ai_assist.filesystem_tools import is_valid_allowlist_entry
+
+    assert is_valid_allowlist_entry(entry)
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        "$(grep ^#",
+        "-r .access_token",
+        "bad =",
+        "2>&1",
+        "ARGS+=",
+        "awk NR==2{print",
+        "wc $f",
+        "comm $__substitution__",
+        "(which pdftotext",
+        "sort)",
+        "mapfile ids",
+        "pl.col(putts).is_null()).sum() df",
+        "\nfor f",
+        "",
+    ],
+)
+def test_junk_allowlist_entries(entry):
+    from ai_assist.filesystem_tools import is_valid_allowlist_entry
+
+    assert not is_valid_allowlist_entry(entry)
+
+
+async def _entry_for_refused(tools, command):
+    """Ask about a command (answered "no": nothing runs); return the entry "always" would save."""
+    asked = []
+
+    async def callback(question):
+        asked.append(question)
+        return False
+
+    tools.confirmation_callback = callback
+    await tools.execute_tool("execute_command", {"command": command})
+    assert asked, "no question was asked"
+    return tools.allowlist_entry_for(asked[0])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("command", "entry"),
+    [
+        ("git worktree list --porcelain", "git worktree list"),
+        ("whoami", "whoami"),
+        ("docker ps -a", "docker ps"),
+        ("wc -l notes.txt", None),  # `wc` alone would allow more than approved
+        ("rm -rf build", None),
+        ("LC_ALL=C hostname -f", None),
+    ],
+)
+async def test_always_saves_only_an_entry_matching_the_approved_command(workdir, command, entry):
+    tools = _tools(workdir, commands=())
+    assert await _entry_for_refused(tools, command) == entry
+
+
+def test_questions_that_are_not_commands_get_no_entry(workdir):
+    tools = _tools(workdir)
+    assert tools.allowlist_entry_for("Remember as a user preference (added to every future prompt): x") is None
+    assert tools.allowlist_entry_for("Schedule action 'a1' running AWL script x.awl") is None
+
+
+def test_matching_allowlist_entries_uses_the_allowlist_check_rules():
+    from ai_assist.filesystem_tools import matching_allowlist_entries
+
+    entries = ["git", "git worktree list", "ls", "sqlite3 ~/a.db", "bash"]
+    command = "cd /srv && git worktree list --porcelain | LC_ALL=C sort; timeout 5 ls -la"
+    # the longest entry matching each segment; sort is not allowlisted, cd is inert
+    assert matching_allowlist_entries(command, entries) == {"git worktree list", "ls"}
+
+
+def test_matching_allowlist_entries_resolves_script_paths(tmp_path, monkeypatch):
+    """Script entries match by resolved path, as the code-execution check does (see _is_script_allowlisted)."""
+    from ai_assist.filesystem_tools import matching_allowlist_entries
+
+    real = tmp_path / "real" / "tool.py"
+    real.parent.mkdir()
+    real.write_text("print(1)\n")
+    (tmp_path / "link").symlink_to(real.parent)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    entry = f"python3 {real}"
+    assert matching_allowlist_entries("python3 ~/link/tool.py --all", [entry]) == {entry}
+    assert matching_allowlist_entries("python3 ~/link/other.py", [entry]) == set()
+    same_file = f"python3 {tmp_path}/link/tool.py"  # two entries for one file: both are in use
+    assert matching_allowlist_entries("python3 ~/link/tool.py", [entry, same_file]) == {entry, same_file}

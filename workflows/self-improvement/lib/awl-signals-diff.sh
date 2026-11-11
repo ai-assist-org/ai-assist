@@ -29,7 +29,7 @@
 #
 # Rolled-up records (kind "shell": shell forms an internal tool could run,
 # kind "prompt": security questions, kind "pipe": what command outputs are
-# piped into) have signatures too. They never count as
+# piped into, kind "inline": inline scripts) have signatures too. They never count as
 # new signals: all of them go to the review file, except the dismissed ones
 # (suppressed), the confirmed ones (open), and the fixed ones not seen since
 # the verdict; a fixed one seen again is a regression. --record-state adds
@@ -130,7 +130,7 @@ while IFS= read -r obj; do
     *)
       [ -z "$is_new" ] || printf '%s' "$obj" | jq -c '. + {regression: false, prior_verdict: null}' >> "$tmp/new" ;;
   esac
-done < <(jq -c 'select(.signature and (.kind == "signal" or .kind == "shell" or .kind == "prompt" or .kind == "pipe"))' "$signals")
+done < <(jq -c 'select(.signature and (.kind == "signal" or .kind == "shell" or .kind == "prompt" or .kind == "pipe" or .kind == "inline"))' "$signals")
 
 new_count=$(wc -l < "$tmp/new")
 

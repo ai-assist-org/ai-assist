@@ -27,8 +27,11 @@ action whose prompt is the bare `.awl` path.
   mistakes (a prompt that names a `.awl` script but does not end with it runs
   through a time-limited query instead of directly).
 - **Configuration**: leftover junk in `allowed_commands.json` and
-  `allowed_paths.json`, entries that allow arbitrary code or expose `.env`,
-  commands refused often enough to deserve a fix, failing event sources.
+  `allowed_paths.json` (judged by the same check ai-assist applies before saving
+  an "always allow" entry), entries that allow arbitrary code or expose `.env`,
+  entries no command used in the available logs (a note only: rare use looks
+  the same), commands refused often enough to deserve a fix, failing event
+  sources.
 - **ai-assist**: repeated errors and tracebacks, written up as issue drafts.
 - **Internal tools**: shell commands (`grep`, `sed`, `ls`, `jq`...) run where an
   internal tool exists. Using the tools' own descriptions, it tells habit (the
@@ -39,10 +42,16 @@ action whose prompt is the bare `.awl` path.
   read from the audit log. The model judges the candidates: a search for errors
   is not a hidden failure.
 - **Security questions**: the commands and paths you had to approve, and the
-  ones refused in workflows where nobody could answer. Each kind of question
-  is classified as avoidable (an internal tool could have done it), a false
-  positive (e.g. a `sed` program read as a path), a candidate for the
-  allowlists, or legitimate.
+  ones refused in workflows where nobody could answer, grouped by command and
+  subcommand (`git worktree list`, not just `git`). Each kind of question is
+  classified as avoidable (an internal tool could have done it), a false
+  positive (e.g. a `sed` program read as a path), safe to approve
+  automatically for everyone (a change to ai-assist's defaults), a candidate
+  for your own allowlists, or legitimate.
+- **Inline scripts**: the python, awk, node... code agents wrote in commands,
+  grouped by what it was for (JSON, YAML, regular expressions, tables,
+  dates...), read from the audit log. Each purpose is classified as a habit (a
+  tool already does it), a candidate for a new tool, a one-off, or unsafe.
 
 The log extraction, counting and every check below are deterministic scripts;
 the model only classifies findings and writes the proposals.

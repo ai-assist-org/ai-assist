@@ -13,7 +13,8 @@
 #   2. extract signals with lib/extract-awl-signals.awk   -> TSV
 #      and, from the audit log of the last <days> days, the security
 #      questions (lib/audit-prompts.py, lib/extract-prompts.awk) and the
-#      pipelines that may hide a failure (lib/audit-pipes.py) -> same TSV
+#      pipelines that may hide a failure (lib/audit-pipes.py) and the inline
+#      scripts agents ran (lib/audit-scripts.py) -> same TSV
 #   3. aggregate with lib/aggregate-awl-signals.awk       -> JSON lines
 #   4. hash each stable signature key (sha1, 12 hex chars)
 #   5. write JSONL to <out_jsonl>; print a top-10 table on stdout
@@ -92,6 +93,8 @@ if [ -f "$snap_dir/tool_calls.jsonl" ]; then
     | awk -f "$here/signals-common.awk" -f "$here/extract-prompts.awk" >> "$tsv_out"
   # pipelines whose exit code 0 may hide a failure (candidates to judge)
   "${py:-python3}" -E -P "$here/audit-pipes.py" "$snap_dir/tool_calls.jsonl" "$days" >> "$tsv_out"
+  # inline scripts (python -c, awk programs...): candidates for a tool
+  "${py:-python3}" -E -P "$here/audit-scripts.py" "$snap_dir/tool_calls.jsonl" "$days" >> "$tsv_out"
 fi
 
 raw_rows=$(wc -l < "$tsv_out")

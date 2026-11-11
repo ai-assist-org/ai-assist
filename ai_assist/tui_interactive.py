@@ -1225,7 +1225,7 @@ async def tui_interactive_mode(agent: AiAssistAgent, state_manager: StateManager
                 console.print(f"[green]'{prefix}' permanently added to allowed commands[/green]")
             elif not prefix:
                 console.print(
-                    "[yellow]Approved this time only: running arbitrary code cannot be always allowed[/yellow]"
+                    "[yellow]Approved this time only: no allowlist entry would permit just this command[/yellow]"
                 )
         return approved
 
