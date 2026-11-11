@@ -1,0 +1,1 @@
+prompt: "In logs/app.log, count the lines per kind of ERROR (the words after ERROR) and list them sorted by count."

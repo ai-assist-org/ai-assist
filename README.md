@@ -891,6 +891,7 @@ Actions stored in `~/.ai-assist/event-event-schedules.json` with hot-reload supp
 
 **JSON Processing** (requires `jq` installed):
 - `json_query` - Query or transform JSON files using jq filter expressions
+- `transform` - Run a short Python payload over one file (parse, count, reshape) instead of `python3 -c` or awk: preloaded modules only, no file, write, process or network access, no permission prompt (see [SECURITY.md](SECURITY.md#10-transform-tool-confinement))
 - `__jq_filter` parameter - Apply a jq filter inline on any tool call (no file needed)
 
 **Web Tools:**

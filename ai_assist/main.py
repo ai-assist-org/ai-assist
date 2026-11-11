@@ -533,6 +533,13 @@ async def run_doctor(agent: AiAssistAgent) -> int:
             message = getattr(e, "message", None) or str(e)
             print(f"  ❌ {label:20s} {model}\n       {message}")
 
+    # The transform tool's child confinement: informational (it runs with weaker layers without it)
+    from . import transform_tools
+
+    confinement = await transform_tools.confinement_status()
+    complete = not (confinement.startswith("unavailable") or "not blocked" in confinement)
+    print(f"  {'✅' if complete else '⚠️ '} {'transform':20s} {confinement}")
+
     print("=" * 50)
     print("All checks passed" if not failures else f"{failures} check(s) failed — see above")
     return failures
