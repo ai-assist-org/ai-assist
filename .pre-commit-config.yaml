@@ -69,6 +69,16 @@ repos:
         language: system
         types_or: [shell, awk]
 
+  # A modified presentation must carry the current month in \date (only checked
+  # when the file differs from HEAD, so --all-files in CI does not fail on a new month)
+  - repo: local
+    hooks:
+      - id: check-presentation-date
+        name: check-presentation-date
+        entry: uv run python scripts/check_presentation_date.py
+        language: system
+        files: ^presentation/ai-assist-presentation\.tex$
+
   # Type checking with mypy
   - repo: local
     hooks:

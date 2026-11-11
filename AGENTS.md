@@ -85,6 +85,8 @@ AWL scripts define intent-driven workflows where the agent autonomously selects 
 
 Files: `awl_parser.py` (parser), `awl_runtime.py` (executor), `awl_ast.py` (AST nodes), `awl_expressions.py` (variable interpolation and expression evaluation)
 
+Commands written in backticks are auto-authorized only for scripts the user started: `/run`, an action whose prompt is the script, or (`is_trusted_by_action` in `awl_executor.py`) a script named by the confirmed prompt of the running action. When such a named script fails, the action is reported as failed even if the agent carries on. The audit log attributes each tool call to its script and task (`AuditLogger.task_context`, entered by `AWLRuntime`).
+
 See `docs/AWL_SPECIFICATIONS.md` for complete syntax.
 
 ### Knowledge Graph
@@ -303,12 +305,13 @@ Files: `action_model.py`, `action_engine.py`, `action_scheduler.py`, `action_loa
 
 ### Background Tasks (Interactive Mode)
 
-The interactive agent can spawn long-running queries as background `asyncio` tasks within the same event loop. The user continues chatting while background tasks run, and gets notified on completion via the existing `NotificationWatcher`.
+The interactive agent can spawn long-running queries as background `asyncio` tasks within the same event loop. The user continues chatting while background tasks run. A finished task's result is handed back to the agent once (`BackgroundTaskManager.take_finished_note()`): an idle, empty prompt is ended so the agent reports at once (`wake_idle_prompt` in `tui_interactive.py`), otherwise the result goes with the next message. The `NotificationWatcher` still shows the completion to the user.
 
 - **BackgroundTaskManager** (`background_tasks.py`): spawns, tracks, and cancels background tasks. In-memory tracking only.
 - **BackgroundTaskTools** (`background_task_tools.py`): agent tools for spawning (`internal__run_background`), listing (`internal__list_background_tasks`), inspecting (`internal__get_background_task`), and cancelling (`internal__cancel_background_task`) tasks.
-- **Context isolation**: Background prompts are prefixed with `@no-kg @no-history` for clean context. Shared MCP sessions are reused.
-- **Security**: The `_in_background_task` flag on the agent auto-denies filesystem confirmation prompts from background tasks.
+- **Context isolation**: Background prompts are prefixed with `@no-kg @no-history` and with a note telling the background agent it is the task, that its answer goes back to the main conversation and that nobody can answer its questions. Shared MCP sessions are reused. A background task cannot start another one.
+- **Security**: `in_background_task()` (a `ContextVar` set in the task's own asyncio task) auto-denies the confirmation prompts of background tasks only; foreground prompts are still asked.
+- **Not handed back**: tasks the agent cancelled, and tasks spawned with `notify_agent=False` (MCP channel replies, which answer through their own tool).
 
 Files: `background_tasks.py`, `background_task_tools.py`
 
@@ -361,6 +364,8 @@ Files: `config.py`, `state.py`, `config_watcher.py`, `file_watchdog.py`
 - `introspection_tools.py` - Context awareness (current date/time, working directory, user info)
 
 **MCP tools** from configured servers are dynamically loaded and prefixed with server name.
+
+**Startup log**: `setup_logging()` logs the source commit of the ai-assist checkout (with "(uncommitted changes)" when tracked files changed), or nothing when it does not run from its own git checkout (`get_source_commit()` in `config.py`).
 
 **`AiAssistAgent` collaborators**: to keep `agent.py` focused, three cohesive responsibilities live in their own modules, constructed in `AiAssistAgent.__init__` and reached via `self.<name>`:
 - `tool_result_router.py` (`ToolResultRouter`) - parses/handles the `__save_to_file`/`__write_to_report`/`__append_to_report`/`__jq_filter`/`__collect_to_report` result-redirection and pagination parameters.
@@ -943,7 +948,7 @@ Also see:
 4. **Iterate**: Enhance incrementally while keeping tests green
 5. **Refactor**: Apply DRY principle to eliminate duplication
 6. **Document**: Update README.md and AGENTS.md
-7. **Presentation**: Update `presentation/ai-assist-presentation.tex` to reflect the new feature, update `\date{...}` to the current month and year, and verify it builds with `make -C presentation`
+7. **Presentation**: Update `presentation/ai-assist-presentation.tex` to reflect the new feature, update `\date{...}` to the current month and year (the `check-presentation-date` hook enforces it when the file changes), refresh the "Project Stats" box of the Quick Start slide (lines in `ai_assist/`, number of tests and test files, core dependencies, pre-commit hooks; `tests/test_presentation_stats.py` fails when a figure overstates or falls more than 20% behind), and verify it builds with `make -C presentation` without overfull warnings
 8. **Verify**: Run `pre-commit run -a` and ensure all checks pass before declaring the feature complete
 
 ### Adding a New Tool

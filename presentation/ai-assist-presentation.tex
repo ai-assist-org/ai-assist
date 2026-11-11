@@ -23,6 +23,24 @@
 \setbeamercolor{title separator}{fg=rhred}
 \setbeamercolor{progress bar in head/foot}{fg=rhred,bg=rhlightgray}
 \setbeamercolor{progress bar in section page}{fg=rhred,bg=rhlightgray}
+% metropolis sizes its title page to \paperheight, taller than a frame's text
+% area (overfull \vbox on every deck): same template, sized to \textheight
+\makeatletter
+\setbeamertemplate{title page}{
+  \begin{minipage}[b][\textheight]{\textwidth}
+    \ifx\inserttitlegraphic\@empty\else\usebeamertemplate*{title graphic}\fi
+    \vfill%
+    \ifx\inserttitle\@empty\else\usebeamertemplate*{title}\fi
+    \ifx\insertsubtitle\@empty\else\usebeamertemplate*{subtitle}\fi
+    \usebeamertemplate*{title separator}
+    \ifx\beamer@shortauthor\@empty\else\usebeamertemplate*{author}\fi
+    \ifx\insertdate\@empty\else\usebeamertemplate*{date}\fi
+    \ifx\insertinstitute\@empty\else\usebeamertemplate*{institute}\fi
+    \vfill
+    \vspace*{1mm}
+  \end{minipage}
+}
+\makeatother
 
 % ── Packages ──────────────────────────────────────────────────────
 \usepackage{tikz}
@@ -31,6 +49,7 @@
 \usepackage{fancyvrb}
 \usepackage{appendixnumberbeamer}
 \usepackage{booktabs}
+\usepackage{array}
 \usepackage{graphicx}
 \usepackage{hyperref}
 \usepackage[T1]{fontenc}
@@ -68,9 +87,8 @@
 % ── Metadata ──────────────────────────────────────────────────────
 \title{ai-assist}
 \subtitle{An AI-Powered Assistant for Engineering Teams}
-\author{Fr\'ed\'eric Lepied\\{\small Senior Manager -- Telco Partner CI}}
+\author{Fr\'ed\'eric Lepied\\{\small Senior Manager -- Telco Partner CI, Red Hat}}
 \date{November 2026}
-\institute{Red Hat}
 
 % ══════════════════════════════════════════════════════════════════
 \begin{document}
@@ -344,7 +362,7 @@ ai-assist
 \textbf{Tech Stack}
 \begin{itemize}\scriptsize
   \item Python 3.14+
-  \item Claude Opus 4.6 / Sonnet 4.5/4.6 (Vertex AI or direct)
+  \item Any Anthropic Messages API endpoint (Anthropic, Vertex AI, OpenRouter, vLLM / Ollama); other models through a LiteLLM proxy
   \item MCP (Model Context Protocol)
   \item SQLite + sqlite-vec (Knowledge Graph)
   \item prompt-toolkit + Rich (TUI)
@@ -354,11 +372,11 @@ ai-assist
 \begin{column}{0.48\textwidth}
 \textbf{Project Stats}
 \begin{itemize}\scriptsize
-  \item 22,000+ lines of production code
-  \item 1,600+ tests across 92 test files
-  \item 16 core dependencies
-  \item Pre-commit hooks (black, ruff, mypy, pylint for similarities, pytest)
-  \item Comprehensive user documentation
+  \item 33,000+ lines of production code
+  \item 3,100+ tests across 145 test files
+  \item 15 core dependencies
+  \item Pre-commit hooks: black, ruff, mypy, bandit, pylint similarities, pytest, eval replay, portability
+  \item Comprehensive user documentation: \href{https://ai-assist-org.github.io/ai-assist/}{\texttt{ai-assist-org.github.io/ai-assist}}
 \end{itemize}
 \end{column}
 \end{columns}
@@ -387,7 +405,7 @@ ai-assist
     font=\scriptsize\sffamily, minimum width=2.8cm, minimum height=0.8cm,
     align=center},
   msg/.style={-{Stealth}, thick, font=\tiny\ttfamily},
-  scale=0.85, transform shape
+  scale=0.8, transform shape
 ]
   \node[box=rhblue] (client) {AiAssistAgent\\(MCP Client)};
   \node[box=rhred, right=3cm of client] (server) {MCP Server\\(DCI, Jira, ...)};
@@ -496,7 +514,7 @@ When asked to read a PDF...
 \begin{frame}[fragile]{Claude Code Plugin Compatibility}
 \begin{columns}[T]
 \begin{column}{0.48\textwidth}
-\begin{itemize}
+\begin{itemize}\footnotesize
   \item Install \textbf{Claude Code plugins} directly
   \item Loads bundled skills, legacy commands, and MCP servers
   \item Namespaced as \texttt{/plugin:skill} (bare name when unique)
@@ -819,7 +837,7 @@ pagination:
 \begin{frame}[fragile]{Bi-Temporal Data Model}
 \begin{columns}[T]
 \begin{column}{0.40\textwidth}
-\begin{tikzpicture}[scale=0.62, transform shape]
+\begin{tikzpicture}[scale=0.6, transform shape]
   % Axes
   \draw[-{Stealth}, thick] (0,0) -- (6,0) node[right, font=\scriptsize\sffamily] {Valid Time};
   \draw[-{Stealth}, thick] (0,0) -- (0,5) node[above, font=\scriptsize\sffamily] {Tx Time};
@@ -1255,8 +1273,8 @@ Success: all CI checks pass
   \item Agent spawns \texttt{asyncio} tasks in the same event loop
   \item Context isolation via \texttt{@no-kg @no-history}
   \item Shared MCP sessions (no new connections)
-  \item Notifications on completion/failure
-  \item Security: confirmation prompts auto-denied in background
+  \item Result handed back to the agent, which is woken if idle
+  \item Security: only the background task's own prompts are auto-denied
 \end{itemize}
 \end{column}
 \begin{column}{0.48\textwidth}
@@ -1398,7 +1416,7 @@ Shell allowlist bypass: \texttt{\$(...)}, newlines, heredocs, \texttt{eval}, \te
 Rewrite own config or read \texttt{\textasciitilde/.ssh} &
   Protected config files; credential locations blocked for commands and file tools \\
 Model-written AWL runs approved commands &
-  Commands auto-authorized only for user-started scripts; AWL actions need confirmation \\
+  Commands auto-authorized only for user-started scripts (or named by a confirmed action); AWL actions need confirmation \\
 Persistent injection via saved preferences &
   \texttt{user\_preference} saves need confirmation \\
 Write tools during \texttt{/plan} &
@@ -1786,6 +1804,10 @@ Task blocks show brief description; hover reveals full goal, context, constraint
 \end{columns}
 \end{frame}
 
+% ══════════════════════════════════════════════════════════════════
+\section{Self-Improvement}
+% ══════════════════════════════════════════════════════════════════
+
 % ── Slide: Self-Improvement Workflow ──────────────────────────────
 \begin{frame}[fragile]{Self-Improvement: ai-assist Reviews Itself}
 \begin{columns}[T]
@@ -1797,7 +1819,7 @@ Task blocks show brief description; hover reveals full goal, context, constraint
   \item \textbf{Scheduler}: failures, double starts, config mistakes
   \item \textbf{Config}: junk allowlist entries, exposed \texttt{.env}, failing event sources
   \item \textbf{ai-assist}: repeated errors $\rightarrow$ issue drafts
-  \item \textbf{Tools}: shell used instead of an internal tool $\rightarrow$ habit or missing feature
+  \item \textbf{Tools}: shell instead of an internal tool, pipes hiding failures, security questions
 \end{itemize}
 
 \smallskip
@@ -1805,7 +1827,7 @@ Task blocks show brief description; hover reveals full goal, context, constraint
 \begin{itemize}\scriptsize\setlength{\itemsep}{1pt}
   \item One report: ranked findings + proposals
   \item A human reviews and applies every change
-  \item Ledger: each finding reported once
+  \item Reviewer verdicts (real / fixed / won't fix / false positive): dismissed findings stay quiet, fixed ones that recur are regressions
 \end{itemize}
 \end{column}
 \begin{column}{0.48\textwidth}
@@ -1830,6 +1852,107 @@ Task blocks show brief description; hover reveals full goal, context, constraint
 {\scriptsize\texttt{ai-assist /run workflows/self-improvement/\\self-improvement.awl days=14}}
 \end{column}
 \end{columns}
+\end{frame}
+
+% ── Slide: Self-Improvement Loop ──────────────────────────────────
+\begin{frame}[fragile]{Self-Improvement: The Feedback Loop}
+\begin{columns}[T]
+\begin{column}{0.52\textwidth}
+\centering
+\begin{tikzpicture}[
+  step/.style={draw=#1, fill=#1!12, rounded corners=4pt, font=\tiny\sffamily,
+    minimum width=2.5cm, minimum height=0.75cm, align=center, text=#1!80!black},
+  arr/.style={-{Stealth}, thick, gray}
+]
+  \node[step=rhdarkgray] (src)  at (90:2.15)  {Logs $\cdot$ audit $\cdot$ config};
+  \node[step=rhblue]     (ext)  at (30:2.15)  {Extract \& count\\{\tiny deterministic, signatures}};
+  \node[step=rhorange]   (cls)  at (-30:2.15) {Classify \& propose\\{\tiny model}};
+  \node[step=rhgreen]    (gate) at (-90:2.15) {Gates\\{\tiny deterministic}};
+  \node[step=rhpurple]   (rev)  at (-150:2.15){Report $\rightarrow$ review\\{\tiny human or agent}};
+  \node[step=rhred]      (ver)  at (150:2.15) {Verdicts\\{\tiny real / fixed / won't fix / FP}};
+  \draw[arr] (src) -- (ext);
+  \draw[arr] (ext) -- (cls);
+  \draw[arr] (cls) -- (gate);
+  \draw[arr] (gate) -- (rev);
+  \draw[arr] (rev) -- (ver);
+  \draw[arr, rhred] (ver) -- node[font=\tiny\sffamily, fill=white, inner sep=1pt] {next run} (ext);
+\end{tikzpicture}
+\end{column}
+\begin{column}{0.46\textwidth}
+\textbf{Design rules}
+\begin{itemize}\scriptsize\setlength{\itemsep}{1pt}
+  \item Counting is \textbf{deterministic} (awk, jq): reproducible, cheap, no hallucinated numbers
+  \item The model only \textbf{judges and writes}: it never edits a file or a config
+  \item Gates reject a proposal that quotes text that is not there or breaks a workflow
+  \item Every finding has a \textbf{stable signature}: reported once, tracked across runs
+  \item \textbf{Verdicts} close the loop: dismissed findings stay quiet, fixed ones that recur are \alert{regressions}, precision per detection rule
+  \item Review skill works in ai-assist, Claude Code, Codex, Cursor
+\end{itemize}
+\end{column}
+\end{columns}
+\end{frame}
+
+% ── Slide: Reviewing with the skill ───────────────────────────────
+\begin{frame}[fragile]{Self-Improvement: Reviewing a Report}
+\begin{columns}[T]
+\begin{column}{0.52\textwidth}
+\textbf{Say what a finding really was}
+\begin{lstlisting}[style=code,basicstyle=\ttfamily\tiny]
+> finding 3 is intended: the task must
+  not run curl
+
+Finding 3 = signature 4436a75fbc3e
+(security_reject in task fetch).
+Recorded wont_fix by human:alice:
+"refusal is intended: the task must
+not run curl". It will not be
+reported again.
+\end{lstlisting}
+\scriptsize
+The \texttt{self-improvement-review} skill maps the report's finding id to its stable
+signature, asks when the intent is ambiguous, and records the verdict with a note through
+one deterministic script (never by editing the files).
+\end{column}
+\begin{column}{0.44\textwidth}
+\textbf{Verdicts}
+\begin{itemize}\scriptsize\setlength{\itemsep}{1pt}
+  \item \textbf{real}: open list, not reviewed again
+  \item \textbf{fixed}: a new occurrence is a \alert{regression}
+  \item \textbf{won't fix}: deliberate, stays quiet
+  \item \textbf{false positive}: stays quiet, counts against its detection rule
+\end{itemize}
+
+\smallskip
+\textbf{One skill, any agent}
+\begin{itemize}\scriptsize\setlength{\itemsep}{1pt}
+  \item Standard \texttt{SKILL.md}: ai-assist, Claude Code, Codex, Cursor
+  \item Shipped in the repo (\texttt{.claude/skills}, \texttt{.agents/skills})
+  \item An agent reviewing must check the evidence; never \texttt{fixed} without the change
+\end{itemize}
+\end{column}
+\end{columns}
+\end{frame}
+
+% ── Slide: Self-Improvement in Practice ───────────────────────────
+\begin{frame}{Self-Improvement: From Findings to Fixes}
+\scriptsize
+\renewcommand{\arraystretch}{1.25}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{4.1cm}>{\raggedright\arraybackslash}p{4.2cm}>{\raggedright\arraybackslash}p{4.8cm}@{}}
+\toprule
+\textbf{Counted in the logs} & \textbf{Root cause} & \textbf{Fix} \\
+\midrule
+130k MQTT reconnect errors in 2 weeks & Reload storm started duplicate listeners sharing one client id & Serialized reloads, unique client ids, backoff reset only after a stable connection \\
+1,100 \texttt{grep -i}, 650 \texttt{grep -o}, 480 \texttt{grep -r} run in the shell & The internal search tool lacked these options, or did not say it had them & Search a whole tree, ignore case, count, only matching, context; descriptions map grep options \\
+1,500 \texttt{| head}, 580 \texttt{| cut}, 550 \texttt{| tail} & Commands had no output limit & Output limits on \texttt{execute\_command} (in review) \\
+48 pipelines exiting 0 while a stage failed & A pipe reports the last command's exit code & Per-stage exit statuses, hidden failures reported (in review) \\
+A weekly workflow step failing every run, reported as a success & Skill scripts disabled; the action trusted the agent's last word & Scripts named by an approved action are trusted; a failed script fails the action \\
+``Always allow'' never sticking & The saved allowlist entry could never match & The entry that really permits the command is saved \\
+\bottomrule
+\end{tabular}
+
+\vfill
+\centering
+\color{gray} Every row started as a counted signal in a weekly report, reviewed by a human
 \end{frame}
 
 % ══════════════════════════════════════════════════════════════════
@@ -1857,6 +1980,7 @@ Task blocks show brief description; hover reveals full goal, context, constraint
   \item \textcolor{green!60!black}{\checkmark} Query event timelines + model-stream idle timeouts
   \item \textcolor{green!60!black}{\checkmark} LoCoMo memory benchmark: 86.2\%
   \item \textcolor{green!60!black}{\checkmark} \alert{Security audit hardening}
+  \item \textcolor{green!60!black}{\checkmark} \alert{Self-improvement} workflow with reviewer verdicts
 \end{itemize}
 \end{column}
 \begin{column}{0.48\textwidth}
@@ -1870,7 +1994,10 @@ Task blocks show brief description; hover reveals full goal, context, constraint
 \end{itemize}
 \end{column}
 \end{columns}
+\end{frame}
 
+% ── Closing ──────────────────────────────────────────────────────
+\begin{frame}{Thank You}
 \vfill
 \centering
 \large\color{rhred}

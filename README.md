@@ -829,7 +829,7 @@ ai-assist ships a workflow that reads its own logs and configuration and propose
 uv run ai-assist /run workflows/self-improvement/self-improvement.awl days=14
 ```
 
-It changes nothing: the report in `~/ai-assist/reports/self-improvement-report-<date>.md` ranks the findings and ends with the proposals (short diffs, allowlist and scheduled-actions copies, ai-assist issue drafts), each checked by a deterministic gate before you review it. See [docs/SELF_IMPROVEMENT.md](docs/SELF_IMPROVEMENT.md).
+It changes nothing: the report in `~/ai-assist/reports/self-improvement-report-<date>.md` ranks the findings and ends with the proposals (short diffs, allowlist and scheduled-actions copies, ai-assist issue drafts), each checked by a deterministic gate before you review it. It also reports shell commands an internal tool could run, output piped into `head`/`cut`/`tail` and pipelines that may hide a failure, and the security questions you had to answer. Record what a finding really was (real, fixed, won't fix, false positive) with the `self-improvement-review` skill, or by telling the agent: dismissed findings stay quiet, fixed ones that come back are reported as regressions. See [docs/SELF_IMPROVEMENT.md](docs/SELF_IMPROVEMENT.md).
 
 ### Knowledge Graph
 
