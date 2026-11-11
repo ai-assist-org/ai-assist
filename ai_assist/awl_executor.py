@@ -48,6 +48,11 @@ def _get_session_tmpdir() -> str:
     return path
 
 
+def get_session_tmpdir() -> str:
+    """The session-scoped temporary directory (created on first use)."""
+    return _get_session_tmpdir()
+
+
 def _allow_session_tmpdir(agent: object) -> None:
     """Whitelist the session tmpdir for the agent's filesystem/json tools.
 
