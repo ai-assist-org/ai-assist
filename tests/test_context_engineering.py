@@ -71,6 +71,36 @@ class TestTokenBudgetMonitoring:
         assert usage[0]["cache_creation_input_tokens"] == 2000
         assert usage[0]["cache_read_input_tokens"] == 3000
 
+    def test_prefix_sha_is_stable_and_tracks_prefix_changes(self):
+        """The fingerprint depends only on the cacheable prefix (tools + system)"""
+        tools = [{"name": "tool_a", "description": "A", "input_schema": {"type": "object"}}]
+        system = [{"type": "text", "text": "You are helpful.", "cache_control": {"type": "ephemeral"}}]
+
+        sha = AiAssistAgent._prefix_sha(tools, system)
+
+        assert sha == AiAssistAgent._prefix_sha([dict(t) for t in tools], [dict(b) for b in system])
+        assert sha != AiAssistAgent._prefix_sha(tools[:0], system)
+        assert sha != AiAssistAgent._prefix_sha(tools, [{"type": "text", "text": "You are terse."}])
+        assert len(sha) == 12
+
+    def test_track_token_usage_records_prefix_sha(self):
+        """A prefix fingerprint passed by the caller lands in the usage entry"""
+        config = AiAssistConfig(anthropic_api_key="test-key", mcp_servers={})
+        agent = AiAssistAgent(config)
+
+        mock_response = MagicMock()
+        mock_response.usage.input_tokens = 5000
+        mock_response.usage.output_tokens = 1000
+        mock_response.usage.cache_creation_input_tokens = 0
+        mock_response.usage.cache_read_input_tokens = 3000
+
+        agent._track_token_usage(mock_response, turn=0, prefix_sha="abc123def456")
+        agent._track_token_usage(mock_response, turn=1)
+
+        usage = agent.get_token_usage()
+        assert usage[0]["prefix_sha"] == "abc123def456"
+        assert "prefix_sha" not in usage[1]
+
     def test_track_token_usage_warns_at_threshold(self):
         """Warning is logged when token usage exceeds threshold"""
         config = AiAssistConfig(anthropic_api_key="test-key", mcp_servers={})

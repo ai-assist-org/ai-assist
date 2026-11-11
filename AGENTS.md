@@ -103,7 +103,7 @@ Bi-temporal database tracking:
 
 **Compaction-time extraction**: In interactive mode, durable facts the user stated are extracted into the KG when the conversation is compacted, cleared (`/clear`), or the session exits (synchronous on exit so short sessions still contribute), as a background task, so they survive a growing context window. Extraction reuses an existing `project_context` key when a new fact is a near-duplicate (semantic similarity ≥ `AiAssistAgent.DEDUP_SIM_THRESHOLD`), letting the KG's last-write-wins upsert supersede it instead of accreting parallel entries. The threshold is deliberately conservative — a false merge overwrites a distinct fact irrecoverably.
 
-**Auto Context Injection**: Semantically relevant entities are automatically surfaced in the system prompt based on query similarity. Bookkeeping types in `KnowledgeGraph.NON_EMBEDDED_TYPES` (`tool_result`, `skill_performance`) are never embedded, so they stay out of semantic recall and context injection.
+**Auto Context Injection**: Semantically relevant entities are automatically surfaced in the per-query context sent with the user's turn, based on query similarity. Bookkeeping types in `KnowledgeGraph.NON_EMBEDDED_TYPES` (`tool_result`, `skill_performance`) are never embedded, so they stay out of semantic recall and context injection.
 
 Files: `knowledge_graph.py`, `kg_queries.py`, `kg_query_tools.py`, `knowledge_tools.py`, `embedding.py`, `context.py`
 
@@ -299,7 +299,7 @@ File triggers support exact paths (`/etc/app/config.json`), directories (`~/Down
 
 D-Bus triggers support per-trigger `bus` field (`system` or `session`) — one D-Bus source connects to both buses as needed. Event-based actions support debouncing (3s window) to collapse burst signals. The `payload_contains` and `payload_regex` fields filter events by their content before execution.
 
-**Context injection**: recent notifications from `/monitor` are automatically injected into the interactive agent's system prompt (last 15 minutes), so the user can ask follow-up questions about events.
+**Context injection**: recent notifications from `/monitor` (last 15 minutes) are automatically added to the per-query context of the interactive agent's user turn, so the user can ask follow-up questions about events.
 
 Files: `action_model.py`, `action_engine.py`, `action_scheduler.py`, `action_loader.py`, `action_tools.py`, `event_sources.py`, `event_source_mqtt.py`, `event_source_dbus.py`, `event_source_file.py`
 
@@ -343,7 +343,7 @@ Files: `background_tasks.py`, `background_task_tools.py`
   (see https://docs.anthropic.com/en/docs/about-claude/models).
 - Costs are recorded per-turn in `_track_token_usage()` and aggregated per-query in `QueryTrace.total_cost_usd`.
 - The API's `input_tokens` excludes cached tokens: `compute_turn_cost` bills uncached input, cache writes, cache reads and output separately, and anything that measures how full the context is (observation masking, the context-budget warning, `get_context_usage`) uses `prompt_tokens()`, the sum of the three input counts.
-- Prompt caching (`AI_ASSIST_ENABLE_CACHE`, on by default) marks the static system block and the last two user messages of each request (`_with_message_cache_breakpoints` in `agent.py`), so a multi-turn tool loop reads earlier turns from the cache instead of resending them at full price. The markers go on a copy; the conversation itself is never modified.
+- Prompt caching (`AI_ASSIST_ENABLE_CACHE`, on by default) marks the static system block and the last two user messages of each request (`_with_message_cache_breakpoints` in `agent.py`), so a multi-turn tool loop reads earlier turns from the cache instead of resending them at full price. The markers go on a copy; the conversation itself is never modified. The system prompt must stay byte-identical across queries: the clock, recent notifications and KG learnings/auto-context are appended to the current user turn as a separate block (`_build_query_context`, `_with_query_context`), and the breakpoint goes on the user's own text before it, so the next query, whose history holds the plain text, hits the cache at the same position. Each turn's token-usage entry records `prefix_sha` (tools + system); `workflows/self-improvement/lib/audit-cache.py` reports cache misses from the query traces.
 - Commands: `/cost [period]` for cost summary (uncached input, cache write and cache read tokens shown separately), `/eval-stats` for aggregate metrics including cost. Both recompute each query's cost from its per-turn token counts (`QueryTrace.cost_usd()`), so traces stored with older pricing are reported correctly; the stored `total_cost_usd` is only used when per-turn counts are missing or the model has no pricing entry.
 
 **MLflow tracing** (`mlflow_tracing.py`): optional GenAI observability — optional dep `mlflow-skinny` + `sqlalchemy` (`pip install ai-assist[mlflow]`), enabled with `AI_ASSIST_ENABLE_MLFLOW=true`. Backend via `MLFLOW_TRACKING_URI`; unset => local SQLite store at `<config dir>/mlflow.db` (SQL backend needed for the Traces UI metrics). Emits a `query → tool` span tree (autolog for LLM spans + manual spans in `agent.py`), mirroring `QueryTrace` metrics onto the root span. No-op when disabled/uninstalled; the JSONL cost tracking above is unaffected.
@@ -370,7 +370,7 @@ Files: `config.py`, `state.py`, `config_watcher.py`, `file_watchdog.py`
 **`AiAssistAgent` collaborators**: to keep `agent.py` focused, three cohesive responsibilities live in their own modules, constructed in `AiAssistAgent.__init__` and reached via `self.<name>`:
 - `tool_result_router.py` (`ToolResultRouter`) - parses/handles the `__save_to_file`/`__write_to_report`/`__append_to_report`/`__jq_filter`/`__collect_to_report` result-redirection and pagination parameters.
 - `synthesis_engine.py` (`SynthesisEngine`) - conversation synthesis, `_save_insights`, and scheduled KG connection discovery.
-- `system_prompt_builder.py` (`SystemPromptBuilder`) - assembles the system prompt and the query-specific KG learnings/auto-context sections.
+- `system_prompt_builder.py` (`SystemPromptBuilder`) - assembles the cached system prompt and the per-query context (clock, notifications, KG learnings/auto-context) sent with the user turn.
 
 Each holds an agent back-reference so it reads collaborators (`sessions`, `report_tools`, `knowledge_graph`, …) live. `AiAssistAgent` keeps thin delegating wrappers for the method names referenced by tests and other modules.
 

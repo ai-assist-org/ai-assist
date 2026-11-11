@@ -12,10 +12,6 @@ def _make_agent(kg=None):
     return AiAssistAgent(config, knowledge_graph=kg)
 
 
-def _prompt_text(blocks: list[dict]) -> str:
-    return "\n\n".join(b["text"] for b in blocks)
-
-
 class TestGetKgLearningsSection:
     def test_no_kg_returns_empty(self):
         agent = _make_agent(kg=None)
@@ -176,7 +172,7 @@ class TestGetKgLearningsSection:
         assert "[...truncated]" not in large_section
         assert "KG learnings truncated" not in caplog.text
 
-    def test_learnings_in_system_prompt(self):
+    def test_learnings_in_query_context(self):
         kg = KnowledgeGraph(":memory:")
         kg.insert_knowledge(
             entity_type="user_preference",
@@ -185,7 +181,7 @@ class TestGetKgLearningsSection:
             confidence=1.0,
         )
         agent = _make_agent(kg=kg)
-        prompt = _prompt_text(agent._build_system_prompt())
+        prompt = agent._build_query_context()
         assert "What You Know" in prompt
         assert "detailed explanations" in prompt
 
@@ -313,7 +309,7 @@ class TestGetKgAutoContextSection:
         section = agent._get_kg_auto_context_section()
         assert section.count("build-deploy-job") == 1
 
-    def test_auto_context_in_system_prompt(self):
+    def test_auto_context_in_query_context(self):
         kg = KnowledgeGraph(":memory:")
         kg.insert_entity(
             entity_type="ticket",
@@ -324,7 +320,7 @@ class TestGetKgAutoContextSection:
 
         agent = _make_agent(kg=kg)
         agent._current_query_text = "What is the critical production issue?"
-        prompt = _prompt_text(agent._build_system_prompt())
+        prompt = agent._build_query_context()
         assert "Relevant Context" in prompt
 
 
@@ -440,7 +436,7 @@ class TestNoKgPrefix:
         )
         agent = _make_agent(kg=kg)
         agent._no_kg = True
-        prompt = _prompt_text(agent._build_system_prompt())
+        prompt = agent._build_query_context()
         assert "Knowledge Graph" not in prompt
         assert "What You Know" not in prompt
 
@@ -455,5 +451,5 @@ class TestNoKgPrefix:
         )
         agent = _make_agent(kg=kg)
         agent._no_kg = False
-        prompt = _prompt_text(agent._build_system_prompt())
-        assert "Knowledge Graph" in prompt
+        prompt = agent._build_query_context()
+        assert "What You Know" in prompt

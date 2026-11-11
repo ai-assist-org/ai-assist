@@ -91,8 +91,13 @@ class Identity(BaseModel):
         with open(path, "w") as f:
             yaml.safe_dump(self.model_dump(), f, default_flow_style=False, sort_keys=False)
 
-    def get_system_prompt(self) -> str:
+    def get_system_prompt(self, include_datetime: bool = True) -> str:
         """Generate system prompt for Claude
+
+        Args:
+            include_datetime: Append the current date and time. The agent passes
+                False and sends the clock with the user turn instead, so the
+                cached system prompt does not change every minute.
 
         Returns:
             System prompt string that introduces the assistant
@@ -150,7 +155,13 @@ class Identity(BaseModel):
         elif self.preferences.emoji_usage == "liberal":
             prompt += " Feel free to use emojis to make communication more engaging."
 
-        # Add current date and time
+        if include_datetime:
+            prompt += f"\n\n{self.get_datetime_line()}"
+
+        return prompt
+
+    def get_datetime_line(self) -> str:
+        """Current date and time in the user's timezone, as one sentence."""
         now = datetime.now()
         if self.user.timezone:
             try:
@@ -158,9 +169,9 @@ class Identity(BaseModel):
                 now = datetime.now(tz)
             except Exception:
                 pass
-        prompt += f"\n\nToday is {now.strftime('%A')}, {now.strftime('%Y-%m-%d')}. The current time is {now.strftime('%H:%M')}."
-
-        return prompt
+        return (
+            f"Today is {now.strftime('%A')}, {now.strftime('%Y-%m-%d')}. The current time is {now.strftime('%H:%M')}."
+        )
 
     def get_greeting(self) -> str:
         """Get personalized greeting
