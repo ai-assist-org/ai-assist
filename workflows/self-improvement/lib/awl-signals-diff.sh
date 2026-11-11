@@ -13,7 +13,7 @@
 #                   signature wins. Missing file = no verdicts.
 # --review-out    : write the records the classifier must review: the new
 #                   signals (kind "signal"), the rolled-up records (kinds
-#                   "shell" and "prompt"), each with "regression" and
+#                   "shell", "prompt" and "pipe"), each with "regression" and
 #                   "prior_verdict", and up to 10 past dismissals with their
 #                   notes (kind "counter_example")
 #
@@ -28,7 +28,8 @@
 #   real                     -> open: listed, never re-reviewed
 #
 # Rolled-up records (kind "shell": shell forms an internal tool could run,
-# kind "prompt": security questions) have signatures too. They never count as
+# kind "prompt": security questions, kind "pipe": what command outputs are
+# piped into) have signatures too. They never count as
 # new signals: all of them go to the review file, except the dismissed ones
 # (suppressed), the confirmed ones (open), and the fixed ones not seen since
 # the verdict; a fixed one seen again is a regression. --record-state adds
@@ -129,12 +130,13 @@ while IFS= read -r obj; do
     *)
       [ -z "$is_new" ] || printf '%s' "$obj" | jq -c '. + {regression: false, prior_verdict: null}' >> "$tmp/new" ;;
   esac
-done < <(jq -c 'select(.signature and (.kind == "signal" or .kind == "shell" or .kind == "prompt"))' "$signals")
+done < <(jq -c 'select(.signature and (.kind == "signal" or .kind == "shell" or .kind == "prompt" or .kind == "pipe"))' "$signals")
 
 new_count=$(wc -l < "$tmp/new")
 
 if [ "$record" = "1" ]; then
-  now=$(date -Iseconds)
+  # an explicit format: BSD date (macOS) has no -I option
+  now=$(date '+%Y-%m-%dT%H:%M:%S%z')
   jq -c --arg now "$now" \
     '{signature, kind, script, task, event, count, first, last, sample,
       first_seen: $now, report_file: null, accepted: "unknown"}' "$tmp/new" "$tmp/rollups_unknown" >> "$state"

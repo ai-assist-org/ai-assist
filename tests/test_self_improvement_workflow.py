@@ -75,6 +75,13 @@ def audit_entry(tool: str, kind: str, decision: str, question: str, task: str | 
     return entry
 
 
+def command_entry(command: str, result: str) -> dict:
+    entry = audit_entry("internal__execute_command", "command", "approved", "x")
+    entry.pop("confirmations")
+    entry.update(arguments={"command": command}, result_summary=result)
+    return entry
+
+
 @pytest.fixture
 def flow(tmp_path):
     path = tmp_path / "flows" / "demo.awl"
@@ -127,6 +134,10 @@ def signals(tmp_path, flow, awk_dir):
         shell_call("06:00:03", "sed -n 30,40p /var/log/app.log | grep error"),
         shell_call("06:00:03", "cd /srv && grep -rl TODO ."),
         shell_call("06:00:03", "git status"),
+        shell_call("06:00:03", "curl -s https://example.com/api | head -20"),
+        shell_call("06:00:03", "curl -s https://example.com/other | head -5"),
+        shell_call("06:00:03", "make test 2>&1 | tail -30"),
+        shell_call("06:00:03", "git log --oneline | cut -c1-80"),
         # backslashes and quotes must stay valid JSON with any awk
         shell_call("06:00:03", 'grep -n "a\\|b" "f\\"x"'),
         log_line("06:00:04", 100, "ai_assist.awl_runtime", "ERROR", "AWL task 'gather' failed"),
@@ -165,6 +176,19 @@ def signals(tmp_path, flow, awk_dir):
         ),
         old,
         {"tool_name": "internal__read_file", "arguments": {}, "timestamp": "2026-11-05T06:00:00", "pid": 100},
+        command_entry(
+            "make build 2>&1 | tail -3",
+            "Command: make build 2>&1 | tail -3\nExit code: 0\n\nSTDOUT:\nmake: *** [all] Error 2\nerror: build failed\n",
+        ),
+        command_entry(  # an intentional probe for errors, not a hidden failure
+            "grep -n 'error:' build.log | head -3",
+            "Command: grep -n 'error:' build.log | head -3\nExit code: 0\n\nSTDOUT:\n12: error: x\n",
+        ),
+        command_entry(  # the new execute_command warning: certain
+            "curl -s https://example.com/x | jq .",
+            "Command: curl -s https://example.com/x | jq .\nExit code: 0\n\nWarning: the exit code is that of the "
+            "last command in the pipeline; an earlier command failed (exit statuses: 6 0).",
+        ),
     ]
     audit_dir = tmp_path / "cfg" / "audit"
     audit_dir.mkdir(parents=True)
@@ -241,6 +265,24 @@ def test_security_prompts_are_rolled_up(signals):
     assert "grep -c x f | awk" in prompts[("command", "awk (arbitrary code)", "-")]["sample"]
     assert prompts[("command", "internal__create_action", "-")]["top_task"] == "unknown::-"
     assert not [r for r in records(signals, "signal") if r["event"] == "security_prompt"]
+
+
+def test_pipe_reducers_are_rolled_up(signals):
+    pipes = {r["reducer"]: r for r in records(signals, "pipe")}
+    assert {"head -#", "tail -#", "cut -c#-#"} <= set(pipes)
+    head = pipes["head -#"]
+    assert (head["count"], head["top_producer"], head["top_task"]) == (2, "curl", "demo.awl::gather")
+    assert pipes["tail -#"]["stderr_merged"] == 1
+    assert re.fullmatch(r"[0-9a-f]{12}", head["signature"]) and head["event"] == "pipe_reducer"
+
+
+def test_hidden_pipeline_failures_are_candidates_but_not_probes(signals):
+    masked = [r for r in records(signals, "signal") if r["event"] == "pipe_masked"]
+    samples = " ".join(r["sample"] for r in masked)
+    assert "make build" in samples
+    assert "curl -s https://example.com/x" in samples
+    assert "grep -n" not in samples
+    assert all(r["script"] == "demo.awl" for r in masked)
 
 
 def test_ledger_reports_each_signal_once(signals, tmp_path):
@@ -629,16 +671,6 @@ def test_report_assembly_appends_proposals(tmp_path):
     assert "none" in run("awl-check-excerpts.sh", "append", str(tmp_path / "missing.md"), str(report))
 
 
-@pytest.mark.parametrize("script", sorted(p.name for p in LIB.glob("*.sh")))
-def test_helpers_run_on_bash_3(script):
-    """macOS ships bash 3.2: no bash 4 builtins or expansions in the helpers."""
-    import re
-
-    text = (LIB / script).read_text()
-    bash4 = re.compile(r"\b(mapfile|readarray|coproc|declare -A|local -A)\b|\$\{\w+(,,|\^\^)\}")
-    assert not bash4.findall(text)
-
-
 def test_review_skill_loads_without_warnings():
     from ai_assist.security import validate_tool_description
     from ai_assist.skills_loader import SkillsLoader
@@ -648,3 +680,11 @@ def test_review_skill_loads_without_warnings():
     assert not validate_tool_description("skill", skill.metadata.description)
     assert not validate_tool_description("skill/body", skill.body)
     assert "awl-verdict.sh" in skill.body
+
+
+def test_pipe_records_and_hidden_failures_reach_the_review_file(signals, tmp_path):
+    review = tmp_path / "review.jsonl"
+    run("awl-signals-diff.sh", str(signals), str(tmp_path / "fresh.jsonl"), "--review-out", str(review))
+    recs = [json.loads(x) for x in review.read_text().splitlines()]
+    assert "head -#" in {r.get("reducer") for r in recs if r["kind"] == "pipe"}
+    assert any(r["kind"] == "signal" and r["event"] == "pipe_masked" for r in recs)

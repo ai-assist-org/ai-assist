@@ -22,6 +22,10 @@
 #   up, not signals: one per task would flood the findings and the ledger):
 #     {"kind":"shell","tool","form","count","top_task","top_task_count"}
 #
+#   pipe records — "@ROLLUP@" (hashed), per form a command output is piped
+#   into (`head -#`, `cut -c#-#`...), any command:
+#     {"kind":"pipe","reducer","count","stderr_merged","last","top_producer","top_task"}
+#
 #   prompt records — "@ROLLUP@" as first column (hashed), per security question form (see
 #   section 10 of the extractor), rolled up like the shell records:
 #     {"kind":"prompt","prompt":"command|path","form","tool","count",
@@ -134,6 +138,20 @@ BEGIN { FS = "\t" }
     next
   }
 
+  # ── pipe tax: rolled up per reducer form ─────────────────────────
+  if (event == "pipe_reducer") {
+    split(detail, pp, "\037")
+    rk = pp[2]
+    pi_count[rk]++
+    if (pp[3] == "1") pi_merged[rk]++
+    if (date "T" time > pi_last[rk]) pi_last[rk] = date "T" time
+    pi_prod[rk, pp[1]]++
+    if (pi_prod[rk, pp[1]] > pi_prod_n[rk]) { pi_prod_n[rk] = pi_prod[rk, pp[1]]; pi_top_prod[rk] = pp[1] }
+    pi_task[rk, script "::" task]++
+    if (pi_task[rk, script "::" task] > pi_top_n[rk]) { pi_top_n[rk] = pi_task[rk, script "::" task]; pi_top[rk] = script "::" task }
+    next
+  }
+
   # ── security questions: rolled up per form ───────────────────────
   if (event == "security_prompt") {
     split(detail, pf, "\037")
@@ -205,6 +223,13 @@ END {
       jesc(parts[2]), jesc(parts[1]), jesc(parts[2]), jesc(parts[3]), pr_count[pk], pr_last[pk],
       pr_ok[pk], pr_no[pk], pr_auto[pk], jesc(pr_top[pk]), pr_top_n[pk], jesc(pr_sample[pk]),
       jesc("prompt|" parts[1] "|" parts[2] "|" parts[3]))
+  }
+
+  # ── per pipe reducer form ─────────────────────────────────────────
+  for (rk in pi_count) {
+    printf("@ROLLUP@\t{\"kind\":\"pipe\",\"signature\":\"@SIG@\",\"script\":\"ai-assist\",\"task\":\"execute_command\",\"event\":\"pipe_reducer\",\"reducer\":\"%s\",\"sample\":\"| %s\",\"count\":%d,\"stderr_merged\":%d,\"last\":\"%s\",\"top_producer\":\"%s\",\"top_task\":\"%s\",\"top_task_count\":%d}\t%s\n",
+      jesc(rk), jesc(rk), pi_count[rk], pi_merged[rk], pi_last[rk], jesc(pi_top_prod[rk]),
+      jesc(pi_top[rk]), pi_top_n[rk], jesc("pipe|" rk))
   }
 
   # ── per-action rollup ──────────────────────────────────────────────

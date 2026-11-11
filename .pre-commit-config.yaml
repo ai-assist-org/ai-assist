@@ -60,6 +60,15 @@ repos:
         always_run: true
         verbose: true
 
+  # Shell and awk code must run on Linux and macOS (bash 3.2, POSIX awk, BSD tools)
+  - repo: local
+    hooks:
+      - id: check-portability
+        name: check-portability
+        entry: uv run python scripts/check_portability.py
+        language: system
+        types_or: [shell, awk]
+
   # Type checking with mypy
   - repo: local
     hooks:

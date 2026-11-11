@@ -11,8 +11,9 @@
 # Steps (all deterministic, no LLM):
 #   1. select ai-assist.log* files modified within <days> days
 #   2. extract signals with lib/extract-awl-signals.awk   -> TSV
-#      and the security questions of the last <days> days from the audit
-#      log (lib/audit-prompts.py, lib/extract-prompts.awk) -> same TSV
+#      and, from the audit log of the last <days> days, the security
+#      questions (lib/audit-prompts.py, lib/extract-prompts.awk) and the
+#      pipelines that may hide a failure (lib/audit-pipes.py) -> same TSV
 #   3. aggregate with lib/aggregate-awl-signals.awk       -> JSON lines
 #   4. hash each stable signature key (sha1, 12 hex chars)
 #   5. write JSONL to <out_jsonl>; print a top-10 table on stdout
@@ -89,6 +90,8 @@ if [ -f "$snap_dir/tool_calls.jsonl" ]; then
   py=$(ai_assist_python "$src" || true)
   "${py:-python3}" -E -P "$here/audit-prompts.py" "$snap_dir/tool_calls.jsonl" "$days" \
     | awk -f "$here/signals-common.awk" -f "$here/extract-prompts.awk" >> "$tsv_out"
+  # pipelines whose exit code 0 may hide a failure (candidates to judge)
+  "${py:-python3}" -E -P "$here/audit-pipes.py" "$snap_dir/tool_calls.jsonl" "$days" >> "$tsv_out"
 fi
 
 raw_rows=$(wc -l < "$tsv_out")
@@ -98,9 +101,12 @@ raw_out=$(mktemp)
 awk -f "$here/aggregate-awl-signals.awk" "$tsv_out" > "$raw_out"
 
 # signal records: keep awk grouping order (deterministic); hash the key
+# sha1 of stdin: GNU coreutils' sha1sum, or shasum (macOS)
+if command -v sha1sum > /dev/null 2>&1; then sha1() { sha1sum; }; else sha1() { shasum -a 1; }; fi
+
 hash_sigs() {  # "<tag>\t<json with @SIG@>\t<key>" -> json with the key's hash
   while IFS=$'\t' read -r tag json sigkey; do
-    h=$(printf '%s' "$sigkey" | sha1sum | cut -c1-12)
+    h=$(printf '%s' "$sigkey" | sha1 | cut -c1-12)
     printf '%s\n' "${json//@SIG@/$h}"
   done
 }

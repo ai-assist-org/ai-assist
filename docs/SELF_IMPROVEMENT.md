@@ -33,6 +33,11 @@ action whose prompt is the bare `.awl` path.
 - **Internal tools**: shell commands (`grep`, `sed`, `ls`, `jq`...) run where an
   internal tool exists. Using the tools' own descriptions, it tells habit (the
   tool already does it) from a missing feature, written up as a feature request.
+- **Pipe tax**: what command outputs are piped into (`| head -20`,
+  `| cut -c1-80`, `2>&1 | tail`…), whatever the command, and pipelines whose
+  exit code 0 may hide a failure (a pipe reports its last command's exit code),
+  read from the audit log. The model judges the candidates: a search for errors
+  is not a hidden failure.
 - **Security questions**: the commands and paths you had to approve, and the
   ones refused in workflows where nobody could answer. Each kind of question
   is classified as avoidable (an internal tool could have done it), a false

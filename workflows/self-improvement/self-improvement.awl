@@ -143,7 +143,7 @@
   @if review_count > 0
 
     # ── Step 3: classify findings (judgement only, no edits) ────────────
-    @task classify @no-history @no-kg max_tool_calls=26
+    @task classify @no-history @no-kg max_tool_calls=28
       Goal: Classify each finding to review in ${review_file}.
 
       Use internal__json_query with jq to read ${review_file} (auto-slurped
@@ -316,13 +316,43 @@
       its tool descriptions or system prompt should steer to the tool);
       sample = the form and its sample question, mechanical false.
 
+      Also review the pipe tax: the pipe records of ${review_file},
+        [.[] | select(.kind=="pipe")] | sort_by(-.count) | .[:15]
+      each with a reducer form that command outputs were piped into (any
+      command, e.g. "head -#", "cut -c#-#", "tail -#"; numbers shown as #),
+      a count, how many merged stderr first (2>&1), the command piped most
+      and the task doing it most. Call introspection__get_tool_help for
+      internal__execute_command once: when it has output limits
+      (max_output_lines, from_end, max_line_chars), head / tail / cut
+      forms are a habit — judge them "covered"; otherwise "gap". Other
+      reducers (grep, jq, sort...) are "post-processing" unless a dedicated
+      tool does the job. Keep the verdicts as pipe_verdicts, a list of
+        {"signature","reducer","count","stderr_merged","top_producer","top_task","regression","verdict":"covered|gap|post-processing"}.
+      Add at most one finding: the covered or gap forms, by total count
+      (script "ai-assist", task "internal__execute_command", event
+      "pipe_tax", count = their total, sample = the forms, signature = their
+      signatures comma-separated, target_kind "ai-assist", mechanical
+      false; for covered forms the fix is the tool description or the system
+      prompt, for a gap the tool itself).
+
+      The signal records with event "pipe_masked" are pipelines whose exit
+      code 0 may hide a failure (the exit code is the last command's).
+      Their sample starts with the command, then why it is suspected:
+      "[exit statuses ...]" is ai-assist's own report that an earlier stage
+      failed (certain); "[output: ...]" is an error text in the output
+      (a candidate: judge it — an intentional search for errors, or a
+      failure the pipe hid). Raise a finding only for real hidden failures,
+      with root_cause_class "masked_failure"; dismiss the others in one
+      line of your evidence.
+
       Ignore entirely: model_level, run_start, run_end. Do not report a
       finding you cannot tie to a concrete script + task + event.
 
       Check whether each target file (.awl or SKILL.md) changed after its
       evidence: get the files' modification times in ONE command (it also
       covers edits not committed yet), e.g.
-        `stat -c '%y %n' <workflow path> <skill path>/SKILL.md`
+        `stat -c '%y %n' <workflow path> <skill path>/SKILL.md` (Linux) or
+        `stat -f '%Sm %N' <workflow path> <skill path>/SKILL.md` (macOS)
       (a workflow's path is the "path" of its script record in
       ${signals_file}; a skill's is in ${proposals_dir}/live-installed-skills.json)
       and set possibly_fixed=true when a finding's "last" occurrence is older
@@ -345,7 +375,7 @@
       file and report row. If classifying a record needs the script's text, read
       the file with internal__read_file — do not guess.
 
-      Expose: findings, shell_verdicts, prompt_verdicts
+      Expose: findings, shell_verdicts, prompt_verdicts, pipe_verdicts
     @end
 
     # ── Step 4: draft proposals (never applied) ────────────────────────
@@ -541,6 +571,13 @@
       From ${shell_verdicts}: | Signature | Tool | Shell form (🔁 when a regression) | Count | Most used by |
       Verdict | Missing capability |, sorted by count, then one line per
       tool_gap / shell_habit finding id.
+
+      ## Pipe tax
+
+      From ${pipe_verdicts}: | Signature | Piped into (🔁 when a regression) | Count |
+      stderr merged | Most piped command | Most used by | Verdict |, sorted by
+      count, then one line per pipe_tax / masked_failure finding id. A pipe
+      reports the exit code of its last command: say so once.
 
       ## Security questions
 

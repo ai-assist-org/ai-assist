@@ -718,6 +718,28 @@ path = Path(user_path)
 
 This applies to all code that receives paths from outside the program (config files, tool arguments, CLI args). Internal paths constructed from `Path(__file__)`, `Path.cwd()`, or `get_config_dir()` don't need it.
 
+#### Portability — Linux and macOS
+
+ai-assist runs on Linux and macOS. Shell scripts it ships (e.g. `workflows/*/lib/*.sh`), the
+shell code it runs itself, and the commands it tells a model to run must work on both:
+
+- **bash 3.2** (macOS `/bin/bash`): no `mapfile`/`readarray`, associative arrays, `coproc`
+  or `${var,,}`/`${var^^}`; read lines with `while IFS= read -r line; do ...; done`.
+- **POSIX awk** (BSD awk on macOS, mawk on Debian/Ubuntu): no gawk-only features such as
+  `mktime()`, `strftime()`, `gensub()`, `> "/dev/stdout"` (a real file outside gawk), or
+  backslashes in a `gsub()` replacement (read differently by each awk; split and join instead).
+- **BSD userland**: no `date -I`, `stat -c`, `sed -i`, `readlink -f`, `grep -P` or
+  `find -printf`; `sha1sum` only with a `shasum -a 1` fallback. When a model must run such a
+  command, give both forms (`stat -c '%y %n'` on Linux, `stat -f '%Sm %N'` on macOS).
+- Python: no concern, uv installs the required version.
+
+The `check-portability` pre-commit hook (`scripts/check_portability.py`) checks every shell
+and awk file for these rules; `tests/test_check_portability.py` also runs it on all tracked
+scripts. ShellCheck does not cover them (it has no bash 3.2 or BSD-tools target), and
+`gawk --lint` only reports some gawk extensions. The self-improvement helper tests also run
+every helper again under `gawk --posix` (the `awk_dir` fixture in
+`tests/test_self_improvement_workflow.py`): reuse it for new awk-based scripts.
+
 #### Error Handling
 
 **Graceful Degradation**

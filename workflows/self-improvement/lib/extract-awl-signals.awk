@@ -346,6 +346,33 @@ level == "ERROR" && logger ~ /^ai_assist\./ {
   next
 }
 
+# ── 9a. pipe tax: what any command is piped into ─────────────────────
+# One "pipe_reducer" event per reducer of a pipeline (`| head -20`,
+# `| cut -c1-80`, `| tail -5`...), whatever the first command is. Detail:
+# producer \037 reducer form (numbers as #) \037 1 when stderr was merged
+# into the pipe (`2>&1 |`). Only known reducers count: a `|` inside quotes
+# splits wrongly and must not invent one.
+function pipe_reducers(c, date, time, pid,   n, st, i, w, prod, red, opt, merged, seen_red) {
+  sub(/"(, "[a-z_]+": .*)?\}\) -> [A-Za-z]+$/, "", c)
+  gsub(/\|\|/, "\001", c)
+  n = split(c, st, /[ ]*\|[ ]*/)
+  if (n < 2) return
+  split(st[1], w, " "); prod = w[1]; sub(/.*\//, "", prod)
+  merged = (st[1] ~ /2>&1/) ? 1 : 0
+  for (i = 2; i <= n; i++) {
+    sub(/[;&)].*/, "", st[i])  # `| head -5; echo` -> the reducer is `head -5`
+    split(st[i], w, " "); red = w[1]; sub(/.*\//, "", red)
+    if (red !~ /^(head|tail|cut|grep|egrep|jq|sed|awk|wc|sort|uniq|tr|column|fold)$/) continue
+    opt = (w[2] ~ /^-/) ? w[2] : ""
+    sub(/=.*/, "", opt)
+    red = red (opt != "" ? " " opt : "")
+    gsub(/[0-9]+/, "#", red)
+    if (red in seen_red) continue
+    seen_red[red] = 1
+    emit(date, time, pid, owner(pid), curtask[pid], "pipe_reducer", prod "\037" red "\037" merged)
+  }
+}
+
 # ── 9. shell commands an internal tool could run instead ────────────
 # "<command and options> -> <internal tool>"; a pipeline is marked "| ...":
 # it usually means the tool cannot do the whole job.
@@ -361,6 +388,7 @@ logger == "ai_assist.audit" && msg ~ /^Tool call: internal__execute_command\(\{"
     if (cw[i] == "&&" || cw[i] == ";" || cw[i] ~ /;$/) break
     if (cw[i] ~ /^-[a-zA-Z]/ && opts < 4) { o = cw[i]; sub(/=.*/, "", o); form = form " " o; opts++ }
   }
+  pipe_reducers(c, date, time, pid)
   tool = internal_tool(cmd, c)
   if (tool == "") next
   if (cmd == "sed" && c ~ /^sed -n '?[0-9]+,[0-9]+p/) form = "sed -n N,Mp"
