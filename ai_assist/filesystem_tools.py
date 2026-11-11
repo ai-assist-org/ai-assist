@@ -8,6 +8,7 @@ import logging
 import os
 import re
 import shlex
+import shutil
 import signal
 import stat
 from collections.abc import Awaitable, Callable
@@ -990,6 +991,64 @@ def _searchable_files(root: Path, name_glob: str | None) -> list[Path]:
     return found
 
 
+# Appended (on its own line, after validation) to a command that has a pipe:
+# reports each stage's exit status on stderr, then exits with the last one as
+# before. Fixed text: nothing from the command is interpolated into it.
+_PIPESTATUS_MARKER = "__AI_ASSIST_PIPESTATUS__"
+_PIPESTATUS_TRAILER = (
+    '\n__ai_assist_ps="${PIPESTATUS[*]}"; '
+    f"printf '\\n%s %s\\n' {_PIPESTATUS_MARKER} \"$__ai_assist_ps\" >&2; "
+    'exit "${__ai_assist_ps##* }"'
+)
+# A writer killed by SIGPIPE because its reader had enough (e.g. `seq | head -1`)
+_SIGPIPE_STATUS = 141
+
+
+def _has_pipe(command: str) -> bool:
+    """Whether a command has a pipe operator outside quotes."""
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
+    lexer.whitespace_split = True
+    try:
+        return "|" in list(lexer)
+    except ValueError:
+        return "|" in command
+
+
+def _pipeline_warning(stderr: str) -> tuple[str, str]:
+    """Strip the PIPESTATUS report from stderr; return (stderr, warning or "")."""
+    head, sep, tail = stderr.rpartition(f"\n{_PIPESTATUS_MARKER} ")
+    if not sep:
+        return stderr, ""
+    statuses = tail.split("\n", 1)[0].split()
+    if not all(s.isdigit() for s in statuses) or len(statuses) < 2:
+        return head, ""
+    codes = [int(s) for s in statuses]
+    if codes[-1] != 0 or all(c in (0, _SIGPIPE_STATUS) for c in codes[:-1]):
+        return head, ""
+    return head, (
+        "Warning: the exit code is that of the last command in the pipeline; an earlier command "
+        f"failed (exit statuses: {' '.join(statuses)}). Run it without the pipe, using "
+        "max_output_lines / from_end / max_line_chars to limit the output, to see its error."
+    )
+
+
+def _limit_output(text: str, max_lines: int | None, from_end: bool, max_chars: int | None) -> tuple[str, str]:
+    """Apply the output limits; return (shown text, note about what was cut, or "")."""
+    lines = text.splitlines()
+    notes = []
+    if max_chars:
+        cut = sum(1 for line in lines if len(line) > max_chars)
+        lines = [line[:max_chars] + "…" if len(line) > max_chars else line for line in lines]
+        if cut:
+            notes.append(f"{cut} line(s) cut at {max_chars} characters")
+    total = len(lines)
+    if max_lines and total > max_lines:
+        first = total - max_lines + 1 if from_end else 1
+        lines = lines[-max_lines:] if from_end else lines[:max_lines]
+        notes.insert(0, f"showing lines {first}-{first + max_lines - 1} of {total}")
+    return "\n".join(lines) + ("\n" if lines else ""), "; ".join(notes)
+
+
 def is_sensitive_path(path: Path) -> bool:
     """Whether a path is (inside) a credential location the agent may never access."""
     resolved = path.expanduser().resolve()
@@ -1430,6 +1489,7 @@ class FilesystemTools:
         self.path_confirmation_callback: Callable[[str], Awaitable[bool]] | None = None
         self.awl_authorized_commands: set[str] = set()
         self._confirmations: list[dict] = []
+        self._saved_outputs = 0  # command outputs saved by _save_full_output
 
     def set_permission_mode(self, mode: str) -> str | None:
         """Set a session-only permission mode, returning an error if invalid."""
@@ -1792,7 +1852,15 @@ class FilesystemTools:
             {
                 "name": "internal__execute_command",
                 "_readonly": False,
-                "description": "Execute a shell command and return the output. Only use for commands that have no dedicated tool (prefer internal__read_file, internal__list_directory, internal__search_in_file for filesystem operations). Commands are checked against an allowlist.",
+                "description": (
+                    "Execute a shell command and return the output. Only use for commands that have no "
+                    "dedicated tool (prefer internal__read_file, internal__list_directory, "
+                    "internal__search_in_file for filesystem operations). Commands are checked against an "
+                    "allowlist. To shorten the output, use max_output_lines (with from_end for the last "
+                    "lines) and max_line_chars instead of piping into head, tail or cut: a pipe reports the "
+                    "exit code of its last command and hides a failure; the limits keep the real exit code "
+                    "and save the whole output to a file you can read."
+                ),
                 "input_schema": {
                     "type": "object",
                     "properties": {
@@ -1806,6 +1874,18 @@ class FilesystemTools:
                             "type": "integer",
                             "description": "Timeout in seconds (default: 30, max: 300)",
                             "default": 30,
+                        },
+                        "max_output_lines": {
+                            "type": "integer",
+                            "description": "Show only this many lines of stdout (instead of | head -N)",
+                        },
+                        "from_end": {
+                            "type": "boolean",
+                            "description": "With max_output_lines: show the last lines (instead of | tail -N)",
+                        },
+                        "max_line_chars": {
+                            "type": "integer",
+                            "description": "Cut each stdout line to this many characters (instead of | cut -c1-N)",
                         },
                     },
                     "required": ["command"],
@@ -2736,15 +2816,43 @@ class FilesystemTools:
         except Exception as e:
             return f"Error editing file: {e}"
 
-    async def _run_shell_command(self, command: str, cwd: Path | None, timeout: float | None) -> str:
-        """Run an already-authorized command and format its exit code and output."""
+    def _save_full_output(self, text: str) -> Path:
+        """Save a command's whole output in the session tmpdir, readable by internal__read_file."""
+        from .awl_executor import get_session_tmpdir
+
+        tmp_dir = Path(get_session_tmpdir()).resolve()
+        if tmp_dir not in self.allowed_paths:
+            self.allowed_paths.append(tmp_dir)
+        self._saved_outputs += 1
+        path = tmp_dir / f"command-output-{os.getpid()}-{self._saved_outputs}.txt"
+        path.write_text(text)
+        return path
+
+    async def _run_shell_command(
+        self,
+        command: str,
+        cwd: Path | None,
+        timeout: float | None,
+        max_output_lines: int | None = None,
+        from_end: bool = False,
+        max_line_chars: int | None = None,
+    ) -> str:
+        """Run an already-authorized command and format its exit code and output.
+
+        The output limits replace `| head`, `| tail` and `| cut` without hiding
+        the command's exit code. A command with a pipe reports a failure of an
+        earlier stage that the last stage's exit code would hide.
+        """
+        bash = shutil.which("bash")
+        report_pipeline = bash is not None and _has_pipe(command)
         # A shell is required for pipes, redirects, etc.; commands are validated
         # through allowlists and confirmation callbacks above. stdin is /dev/null so
         # a command expecting input (e.g. grep with no file) can't wait on the
         # terminal; it runs in its own process group, off the event loop, so a
         # timeout or a cancelled query (Escape) stops it with all its children.
         proc = await asyncio.create_subprocess_shell(  # nosec B602
-            command,
+            command + _PIPESTATUS_TRAILER if report_pipeline else command,
+            executable=bash if report_pipeline else None,
             cwd=cwd,
             stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
@@ -2760,6 +2868,16 @@ class FilesystemTools:
             raise
         stdout = stdout_bytes.decode(errors="replace")
         stderr = stderr_bytes.decode(errors="replace")
+        warning = ""
+        if report_pipeline:
+            stderr, warning = _pipeline_warning(stderr)
+
+        note = ""
+        if max_output_lines or max_line_chars:
+            full = stdout
+            stdout, note = _limit_output(stdout, max_output_lines, from_end, max_line_chars)
+            if note.startswith("showing"):
+                note += f"; full output saved to {self._save_full_output(full)}: read it with internal__read_file"
 
         output = f"Command: {command}\n"
         if cwd:
@@ -2767,10 +2885,15 @@ class FilesystemTools:
         output += f"Exit code: {proc.returncode}\n\n"
 
         if stdout:
-            output += f"STDOUT:\n{stdout}\n"
+            output += f"STDOUT:\n{stdout}"
+            output += f"[{note}]\n" if note else ""
+            output += "\n"
 
         if stderr:
             output += f"STDERR:\n{stderr}\n"
+
+        if warning:
+            output += f"\n{warning}\n"
 
         if proc.returncode != 0:
             output += f"\nCommand failed with exit code {proc.returncode}"
@@ -2857,7 +2980,14 @@ class FilesystemTools:
                 if not cwd.exists() or not cwd.is_dir():
                     return f"Error: Invalid working directory: {working_dir}"
 
-            return await self._run_shell_command(command, cwd, timeout)
+            return await self._run_shell_command(
+                command,
+                cwd,
+                timeout,
+                max_output_lines=args.get("max_output_lines"),
+                from_end=bool(args.get("from_end", False)),
+                max_line_chars=args.get("max_line_chars"),
+            )
 
         except TimeoutError:
             return f"Error: Command timed out after {timeout} seconds. Use interactive mode for long-running commands."

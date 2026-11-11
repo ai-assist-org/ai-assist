@@ -910,7 +910,7 @@ Search priority: Tavily > Brave > Exa > Perplexity > SearXNG > DuckDuckGo. Fetch
 - `search_in_file` - Regex search in a file or a directory tree (ignore case, invert, count, only matching, matching files, context lines)
 - `create_directory` - Create directories
 - `list_directory` - List directory contents (long format, sort by time or size, limit)
-- `execute_command` - Execute bash commands
+- `execute_command` - Execute bash commands; output limits (`max_output_lines`, `from_end`, `max_line_chars`) replace `| head`, `| tail` and `| cut` without hiding the exit code, and a pipeline whose last command succeeds while an earlier one failed is reported
 
 ### MCP Server Tools
 
