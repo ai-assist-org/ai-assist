@@ -342,3 +342,91 @@ def test_description_lists_what_is_not_supported(tools):
     [definition] = tools.get_tool_definitions()
     for construct in ("match", "nonlocal", "async", "open"):
         assert construct in definition["description"]
+
+
+# --- execute_command sends inline code over a file to internal__transform, without a prompt ---
+
+
+@pytest.mark.parametrize(
+    ("command", "file"),
+    [
+        ("awk '/^## /{s=$0} /^- /{c[s]++} END{for (k in c) print c[k], k}' TODO.md", "TODO.md"),
+        ("cd /w && echo hi && gawk -F, '{t+=$2} END{print t}' data.csv", "data.csv"),
+        ("awk -v n=2 '{print $n}' a.log b.log", "a.log"),
+        ("perl -ne 'print if /x/' notes.txt", "notes.txt"),
+        ("python3 -c 'import sys; print(len(sys.stdin.read()))' < big.json", "big.json"),
+        ("grep x f | awk '{print $1}' other.txt", "other.txt"),
+    ],
+)
+def test_inline_code_over_a_file_is_detected(command, file):
+    from ai_assist.filesystem_tools import inline_code_file
+
+    assert inline_code_file(command) == file
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "grep x f | awk '{print $1}'",  # piped input: the transform cannot read a pipe
+        "awk -f prog.awk data.txt",  # a program file, not inline code
+        "python3 -c 'print(1)'",
+        "python3 script.py data.txt",
+        "awk --version",
+        "cat TODO.md",
+        "perl -e 'print 1'",
+    ],
+)
+def test_other_commands_are_not_redirected(command):
+    from ai_assist.filesystem_tools import inline_code_file
+
+    assert inline_code_file(command) is None
+
+
+def command_tools(workdir, asked, mode="manual"):
+    async def approve(description):
+        asked.append(description)
+        return True
+
+    fs = FilesystemTools(
+        AiAssistConfig(anthropic_api_key="test", allowed_paths=[str(workdir)], permission_mode=mode),
+        load_user_config=False,
+    )
+    fs.confirmation_callback = approve
+    return fs
+
+
+async def test_execute_command_redirects_without_asking(workdir):
+    asked: list[str] = []
+    fs = command_tools(workdir, asked)
+    out = await fs.execute_tool("execute_command", {"command": "awk '{c++} END{print c}' notes.txt"})
+    assert asked == []
+    assert out.startswith("Error:") and "internal__transform" in out and "notes.txt" in out
+
+
+async def test_piped_inline_code_still_asks(workdir):
+    asked: list[str] = []
+    fs = command_tools(workdir, asked)
+    await fs.execute_tool("execute_command", {"command": "echo a | awk '{print $1}'"})
+    assert asked and "awk" in asked[0]
+
+
+async def test_awl_authorized_inline_code_is_not_redirected(workdir):
+    (workdir / "n.txt").write_text("a\nb\n")
+    asked: list[str] = []
+    fs = command_tools(workdir, asked)
+    fs.awl_authorized_commands = {"awk"}
+    fs.allowed_commands = ["awk"]
+    out = await fs.execute_tool(
+        "execute_command", {"command": "awk 'END{print NR}' n.txt", "working_directory": str(workdir)}
+    )
+    assert out.strip().endswith("2"), out
+
+
+async def test_autonomous_mode_is_not_redirected(workdir, monkeypatch):
+    monkeypatch.setenv("AI_ASSIST_SANDBOX", "true")  # autonomous mode exists only in the sandbox
+    (workdir / "n.txt").write_text("a\nb\n")
+    fs = command_tools(workdir, [], mode="autonomous")
+    out = await fs.execute_tool(
+        "execute_command", {"command": "awk 'END{print NR}' n.txt", "working_directory": str(workdir)}
+    )
+    assert out.strip().endswith("2"), out

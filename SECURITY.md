@@ -474,6 +474,11 @@ find a process that cannot read, write, connect or run anything. Where the kerne
 unavailable (an old kernel, another system), the tool still runs with the other layers and says
 so in its result; `ai-assist /doctor` reports the confinement in use.
 
+`internal__execute_command` does not ask the user about inline code over a file named on its
+command line (`awk '…' file`, `perl -ne '…' file`, `python3 -c '…' < file`): it refuses it and
+points the agent to `internal__transform` on that file. Inline code fed by a pipe still asks;
+AWL- or action-authorized commands and the sandbox's autonomous mode are unaffected.
+
 ## Best Practices
 
 ### For Users
