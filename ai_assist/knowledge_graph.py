@@ -12,6 +12,8 @@ from uuid import uuid4
 from .config import get_config_dir
 from .jev_client import jev_configured, rerank_candidates_sync
 
+KNOWLEDGE_TYPES = ("user_preference", "lesson_learned", "project_context", "decision_rationale")
+
 
 @dataclass
 class Entity:
@@ -754,8 +756,7 @@ class KnowledgeGraph:
         Returns:
             Entity ID
         """
-        valid_types = ["user_preference", "lesson_learned", "project_context", "decision_rationale"]
-        if entity_type not in valid_types:
+        if entity_type not in KNOWLEDGE_TYPES:
             raise ValueError(f"Invalid knowledge entity type: {entity_type}")
 
         if valid_from is None:

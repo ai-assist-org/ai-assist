@@ -1,5 +1,6 @@
 """Tests for context engineering improvements"""
 
+import logging
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -656,6 +657,16 @@ class TestCompactionFactExtraction:
         facts = ConversationMemory._parse_facts(text)
         assert len(facts) == 1
         assert facts[0]["key"] == "k"
+
+    def test_parse_facts_drops_unknown_categories(self, caplog):
+        text = (
+            '```json\n{"facts": [{"category": "project_context", "key": "k", "content": "c"}, '
+            '{"category": "pending_item", "key": "todo", "content": "review later"}]}\n```'
+        )
+        with caplog.at_level(logging.INFO):
+            facts = ConversationMemory._parse_facts(text)
+        assert [f["key"] for f in facts] == ["k"]
+        assert "pending_item" in caplog.text and "Traceback" not in caplog.text
 
     def test_parse_facts_no_json(self):
         assert ConversationMemory._parse_facts("no json here") == []
