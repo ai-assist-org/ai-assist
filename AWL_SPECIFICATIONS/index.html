@@ -587,6 +587,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../SELF_IMPROVEMENT/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Self-Improvement
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../PERSONAL_SKILLS/" class="md-nav__link">
         
   
@@ -1395,7 +1423,13 @@ Goal: Fetch the latest changes using <code>git -C /path/to/repo fetch origin mas
 <p>This only applies to scripts the user started: <code>ai-assist /run</code>, and actions
 (<code>internal__create_action</code>) whose AWL prompt the user confirmed. When the agent
 runs a script itself (<code>introspection__execute_awl_script</code>), its commands go
-through the normal allowlist and confirmation.</p>
+through the normal allowlist and confirmation — unless an action is running
+whose own prompt names that script (e.g. "1. Run ~/flows/weekly.awl with
+days=7. 2. Email the report."): creating such an action asks for the same
+confirmation, and the script then runs as if it were the action's prompt.
+Only the action's prompt counts, not the event data added to it, and the
+paths must match once resolved. If the last run of such a script failed, the
+action is reported as failed even when the agent carries on and ends normally.</p>
 <p>Commands are taken from the script text, never from interpolated values. A
 <code>${var}</code> may only choose a directory, with the script name written literally
 (<code>${tools_dir}/build.sh</code>), and its value must be a plain path (no spaces or
@@ -1491,6 +1525,18 @@ shell syntax).</p>
 <tr>
 <td><code>tmpdir</code></td>
 <td>Session-scoped temporary directory (created at startup, cleaned up on exit)</td>
+</tr>
+<tr>
+<td><code>source_dir</code></td>
+<td>Top directory of the ai-assist source tree (parent of the <code>ai_assist</code> package)</td>
+</tr>
+<tr>
+<td><code>script_path</code></td>
+<td>Absolute path of the running <code>.awl</code> script</td>
+</tr>
+<tr>
+<td><code>script_dir</code></td>
+<td>Absolute directory containing the running <code>.awl</code> script</td>
 </tr>
 </tbody>
 </table>
