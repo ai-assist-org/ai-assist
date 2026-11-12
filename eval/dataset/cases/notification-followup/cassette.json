@@ -1,0 +1,17 @@
+{
+  "turns": [
+    {
+      "content": [
+        {
+          "type": "text",
+          "text": "The **/monitor notification** (received at 20:16 today) reported the following:\n\n> **Nightly backup failed** \u2014 The backup job aborted because disk `/dev/sdb1` is full (**98% used**).\n\nThe backup couldn't complete because there wasn't enough space on the destination disk. You'll need to free up space on `/dev/sdb1` before the next backup can succeed. A few options:\n\n1. **Delete old backups** \u2014 Remove outdated or redundant backup files to reclaim space.\n2. **Move data** \u2014 Offload some data to another disk or storage location.\n3. **Expand storage** \u2014 Add capacity to `/dev/sdb1` or mount an additional disk.\n4. **Trigger a retry** \u2014 Once space is freed, manually re-run the backup job.\n\nWould you like help with any of these steps? \ud83d\udee0\ufe0f"
+        }
+      ],
+      "stop_reason": "end_turn",
+      "usage": {
+        "input_tokens": 149,
+        "output_tokens": 206
+      }
+    }
+  ]
+}

@@ -69,6 +69,15 @@ async def run(workspace: Path, output_dir: Path, model: str, timeout: int):
     # Create temporary KG in workspace for isolation
     kg_path = str(workspace / "knowledge_graph.db")
     kg = KnowledgeGraph(db_path=kg_path)
+    for item in input_data.get("knowledge", []):
+        kg.insert_knowledge(entity_type=item["entity_type"], key=item["key"], content=item["content"])
+
+    # Notifications only reach the agent in interactive mode, and only when recent
+    notifications = input_data.get("notifications", [])
+    if notifications:
+        with open(eval_config_dir / "notifications.jsonl", "w") as f:
+            for entry in notifications:
+                f.write(json.dumps({**entry, "timestamp": datetime.now().isoformat()}) + "\n")
 
     # Minimal config: internal tools only, no MCP servers
     case_config = input_data.get("config", {})
@@ -82,6 +91,7 @@ async def run(workspace: Path, output_dir: Path, model: str, timeout: int):
         allowed_paths=[str(workspace)],
     )
     agent = AiAssistAgent(config, knowledge_graph=kg)
+    agent.interactive_mode = bool(notifications)
 
     # Register internal tools (connect_to_servers populates available_tools)
     await agent.connect_to_servers()

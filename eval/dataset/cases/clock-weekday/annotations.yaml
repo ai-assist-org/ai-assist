@@ -1,0 +1,4 @@
+expected_tools: []
+forbidden_tools:
+  - "execute_command"
+expect_weekday: true

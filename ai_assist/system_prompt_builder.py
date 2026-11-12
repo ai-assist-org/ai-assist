@@ -59,7 +59,7 @@ class SystemPromptBuilder:
 
         lines = [f"# Recent Notifications ({len(recent)} in the last {max_age_minutes} min)\n"]
         lines.append(
-            "The /monitor process reported the following. You can reference this information if the user asks about it.\n"
+            "The /monitor process reported the following. You can reference this information if the user asks about it; when you do, say it comes from a /monitor notification and give its time.\n"
         )
         for entry in recent:
             level = entry.get("level", "info").upper()

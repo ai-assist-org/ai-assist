@@ -101,3 +101,26 @@ def test_breakpoint_skips_query_context_block_so_next_query_matches():
         [{"role": "user", "content": "q2"}, {"role": "assistant", "content": "a2"}, {"role": "user", "content": "q3"}]
     )
     assert next_query[0]["content"] == [marked[0]]
+
+
+def test_notifications_ask_the_model_to_name_their_source(tmp_path):
+    """Sent with the user turn, notifications were stated as fact unless the block asks for the source"""
+    import json
+
+    (tmp_path / "notifications.jsonl").write_text(
+        json.dumps(
+            {
+                "level": "error",
+                "title": "Backup failed",
+                "message": "disk full",
+                "timestamp": datetime.now().isoformat(),
+            }
+        )
+        + "\n"
+    )
+    agent = _make_agent()
+    agent.interactive_mode = True
+    with patch("ai_assist.config.get_config_dir", return_value=tmp_path):
+        context = agent._build_query_context()
+    assert "Backup failed" in context
+    assert "say it comes from a /monitor notification" in context

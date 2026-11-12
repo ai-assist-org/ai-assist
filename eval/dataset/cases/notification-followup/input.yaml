@@ -1,0 +1,5 @@
+prompt: "What went wrong with the backup?"
+notifications:
+  - level: error
+    title: "Nightly backup failed"
+    message: "Backup job aborted: disk /dev/sdb1 is full (98% used)."

@@ -1,0 +1,17 @@
+{
+  "turns": [
+    {
+      "content": [
+        {
+          "type": "text",
+          "text": "Based on my general knowledge: the driving distance from New York City to Boston is approximately **350 km** (via I-95 North), with a typical drive time of around 4\u20135 hours depending on traffic."
+        }
+      ],
+      "stop_reason": "end_turn",
+      "usage": {
+        "input_tokens": 113,
+        "output_tokens": 50
+      }
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+prompt: "What is 17 multiplied by 23? Answer with just the number."
+notifications:
+  - level: error
+    title: "Nightly backup failed"
+    message: "Backup job aborted: disk /dev/sdb1 is full (98% used)."
