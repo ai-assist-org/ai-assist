@@ -69,6 +69,15 @@ repos:
         language: system
         types_or: [shell, awk]
 
+  # Workflow actions must be pinned by commit SHA, never by a mutable tag or branch
+  - repo: local
+    hooks:
+      - id: check-action-pins
+        name: check-action-pins
+        entry: uv run python scripts/check_action_pins.py
+        language: system
+        files: ^\.github/workflows/.*\.ya?ml$
+
   # A modified presentation must carry the current month in \date (only checked
   # when the file differs from HEAD, so --all-files in CI does not fail on a new month)
   - repo: local
