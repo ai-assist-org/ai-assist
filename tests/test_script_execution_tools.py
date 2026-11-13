@@ -160,6 +160,8 @@ async def test_execute_when_disabled(skills_manager_with_skill):
 
     assert "Error" in result
     assert "disabled" in result.lower()
+    # names the setting a user can actually change, not the internal config field
+    assert "AI_ASSIST_ALLOW_SCRIPT_EXECUTION=true" in result and ".env" in result
 
 
 @pytest.mark.asyncio
