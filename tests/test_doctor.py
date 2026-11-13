@@ -167,3 +167,22 @@ async def test_run_doctor_skips_jev_when_not_configured(monkeypatch):
 
     monkeypatch.setattr("ai_assist.jev_client.jev_decide", fake_decide)
     assert await run_doctor(_agent()) == 0  # jev_enabled is False by default
+
+
+async def test_run_doctor_reports_the_transform_confinement(capsys, monkeypatch):
+    async def status():
+        return "landlock ABI 6: no files; no new process; no socket, exec or ptrace"
+
+    monkeypatch.setattr("ai_assist.transform_tools.confinement_status", status)
+    assert await run_doctor(_agent()) == 0
+    out = capsys.readouterr().out
+    assert "transform" in out and "landlock ABI 6" in out
+
+
+async def test_run_doctor_flags_incomplete_confinement_without_failing(capsys, monkeypatch):
+    async def status():
+        return "unavailable: no kernel confinement on freebsd"
+
+    monkeypatch.setattr("ai_assist.transform_tools.confinement_status", status)
+    assert await run_doctor(_agent()) == 0  # informational: the tool still runs (weaker layers)
+    assert "⚠️" in capsys.readouterr().out

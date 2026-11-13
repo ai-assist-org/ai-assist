@@ -1394,6 +1394,59 @@ def _code_interpreter_invocations(command: str) -> list[tuple[str, list[str]]]:
     return found
 
 
+_AWK_NAMES = frozenset({"awk", "gawk", "mawk", "nawk"})
+_PERL_INLINE = re.compile(r"^-[a-zA-Z]*[eE]$")  # -e, -ne, -lane...
+
+
+def _inline_code_operands(name: str, args: list[str]) -> list[str] | None:
+    """The file operands of an inline awk/perl program, or None when it is not one
+    (a program file, an in-place edit, no program)."""
+    if name in _AWK_NAMES:
+        i = 0
+        while i < len(args) and args[i].startswith("-") and args[i] != "-":
+            if args[i] == "--":
+                i += 1
+                break
+            if args[i] in ("-f", "-i") or args[i].startswith(("-f", "-i", "--")):
+                return None
+            i += 2 if args[i] in ("-F", "-v") else 1
+        rest = args[i + 1 :]  # after the program
+        return [a for a in rest if not a.startswith("-") and not _ASSIGNMENT.match(a)] if i < len(args) else None
+    if name == "perl":
+        if any(a.startswith("-") and not a.startswith("--") and "i" in a for a in args):  # -i, -pi: edits
+            return None
+        for i, arg in enumerate(args):
+            if _PERL_INLINE.match(arg):
+                return [a for a in args[i + 2 :] if not a.startswith("-")]
+    return None
+
+
+def inline_code_file(command: str) -> str | None:
+    """A file that inline code (awk program, perl -e, python -c) in the command reads, named on its
+    command line (operand or `< file`): what internal__transform could process instead."""
+    for segment in _split_shell_commands(_expand_shell_invocations(command)):
+        try:
+            tokens = shlex.split(segment)
+        except ValueError:
+            continue
+        idx = 0
+        while idx < len(tokens) and _ASSIGNMENT.match(tokens[idx]):
+            idx += 1
+        idx = _strip_transparent_wrappers(tokens, idx)
+        if idx >= len(tokens):
+            continue
+        name = Path(tokens[idx]).name
+        stdin_files = [tokens[i + 1] for i in range(idx, len(tokens) - 1) if tokens[i] == "<"]
+        args = [t for i, t in enumerate(tokens[idx + 1 :], start=idx + 1) if t != "<" and tokens[i - 1] != "<"]
+        if _PYTHON_NAME.match(name):
+            operands: list[str] | None = [] if _python_invocation(args) == "<inline-code>" else None
+        else:
+            operands = _inline_code_operands(name, args)
+        if operands is not None and (operands or stdin_files):
+            return (operands or stdin_files)[0]
+    return None
+
+
 def _file_write_destinations(name: str, args: list[str]) -> list[str]:
     """Destination paths a file-copying command writes (see _FILE_WRITE_COMMANDS)."""
     if name == "dd":
@@ -3050,6 +3103,16 @@ class FilesystemTools:
         # Commands authorized by AWL scripts are treated as user-confirmed
         # (skip extra confirmation for python -c, etc.)
         awl_confirmed = any(name in self.awl_authorized_commands for name in cmd_names)
+
+        # Inline code over a named file would cost a prompt that can never become "always allow":
+        # internal__transform does the same without one (piped input still asks, it cannot take it)
+        inline_file = None if self.permission_mode == "autonomous" or awl_confirmed else inline_code_file(command)
+        if inline_file:
+            return (
+                f"Error: not run: inline code over {inline_file} needs the user's approval each time. Use "
+                f"internal__transform with file={inline_file!r} and a Python payload instead (no approval "
+                "needed; `text`/`lines` hold the content)."
+            )
 
         auto_safe = self.permission_mode == "auto" and self._is_auto_command_safe(command)
         if self.permission_mode == "autonomous" or auto_safe:

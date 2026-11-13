@@ -1,0 +1,92 @@
+{
+  "turns": [
+    {
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_vrtx_01Xbm44BsBTCMvdsEUjuinYe",
+          "name": "internal__search_in_file",
+          "input": {
+            "path": "logs/app.log",
+            "pattern": "ERROR",
+            "output": "only_matching"
+          }
+        }
+      ],
+      "stop_reason": "tool_use",
+      "usage": {
+        "input_tokens": 3,
+        "output_tokens": 98
+      }
+    },
+    {
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_vrtx_01VuTFsR6SJ4BxgsX7g6NFmk",
+          "name": "internal__search_in_file",
+          "input": {
+            "path": "logs/app.log",
+            "pattern": "ERROR",
+            "output": "lines"
+          }
+        }
+      ],
+      "stop_reason": "tool_use",
+      "usage": {
+        "input_tokens": 1,
+        "output_tokens": 95
+      }
+    },
+    {
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_vrtx_01LdcRGhLWxCdCP9ND7Jg2z8",
+          "name": "internal__search_in_file",
+          "input": {
+            "path": "logs/app.log",
+            "pattern": "ERROR .*",
+            "output": "only_matching"
+          }
+        }
+      ],
+      "stop_reason": "tool_use",
+      "usage": {
+        "input_tokens": 1,
+        "output_tokens": 99
+      }
+    },
+    {
+      "content": [
+        {
+          "type": "tool_use",
+          "id": "toolu_vrtx_01ReC1RXXhNXJhZQyieM7iKt",
+          "name": "internal__transform",
+          "input": {
+            "file": "logs/app.log",
+            "code": "\nimport re\nfrom collections import Counter\n\ncounts = Counter()\nfor line in lines:\n    m = re.search(r'ERROR (.+)', line)\n    if m:\n        counts[m.group(1).strip()] += 1\n\nfor kind, count in sorted(counts.items(), key=lambda x: -x[1]):\n    print(f\"{count:>4}  {kind}\")\n"
+          }
+        }
+      ],
+      "stop_reason": "tool_use",
+      "usage": {
+        "input_tokens": 1,
+        "output_tokens": 167
+      }
+    },
+    {
+      "content": [
+        {
+          "type": "text",
+          "text": "Here are the ERROR counts from `logs/app.log`, sorted by frequency:\n\n| Count | Error Kind |\n|------:|------------|\n| 3 | `disk full` |\n| 2 | `network down` |\n| 1 | `timeout` |\n\n**6 ERROR lines total**, with `disk full` being the most common. \ud83d\udd0d"
+        }
+      ],
+      "stop_reason": "end_turn",
+      "usage": {
+        "input_tokens": 1,
+        "output_tokens": 87
+      }
+    }
+  ]
+}

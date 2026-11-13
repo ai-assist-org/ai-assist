@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from .effort import effort_output_config
+from .knowledge_graph import KNOWLEDGE_TYPES
 
 if TYPE_CHECKING:
     from .knowledge_graph import KnowledgeGraph
@@ -143,7 +144,8 @@ class ConversationMemory:
             '"content": "the fact", "confidence": 0.9, "tags": []}]}\n'
             "```\n\n"
             "category must be one of: project_context, user_preference, lesson_learned, "
-            "decision_rationale. Use project_context for where things are located. "
+            "decision_rationale. Use project_context for where things are located. Pending "
+            "items and to-dos belong in the summary, not in the facts. "
             'If there are no durable facts, output {"facts": []}.\n\n'
             f"Conversation history:\n{history_text}"
         )
@@ -189,7 +191,13 @@ class ConversationMemory:
         except json.JSONDecodeError, ValueError:
             return []
         facts = data.get("facts", []) if isinstance(data, dict) else []
-        return [f for f in facts if isinstance(f, dict) and f.get("category") and f.get("key") and f.get("content")]
+        complete = [f for f in facts if isinstance(f, dict) and f.get("category") and f.get("key") and f.get("content")]
+        unknown = [f for f in complete if f["category"] not in KNOWLEDGE_TYPES]
+        if unknown:
+            logging.info(
+                "Dropped facts with an unknown category: %s", ", ".join(f"{f['category']}:{f['key']}" for f in unknown)
+            )
+        return [f for f in complete if f["category"] in KNOWLEDGE_TYPES]
 
     def finish_compaction(self, old_ids: set[int], summary_text: str) -> bool:
         """Replace the summarized exchanges with a single summary exchange.

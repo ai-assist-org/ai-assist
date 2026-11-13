@@ -1,0 +1,8 @@
+expected_tools:
+  - "transform"
+forbidden_tools:
+  - "execute_skill_script"
+forbid_python_pipe: true
+notes: |
+  Parsing and counting a file: the agent should use internal__transform (a short
+  Python payload over the file, no permission prompt) instead of python3 -c or awk.

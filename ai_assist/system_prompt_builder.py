@@ -176,6 +176,15 @@ class SystemPromptBuilder:
             prompt += "  4. Reduce the scope (smaller limit, narrower date range, more specific query)\n"
             prompt += "- Always tell the user when you're working with truncated data\n\n"
 
+        prompt += "## Text processing\n\n"
+        prompt += (
+            "To parse, count, filter or reshape a file, use `internal__transform` with a short Python "
+            "payload instead of `python3 -c`, awk, or `| cut | sort | uniq` pipelines: it needs no "
+            "permission prompt. The payload gets `text`, `lines` and `path`, and preloaded modules "
+            "(re, json, csv, collections, datetime...); print the result. To process another tool's "
+            "result, save it first with `__save_to_file`.\n\n"
+        )
+
         if agent.json_tools.jq_path:
             prompt += "## JSON Processing\n\n"
             prompt += "For inline filtering, use `__jq_filter` on any tool call — no file needed. "

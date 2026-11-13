@@ -63,6 +63,7 @@ from .tool_result_router import (
     _extract_data_items,  # noqa: F401  (re-exported for tests)
     _resolve_dotpath,  # noqa: F401  (re-exported for tests)
 )
+from .transform_tools import TransformTools
 from .web_tools import WebTools
 
 if TYPE_CHECKING:
@@ -126,7 +127,12 @@ _CONTENT_BLOCK_KEYS = {
 
 # Internal tools (besides MCP tools) allowed to use __save_to_file. Mirrors the
 # "selected internal tools" wording in system_prompt_builder.py.
-_SAVE_TO_FILE_ALLOWED_INTERNAL = {"internal__execute_command", "internal__json_query", "internal__web_fetch"}
+_SAVE_TO_FILE_ALLOWED_INTERNAL = {
+    "internal__execute_command",
+    "internal__json_query",
+    "internal__transform",
+    "internal__web_fetch",
+}
 
 # JSON schema fragments for the special redirection/filtering parameters
 # documented in system_prompt_builder.py. These are popped from `arguments` in
@@ -467,6 +473,7 @@ class AiAssistAgent:
 
         # Initialize JSON query tool (requires jq)
         self.json_tools = JsonTools(filesystem_tools=self.filesystem_tools)
+        self.transform_tools = TransformTools(self.filesystem_tools, self.redactor)
 
         # Initialize jev decision tool (only offered when jev is configured)
         self.jev_tools = JevTools(config)
@@ -755,6 +762,9 @@ class AiAssistAgent:
         # Add think tool (planning/reasoning scratchpad)
         think_tool_defs = self.think_tool.get_tool_definitions()
         self.available_tools.extend(think_tool_defs)
+
+        # Add the transform tool (short Python payloads over a file, instead of python3 -c / awk)
+        self.available_tools.extend(self.transform_tools.get_tool_definitions())
 
         # Add JSON query tool (requires jq installed)
         json_tool_defs = self.json_tools.get_tool_definitions()
@@ -3074,6 +3084,7 @@ class AiAssistAgent:
                 script_tools = ["execute_skill_script"]
                 think_tools = ["think"]
                 json_tool_names = ["json_query"]
+                transform_tool_names = ["transform"]
                 jev_tool_names = ["jev_decide", "jev_choose", "jev_score"]
                 web_tool_names = ["web_search", "web_fetch"]
                 schedule_action_tools = ["schedule_action"]
@@ -3113,6 +3124,8 @@ class AiAssistAgent:
                     result_text = await self.task_result_tool.execute_tool(original_tool_name, arguments)
                 elif original_tool_name in json_tool_names:
                     result_text = await self.json_tools.execute_tool(original_tool_name, arguments)
+                elif original_tool_name in transform_tool_names:
+                    result_text = await self.transform_tools.execute_tool(original_tool_name, arguments)
                 elif original_tool_name in jev_tool_names:
                     result_text = await self.jev_tools.execute_tool(original_tool_name, arguments)
                 elif original_tool_name in web_tool_names:

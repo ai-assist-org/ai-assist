@@ -357,13 +357,17 @@
       command. An inline script is code an agent wrote because no tool did
       the job. Judge each purpose:
         * existing_tool: an internal tool or an allowlisted command already
-          does it (json: internal__json_query or jq; yaml: yq; regex
-          extraction: internal__search_in_file output=only_matching; awk
-          fields / filters: search or json tools; file-write:
-          internal__edit_file / internal__write_file) — a habit;
-        * tool_candidate: a recurring, safe purpose no tool covers (e.g.
-          reading CSV or Parquet tables, date arithmetic): describe the
-          tool in one line;
+          does it — a habit. internal__transform runs a short Python payload
+          over one file with re, json, csv, yaml (safe), datetime,
+          collections, statistics... preloaded: it covers parsing, counting,
+          regex extraction, CSV/YAML/JSON reshaping and awk fields /
+          aggregates over a file. Also: json: internal__json_query or jq;
+          regex search: internal__search_in_file; file-write:
+          internal__edit_file / internal__write_file;
+        * tool_candidate: a recurring, safe purpose no tool covers, not even
+          internal__transform (it needs no network, no other file, no
+          process: e.g. reading a Parquet table, which has no preloaded
+          module): describe the tool in one line;
         * one_off: an exploration or a one-time transformation;
         * unsafe: it would be dangerous as a tool (subprocess, network,
           writes outside the workspace).

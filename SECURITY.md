@@ -16,6 +16,7 @@ ai-assist implements defense-in-depth with multiple security layers:
 8. **Command/path allowlists** — restricts filesystem and command access
 9. **Command argument validation** — validates paths in `cd`/`find` and parameters in `python`/`python3`
 10. **Plugin trust model** — untrusted plugin skills scanned; bundled MCP servers confirmed before connecting
+11. **Transform tool confinement** — `internal__transform` payloads run guarded by RestrictedPython in a kernel-confined process
 
 ## 1. Prompt Injection Detection
 
@@ -453,6 +454,30 @@ start. Only install plugins from sources you trust.
 | Network access from scripts | No restriction (relies on system firewall) |
 | CPU/memory exhaustion in scripts | No cgroup limits (future) |
 | Filesystem access from scripts | Same permissions as ai-assist process |
+
+## 10. Transform Tool Confinement
+
+`internal__transform` runs a short Python payload over one file, so agents do not need
+`python3 -c` (which can never be "always allowed", since it runs arbitrary code). The payload can
+parse, count and reshape the file's text; it cannot load a module beyond the preloaded ones (an
+`import` of those is a no-op), open a file, write, start a process or reach the network.
+
+| Layer | What it does |
+|-------|--------------|
+| **ai-assist reads the file** | The path goes through the same checks as `internal__read_file`; the content is redacted, then given to the payload as `text` / `lines`. The payload never opens a file. |
+| **RestrictedPython** | The payload is compiled with RestrictedPython: `import` only returns a preloaded module's namespace, no name or attribute starting with `_`, no frame-inspection attributes (`gi_frame`, `f_back`...), no `str.format`. Modules (`re`, `json`, `csv`, `yaml` safe functions...) are given as their public names only, never as module objects. |
+| **Kernel confinement of the child** | The payload runs in a separate process that, once its input is read and its modules loaded, confines itself for good. Linux: Landlock (no file access at all, so no further module can be loaded; no TCP) and seccomp (no `socket`, `execve`, `ptrace`, `bpf`, io_uring). macOS: the process is started under `sandbox-exec` (no network, no new process, no write, no read in the home directory outside Python). |
+| **Limits** | No file growth, no new process, CPU and memory limits, empty environment, empty working directory, 30-second timeout, 50 MB input. |
+
+Python-level restrictions alone are not a boundary: an escape from RestrictedPython would still
+find a process that cannot read, write, connect or run anything. Where the kernel confinement is
+unavailable (an old kernel, another system), the tool still runs with the other layers and says
+so in its result; `ai-assist /doctor` reports the confinement in use.
+
+`internal__execute_command` does not ask the user about inline code over a file named on its
+command line (`awk '…' file`, `perl -ne '…' file`, `python3 -c '…' < file`): it refuses it and
+points the agent to `internal__transform` on that file. Inline code fed by a pipe still asks;
+AWL- or action-authorized commands and the sandbox's autonomous mode are unaffected.
 
 ## Best Practices
 
