@@ -1,0 +1,5 @@
+prompt: "Roughly how far is it by road from New York City to Boston?"
+knowledge:
+  - entity_type: user_preference
+    key: distance-units
+    content: "The user always wants distances in kilometers, never in miles."

@@ -59,7 +59,7 @@ class SystemPromptBuilder:
 
         lines = [f"# Recent Notifications ({len(recent)} in the last {max_age_minutes} min)\n"]
         lines.append(
-            "The /monitor process reported the following. You can reference this information if the user asks about it.\n"
+            "The /monitor process reported the following. You can reference this information if the user asks about it; when you do, say it comes from a /monitor notification and give its time.\n"
         )
         for entry in recent:
             level = entry.get("level", "info").upper()
@@ -76,15 +76,15 @@ class SystemPromptBuilder:
         """Build complete system prompt including identity and skills
 
         Returns:
-            System prompt as a list of content blocks. The static block has
-            cache_control set so Anthropic can cache it across requests. The
-            dynamic block (KG learnings / auto-context) is query-specific and
-            is not cached.
+            System prompt as a single content block, with cache_control set so
+            Anthropic can cache it across requests and queries. It must not
+            carry anything that changes between queries: the clock,
+            notifications and KG context go in _build_query_context instead.
         """
         agent = self._agent
 
         # Start with identity prompt
-        identity_prompt = agent.identity.get_system_prompt()
+        identity_prompt = agent.identity.get_system_prompt(include_datetime=False)
 
         # Add skills section
         skills_section = agent.skills_manager.get_system_prompt_section()
@@ -92,12 +92,6 @@ class SystemPromptBuilder:
         prompt = identity_prompt
         if skills_section:
             prompt += f"\n\n{skills_section}"
-
-        # Add recent notifications context
-        if agent.interactive_mode:
-            notifications_section = self._get_recent_notifications_context()
-            if notifications_section:
-                prompt += f"\n\n{notifications_section}"
 
         # Add planning guidance
         prompt += "\n\n# Planning\n\n"
@@ -269,25 +263,30 @@ class SystemPromptBuilder:
         # Static block with cache_control so Anthropic caches it across requests.
         # Omit cache_control entirely for endpoints that don't support ephemeral caching.
         if agent.config.enable_prompt_caching:
-            blocks: list[TextBlockParam] = [
-                TextBlockParam(type="text", text=prompt, cache_control={"type": "ephemeral"})
-            ]
-        else:
-            blocks = [TextBlockParam(type="text", text=prompt)]
+            return [TextBlockParam(type="text", text=prompt, cache_control={"type": "ephemeral"})]
+        return [TextBlockParam(type="text", text=prompt)]
 
-        # Dynamic block: KG learnings and auto-context are query-specific, not cached
+    def _build_query_context(self) -> str:
+        """Context that changes between queries, sent with the user's turn.
+
+        Clock, recent notifications and KG learnings / auto-context. Kept out of
+        the system prompt because anything before the conversation that changes
+        invalidates the prompt cache for the whole conversation.
+        """
+        agent = self._agent
+        parts = [agent.identity.get_datetime_line()]
+        if agent.interactive_mode:
+            notifications_section = self._get_recent_notifications_context()
+            if notifications_section:
+                parts.append(notifications_section)
         if agent.knowledge_graph and not agent._no_kg:
-            dynamic_parts: list[str] = []
             learnings = self._get_kg_learnings_section()
             if learnings:
-                dynamic_parts.append(learnings)
+                parts.append(learnings)
             auto_context = self._get_kg_auto_context_section()
             if auto_context:
-                dynamic_parts.append(auto_context)
-            if dynamic_parts:
-                blocks.append(TextBlockParam(type="text", text="\n\n".join(dynamic_parts)))
-
-        return blocks
+                parts.append(auto_context)
+        return "\n\n".join(part.strip() for part in parts)
 
     def _get_kg_learnings_section(self) -> str:
         """Fetch synthesized learnings from KG for system prompt injection.

@@ -1,0 +1,17 @@
+{
+  "turns": [
+    {
+      "content": [
+        {
+          "type": "text",
+          "text": "Thursday"
+        }
+      ],
+      "stop_reason": "end_turn",
+      "usage": {
+        "input_tokens": 43,
+        "output_tokens": 4
+      }
+    }
+  ]
+}

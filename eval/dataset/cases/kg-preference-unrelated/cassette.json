@@ -1,0 +1,17 @@
+{
+  "turns": [
+    {
+      "content": [
+        {
+          "type": "text",
+          "text": "Crimson flames descend,\nWhispered gold on cold wind rides\u2014\nEarth drinks the last light."
+        }
+      ],
+      "stop_reason": "end_turn",
+      "usage": {
+        "input_tokens": 113,
+        "output_tokens": 27
+      }
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+expected_tools: []
+# The answer must say it comes from the /monitor notification
+response_contains_any:
+  - "notification"
+  - "monitor"
+response_contains_all:
+  - "sdb1"

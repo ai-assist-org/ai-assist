@@ -206,6 +206,12 @@ _NARRATION_CALL_CHARS = 300
 _NARRATION_MAX_CALLS = 40
 _NARRATION_REPLY_CHARS = 6_000
 
+_QUERY_CONTEXT_HEADER = "# Context for this request (added by ai-assist, not typed by the user)"
+
+
+def _is_query_context_block(block: Any) -> bool:
+    return isinstance(block, dict) and str(block.get("text", "")).startswith(_QUERY_CONTEXT_HEADER)
+
 
 def _bounded_text(text: str, limit: int) -> str:
     """Keep the head and tail of ``text`` within ``limit`` characters."""
@@ -1438,12 +1444,23 @@ class AiAssistAgent:
             "usable_tokens": usable_tokens,
         }
 
-    def _track_token_usage(self, response, turn: int):
+    @staticmethod
+    def _prefix_sha(tools: Any, system: Any) -> str:
+        """Fingerprint the cacheable request prefix (tools, then system).
+
+        Recorded per turn so a trace can tell a cache miss caused by changed
+        prefix bytes from one where the cache simply was not there.
+        """
+        payload = json.dumps([tools, system], sort_keys=True, default=str)
+        return hashlib.sha256(payload.encode()).hexdigest()[:12]
+
+    def _track_token_usage(self, response, turn: int, prefix_sha: str | None = None):
         """Record token usage from an API response.
 
         Args:
             response: API response with usage field
             turn: Current turn number (0-indexed)
+            prefix_sha: Fingerprint of the request's tools + system, see _prefix_sha
         """
         import logging
 
@@ -1470,6 +1487,9 @@ class AiAssistAgent:
         # Track service tier if available (SDK 0.105+)
         if hasattr(usage, "service_tier") and usage.service_tier:
             entry["service_tier"] = usage.service_tier
+
+        if prefix_sha:
+            entry["prefix_sha"] = prefix_sha
 
         try:
             entry["cost_usd"] = compute_turn_cost(
@@ -1693,7 +1713,13 @@ class AiAssistAgent:
                 blocks = list(content)
             else:
                 continue
-            blocks[-1] = {**blocks[-1], "cache_control": {"type": "ephemeral"}}
+            # Mark the user's own text, not the per-query context after it: the
+            # next query's history holds the plain text, and a cache entry only
+            # hits where the next request has a breakpoint at the same position.
+            target = len(blocks) - 1
+            if target > 0 and _is_query_context_block(blocks[target]):
+                target -= 1
+            blocks[target] = {**blocks[target], "cache_control": {"type": "ephemeral"}}
             result[i] = {**result[i], "content": blocks}
         return result
 
@@ -1773,6 +1799,29 @@ class AiAssistAgent:
 
     def _build_system_prompt(self) -> list[TextBlockParam]:
         return self.system_prompt_builder._build_system_prompt()
+
+    def _build_query_context(self) -> str:
+        return self.system_prompt_builder._build_query_context()
+
+    @staticmethod
+    def _with_query_context(messages: list, context: str) -> list:
+        """Append per-query context to the last user turn, without touching the caller's dicts.
+
+        Only this query's request carries it: the history saved for the next
+        query keeps the user's own text, so earlier exchanges stay cache hits.
+        """
+        if not context or not messages or messages[-1].get("role") != "user":
+            return messages
+        last = messages[-1]
+        content = last.get("content")
+        if isinstance(content, str):
+            blocks: list = [{"type": "text", "text": content}]
+        elif isinstance(content, list):
+            blocks = list(content)
+        else:
+            return messages
+        blocks.append({"type": "text", "text": f"{_QUERY_CONTEXT_HEADER}\n\n{context}"})
+        return [*messages[:-1], {**last, "content": blocks}]
 
     def _apply_no_kg_prefix(self, text: str) -> str:
         """Detect @no-kg and @no-history prefixes, set flags, strip prefixes, return clean text.
@@ -2099,9 +2148,9 @@ class AiAssistAgent:
             # Build once per query, not per turn: models with mandatory extended
             # thinking (e.g. Opus 5.5, Sonnet 5.5) bind a thinking block's signature
             # to the exact system prompt it was produced with, and reject the next
-            # turn outright if the system prompt changed (it's rebuilt with live
-            # state like recent-notifications context, which drifts over time).
+            # turn outright if the system prompt changed.
             system_prompt = self._build_system_prompt()
+            messages = self._with_query_context(messages, self._build_query_context())
 
             # Reset token tracking for this query
             self._turn_token_usage = []
@@ -2318,7 +2367,9 @@ class AiAssistAgent:
                         self._record_query_event("model_completed", turn=turn + 1)
 
                         # Track token usage
-                        self._track_token_usage(final_message, turn)
+                        self._track_token_usage(
+                            final_message, turn, prefix_sha=self._prefix_sha(turn_tools, system_prompt)
+                        )
 
                         if getattr(final_message, "stop_reason", None) == "refusal":
                             self._last_turn_count = turn + 1

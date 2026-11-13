@@ -375,3 +375,14 @@ def test_save_and_load_enhanced_identity():
         assert loaded.assistant.personality == "Custom personality here."
         assert loaded.preferences.verbosity == "verbose"
         assert loaded.preferences.emoji_usage == "liberal"
+
+
+def test_system_prompt_can_omit_datetime():
+    """The cached system prompt omits the clock; the date line is available on its own"""
+    identity = Identity(user=UserIdentity(name="Fred", timezone="UTC"))
+    prompt = identity.get_system_prompt(include_datetime=False)
+    assert "Today is" not in prompt
+    assert "current time is" not in prompt
+    assert re.search(
+        r"^Today is \w+, \d{4}-\d{2}-\d{2}\. The current time is \d{2}:\d{2}\.$", identity.get_datetime_line()
+    )

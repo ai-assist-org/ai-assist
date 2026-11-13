@@ -116,11 +116,45 @@ judges:
         return False, f"Report tool called with path-like name(s): {bad}"
       return True, "No report tool called with a path-like name"
 
+  - name: response_content
+    description: Verify the response text against the case's expected and forbidden content
+    check: |
+      import os
+      from datetime import date, timedelta
+      annotations = outputs.get("annotations", {})
+      files = outputs.get("files", {})
+      text = next((v for k, v in files.items() if "response.txt" in k), "").lower()
+      expected = [s.lower() for s in annotations.get("response_contains_any", [])]
+      # A replayed answer carries the recording day's date
+      live = os.environ.get("AI_ASSIST_EVAL_MODE", "live").lower() != "replay"
+      if live and annotations.get("expect_weekday"):
+        expected.append(date.today().strftime("%A").lower())
+      if live and "expect_date_offset_days" in annotations:
+        expected.append((date.today() + timedelta(days=annotations["expect_date_offset_days"])).isoformat())
+      required = [s.lower() for s in annotations.get("response_contains_all", [])]
+      excluded = [s.lower() for s in annotations.get("response_excludes", [])]
+      if not expected and not required and not excluded:
+        return True, "No response content specified"
+      if expected and not any(e in text for e in expected):
+        return False, f"Response contains none of {expected}"
+      missing = [r for r in required if r not in text]
+      if missing:
+        return False, f"Response lacks {missing}"
+      found = [e for e in excluded if e in text]
+      if found:
+        return False, f"Response contains excluded {found}"
+      return True, "Response content as expected"
+
   - name: response_quality
     description: Evaluate if the response is coherent and addresses the prompt
     feedback_type: bool
     prompt: |
       The user asked the AI assistant: {{ inputs.prompt }}
+      {% if inputs.knowledge or inputs.notifications %}
+      Besides the prompt, the agent was given this context (it may answer from it without calling tools):
+      {% for k in inputs.knowledge or [] %}- stored {{ k.entity_type }}: {{ k.content }}
+      {% endfor %}{% for n in inputs.notifications or [] %}- recent /monitor notification [{{ n.level }}] {{ n.title }}: {{ n.message }}
+      {% endfor %}{% endif %}
 
       The agent responded:
       {{ outputs.files['output/response.txt'] }}

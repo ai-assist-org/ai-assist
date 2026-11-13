@@ -43,6 +43,7 @@ The eval suite tests **tool selection from natural language** — the gap not co
 |-------|------|---------------|
 | `tool_selection` | check | Agent called at least one expected tool (substring match on tool name) |
 | `no_wrong_category` | check | Agent did not call tools from a forbidden category |
+| `response_content` | check | Response contains/excludes the annotated content (see Response checks) |
 | `response_quality` | LLM | Response is coherent and addresses the prompt (requires Claude Code CLI; skipped with `--no-llm-judges` or if `claude` is not installed) |
 
 ## How It Works
@@ -85,6 +86,10 @@ fixtures/
 ```
 
 The `fixtures/` directory is copied into the workspace root, so `fixtures/reports/status.md` becomes accessible at the `AI_ASSIST_REPORTS_DIR` path.
+
+**Context seeding** (optional `input.yaml` fields): `knowledge:` (list of `entity_type`/`key`/`content`) is inserted into the case's KG, and `notifications:` (list of `level`/`title`/`message`) is written as recent `/monitor` notifications, with the agent in interactive mode so it sees them.
+
+**Response checks** (optional `annotations.yaml` fields, judged by `response_content`): `response_contains_any` (case-insensitive, at least one), `response_contains_all` (every one), `response_excludes` (none), `expect_weekday: true` (today's weekday) and `expect_date_offset_days: N` (today + N days as `YYYY-MM-DD`). The two date checks are skipped in replay, since a cassette holds the recording day's answer.
 
 ## Output
 
