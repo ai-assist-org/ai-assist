@@ -692,7 +692,7 @@ except Exception as e:
 
 All external dependencies in CI, pre-commit hooks, and container images must be pinned by immutable SHA or digest rather than mutable tags. Tags can be reassigned to different commits (supply-chain attack vector).
 
-**GitHub Actions** — pin to commit SHA with a `# vX.Y.Z` comment:
+**GitHub Actions** — pin to commit SHA with a `# vX.Y.Z` comment (enforced by the `check-action-pins` pre-commit hook, `scripts/check_action_pins.py`):
 ```yaml
 - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
 ```
