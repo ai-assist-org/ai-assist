@@ -1869,7 +1869,8 @@ class FilesystemTools:
                     "alternation and \\d work as with grep -E). Returns matching lines with line numbers. "
                     "Use it instead of grep on files: grep -n is the default, -i is ignore_case, -v invert, "
                     "-c output=count, -o output=only_matching, -l output=files, -A/-B/-C context, "
-                    "-r a directory path (with glob for --include), | head max_results. "
+                    "-r a directory path (with glob for --include), | head max_results, "
+                    "awk 'length > 100' pattern='.{101,}' (with output=count for just the number). "
                     "A directory search skips hidden directories, binary and secret files. "
                     "Line ranges search part of one file (e.g. the last 100 lines with line_start=-100)."
                 ),

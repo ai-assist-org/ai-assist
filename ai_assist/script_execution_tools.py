@@ -87,7 +87,10 @@ class ScriptExecutionTools:
             Script output or error message
         """
         if not self.enabled:
-            return "Error: Script execution is disabled. Enable with allow_skill_script_execution=true"
+            return (
+                "Error: Skill script execution is disabled for this instance. The user can enable it with "
+                "AI_ASSIST_ALLOW_SCRIPT_EXECUTION=true in the instance's .env file, then a restart."
+            )
 
         skill_name = arguments.get("skill_name")
         script_name = arguments.get("script_name")

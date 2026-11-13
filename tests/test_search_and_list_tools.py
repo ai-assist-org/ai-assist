@@ -171,3 +171,19 @@ async def test_directory_with_no_searchable_file(tools, tree):
     (tree / "empty").mkdir()
     out = await search(tools, path=str(tree / "empty"), pattern="x")
     assert out == "No matches found for pattern: x in 0 file(s)"
+
+
+# --- line length: awk 'length > 100' ---
+
+
+async def test_long_lines_with_a_length_pattern(tools, tree):
+    lines = ["a" * 100, "b" * 101, "c" * 500, "d" * 101 + "\r"]
+    (tree / "wide.txt").write_bytes("\n".join(lines).encode() + b"\n")
+    out = await search(tools, path=str(tree / "wide.txt"), pattern=".{101,}")
+    numbers = sorted(int(m) for m in re.findall(r"^(\d+):", out, re.MULTILINE))
+    assert numbers == [2, 3, 4], out
+
+
+def test_description_teaches_the_line_length_pattern(tools):
+    [definition] = [t for t in tools.get_tool_definitions() if t["name"] == "internal__search_in_file"]
+    assert ".{101,}" in definition["description"] and "output=count" in definition["description"]
