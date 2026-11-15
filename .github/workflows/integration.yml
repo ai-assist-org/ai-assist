@@ -35,11 +35,20 @@ jobs:
       - name: Build sandbox images
         run: make sandbox-build-dev DCI_MCP_SERVER_DIR=dci-mcp-server
 
+      # The sandbox's ssh feature mounts ~/.ssh and the agent socket (empty key-less agent)
+      - name: Set up an ssh agent
+        run: |
+          mkdir -p ~/.ssh && touch ~/.ssh/config ~/.ssh/known_hosts
+          eval "$(ssh-agent -s)"
+          echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK" >> "$GITHUB_ENV"
+
+      # Coverage of the integration tests alone is informative: the 71% gate is for the full suite
       - name: Run integration tests with coverage
         run: >-
           uv run pytest tests/test_sandbox_integration.py -v -m integration
           --override-ini="addopts="
           --cov=ai_assist --cov-report=term --cov-report=xml:coverage-integration.xml
+          --cov-fail-under=0
 
       - name: Upload coverage report
         if: always()
