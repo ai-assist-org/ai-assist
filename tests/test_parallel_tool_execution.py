@@ -47,6 +47,8 @@ class TestExecuteToolsConcurrently:
         agent._tool_result_cache = {}
         agent._duplicate_tool_call_count = 0
         agent._recent_tool_calls_for_loop = []
+        # Registered at connect time in production; needed to tell reads from writes
+        agent.available_tools.extend(agent.filesystem_tools.get_tool_definitions())
         return agent
 
     @pytest.mark.asyncio
@@ -238,6 +240,67 @@ class TestExecuteToolsConcurrently:
         _, loop_detected = await agent._execute_tools_concurrently(blocks)
 
         assert loop_detected is False
+
+    @pytest.mark.asyncio
+    async def test_write_invalidates_cached_reads(self, agent):
+        """A read repeated after a write re-executes and sees the new content."""
+        content = {"text": "before"}
+
+        async def mock_execute(name, args):
+            if name == "internal__edit_file":
+                content["text"] = "after"
+                return "edited"
+            return content["text"]
+
+        agent._execute_tool = mock_execute
+        search = {"path": "notes.md", "pattern": "x"}
+
+        await agent._execute_tools_concurrently([FakeBlock("tool_use", "internal__search_in_file", "1", search)])
+        await agent._execute_tools_concurrently(
+            [FakeBlock("tool_use", "internal__edit_file", "2", {"path": "notes.md"})]
+        )
+        results, _ = await agent._execute_tools_concurrently(
+            [FakeBlock("tool_use", "internal__search_in_file", "3", search)]
+        )
+
+        assert "\nafter\n" in results[0]["content"]
+
+    @pytest.mark.asyncio
+    async def test_read_write_cycle_not_loop_flagged(self, agent):
+        """Re-checking a file between edits is not a loop."""
+
+        async def mock_execute(name, args):
+            return "ok"
+
+        agent._execute_tool = mock_execute
+        search = {"path": "notes.md", "pattern": "x"}
+        loop_flags = []
+        for i in range(3):
+            for name, args in (("internal__search_in_file", search), ("internal__edit_file", {"new": str(i)})):
+                _, loop_detected = await agent._execute_tools_concurrently([FakeBlock("tool_use", name, "id", args)])
+                loop_flags.append(loop_detected)
+
+        assert not any(loop_flags)
+
+    @pytest.mark.asyncio
+    async def test_identical_writes_still_loop_flagged(self, agent):
+        """The same write repeated with reads in between is still a loop."""
+
+        async def mock_execute(name, args):
+            return "ok"
+
+        agent._execute_tool = mock_execute
+        edit = {"path": "notes.md", "new": "same"}
+        loop_detected = False
+        for i in range(3):
+            await agent._execute_tools_concurrently(
+                [FakeBlock("tool_use", "internal__search_in_file", "r", {"pattern": str(i)})]
+            )
+            _, loop_detected = await agent._execute_tools_concurrently(
+                [FakeBlock("tool_use", "internal__edit_file", "w", edit)]
+            )
+
+        assert loop_detected
 
     @pytest.mark.asyncio
     async def test_cancel_event_stops_execution(self, agent):
