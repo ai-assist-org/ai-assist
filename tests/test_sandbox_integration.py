@@ -6,6 +6,7 @@ Skip with: pytest -m "not integration"
 
 import os
 import subprocess
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -41,6 +42,11 @@ skip_no_dci_image = pytest.mark.skipif(
     not _has_image("dci-mcp-server:latest"),
     reason="dci-mcp-server image not built (run: make sandbox-build)",
 )
+# The ssh feature mounts ~/.ssh and the agent socket: both must exist on the host (CI sets them up)
+skip_no_ssh_setup = pytest.mark.skipif(
+    not (Path.home() / ".ssh").is_dir() or not os.path.exists(os.environ.get("SSH_AUTH_SOCK", "")),
+    reason="needs ~/.ssh and a running ssh-agent (SSH_AUTH_SOCK)",
+)
 skip_no_dev_image = pytest.mark.skipif(
     not _has_image("ai-assist-dev:latest"),
     reason="ai-assist-dev image not built (run: make sandbox-build-dev)",
@@ -73,10 +79,26 @@ def sandbox_instance(tmp_path):
 
 
 @pytest.fixture
+def sandbox_instance_ssh(tmp_path):
+    """Create a sandbox instance with the ssh feature (opt-in) and clean up after."""
+    with patch.dict("os.environ", {"AI_ASSIST_INSTANCES_DIR": str(tmp_path)}):
+        sandbox_init("integration-test", features={"ssh"})
+        instance = tmp_path / "integration-test"
+        (instance / ".env").write_text("ANTHROPIC_API_KEY=\n")
+        yield instance
+        subprocess.run(
+            [*_compose_cmd(instance), "down", "--remove-orphans"],
+            cwd=instance,
+            capture_output=True,
+            check=False,
+        )
+
+
+@pytest.fixture
 def sandbox_instance_no_dci(tmp_path):
     """Create a sandbox instance without DCI and clean up after."""
     with patch.dict("os.environ", {"AI_ASSIST_INSTANCES_DIR": str(tmp_path)}):
-        sandbox_init("integration-test", features={"ssh", "git"})
+        sandbox_init("integration-test", features=set())
         instance = tmp_path / "integration-test"
         (instance / ".env").write_text("ANTHROPIC_API_KEY=\n")
         yield instance
@@ -235,8 +257,9 @@ class TestHostConfigMounts:
         )
         assert "MISSING" not in result.stdout or "No such file" not in result.stdout
 
-    def test_ssh_config_mounted(self, sandbox_instance):
-        compose = _compose_cmd(sandbox_instance)
+    @skip_no_ssh_setup
+    def test_ssh_config_mounted(self, sandbox_instance_ssh):
+        compose = _compose_cmd(sandbox_instance_ssh)
         result = subprocess.run(
             [
                 *compose,
@@ -248,7 +271,7 @@ class TestHostConfigMounts:
                 "-c",
                 "test -d /host-config/ssh && echo OK || echo MISSING",
             ],
-            cwd=sandbox_instance,
+            cwd=sandbox_instance_ssh,
             capture_output=True,
             text=True,
             check=False,
