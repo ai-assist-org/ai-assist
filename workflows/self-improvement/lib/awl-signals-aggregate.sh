@@ -64,8 +64,11 @@ trap 'rm -rf "$snap_dir" "$raw_out"' EXIT
 for f in "${files[@]}"; do
   cp "$f" "$snap_dir/" 2>/dev/null || true
 done
-audit="$cfg/audit/tool_calls.jsonl"
-if [ -f "$audit" ]; then cp "$audit" "$snap_dir/" 2>/dev/null || true; fi
+# the audit log is rotated by size (tool_calls-<timestamp>.jsonl, oldest first by
+# name): join the rotated files and the live one, in order, so the window is complete
+for f in "$cfg"/audit/tool_calls-*.jsonl "$cfg/audit/tool_calls.jsonl"; do
+  if [ -f "$f" ]; then cat "$f" >> "$snap_dir/tool_calls.jsonl" 2>/dev/null || true; fi
+done
 # chronological order: dated files (ai-assist.log.YYYY-MM-DD) first, the
 # current ai-assist.log last, so time-based signals (duplicate starts,
 # reload bursts) never see time going backwards between files.

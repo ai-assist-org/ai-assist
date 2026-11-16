@@ -130,6 +130,14 @@ All tool calls are logged with:
 - Result text
 - Success/failure status
 - Timestamp
+- `correlation_id`: unique per call; each executed call (refused ones included)
+  has exactly one record, so request → authorization → action → result is one line
+- `authorization`: the verdict that let the call run or stopped it —
+  `decision` (`autonomous` / `approved` / `refused`) and `rule` (the policy:
+  `MCP tool: no approval gate`, `internal tool, permission_mode=…`,
+  `command-policy`, `path-policy`, `protected-config`, `plan-mode`,
+  `<kind>-confirmation`…); approvals add `approver` and the `questions` asked,
+  refusals the `reason`
 - `confirmations`: for calls that prompted the user, the question shown and the
   decision (`approved`/`denied`), so the audit entry is self-contained
 
@@ -142,7 +150,20 @@ All tool calls are logged with:
 hijacked agent cannot rewrite or delete its own trail. Reads are still allowed
 (e.g. an action that greps `ai-assist.log`). The legitimate writers
 (`AuditLogger`, the logging handler) write these files directly, not through the
-agent tools, so logging is unaffected. The audit directory is created `0700`.
+agent tools, so logging is unaffected. The audit directory is created `0700`
+and log files `0600`.
+
+**Append-only and retention:** records are only ever appended. When
+`tool_calls.jsonl` reaches 10 MB (`MAX_LOG_BYTES`) it is renamed to
+`tool_calls-<timestamp>.jsonl` (still `0600`) and a new file is started; at
+startup, rotated files last written more than 7 days ago are deleted. The live
+file is never rewritten.
+
+**Second copy:** set `AI_ASSIST_AUDIT_SINK=/path/outside/the/config/dir` to
+append every record to that file too (also write-protected from the agent's
+tools). If it cannot be written, the tool call still runs and the record in
+`tool_calls.jsonl` carries `"sink_unavailable": true`. This protects against the
+agent's tools, not against anything else running as the same user.
 
 The decision is also logged to `ai-assist.log` (`Security prompt: …
 approved/denied by user`). **Known gap:** a permanent allowlist add ("always")

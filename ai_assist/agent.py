@@ -29,7 +29,7 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.extension import NotificationBinding
 
 from .action_tools import ActionTools
-from .audit import AuditLogger
+from .audit import AuditLogger, audited_call, record_authorization_event
 from .config import NO_TIME_LIMIT, AiAssistConfig, MCPChannelConfig, MCPServerConfig, get_config_dir
 from .effort import effort_output_config
 from .event_source_mcp import EVENT_NOTIFICATION_METHOD, MCPEventEnvelope
@@ -3001,11 +3001,23 @@ class AiAssistAgent:
         """Parse 'name', 'name:format', or 'name:format:N' for __collect_to_report."""
         return ToolResultRouter.parse_collect_param(value)
 
+    def _audit_tool_call(self, tool_name: str, arguments: dict, result: str, success: bool) -> None:
+        """Write the audit record of a tool call, naming the policy that let it run unprompted."""
+        server = tool_name.split("__", 1)[0]
+        if server == "internal":
+            rule = f"internal tool, permission_mode={self.filesystem_tools.permission_mode}"
+        elif server in ("introspection", "goal"):
+            rule = f"{server} tool: no approval gate"
+        else:
+            rule = "MCP tool: no approval gate"
+        self.audit_logger.log_tool_call(tool_name, arguments, result, success=success, rule=rule)
+
     async def _execute_tool(self, tool_name: str, arguments: dict) -> str:
         """Execute a tool call, wrapped in an MLflow child span (no-op when disabled)."""
         span = start_tool_span(tool_name, arguments, self._mlflow_root_span)
         try:
-            result = await self._execute_tool_impl(tool_name, arguments)
+            with audited_call():
+                result = await self._execute_tool_impl(tool_name, arguments)
             end_span(span, outputs=result)
             return result
         except BaseException:
@@ -3036,10 +3048,15 @@ class AiAssistAgent:
             from .plan_mode import is_planning_tool
 
             tool_def = next((t for t in self.available_tools if t["name"] == tool_name), None)
+            refusal = None
             if tool_def is None or not is_planning_tool(tool_def):
-                return f"Error: {tool_name} is not available in plan mode (read-only tools only)."
-            if save_to_file or write_to_report or append_to_report or collect_to_report:
-                return "Error: Saving results to files or reports is not available in plan mode."
+                refusal = f"Error: {tool_name} is not available in plan mode (read-only tools only)."
+            elif save_to_file or write_to_report or append_to_report or collect_to_report:
+                refusal = "Error: Saving results to files or reports is not available in plan mode."
+            if refusal:
+                record_authorization_event("plan-mode", refusal, "refused")
+                self._audit_tool_call(tool_name, arguments, refusal, success=False)
+                return refusal
         if save_to_file and tool_name.startswith("internal__") and tool_name not in _SAVE_TO_FILE_ALLOWED_INTERNAL:
             logger.warning("Ignoring __save_to_file on %s", tool_name)
             save_to_file = None
@@ -3048,6 +3065,8 @@ class AiAssistAgent:
             # Same checks as internal__write_file, before the tool runs
             write_error = await self.filesystem_tools.validate_write_target(save_to_file)
             if write_error:
+                record_authorization_event("save-to-file", write_error, "refused")
+                self._audit_tool_call(tool_name, arguments, write_error, success=False)
                 return write_error
         if write_to_report:
             logger.info("Tool %s called with __write_to_report=%s", tool_name, write_to_report)
@@ -3112,7 +3131,7 @@ class AiAssistAgent:
                     }
                 )
 
-                self.audit_logger.log_tool_call(tool_name, arguments, result_text, success=True)
+                self._audit_tool_call(tool_name, arguments, result_text, success=True)
 
                 redirect = self.tool_result_router.handle_result_redirection(
                     result_text, save_to_file, write_to_report, append_to_report
@@ -3123,7 +3142,7 @@ class AiAssistAgent:
                 return result_text
             except Exception as e:
                 error_msg = f"Error executing introspection tool {original_tool_name}: {str(e)}"
-                self.audit_logger.log_tool_call(tool_name, arguments, error_msg, success=False)
+                self._audit_tool_call(tool_name, arguments, error_msg, success=False)
                 return error_msg
 
         # Handle goal tools (autonomous agent goals)
@@ -3143,11 +3162,11 @@ class AiAssistAgent:
                     }
                 )
 
-                self.audit_logger.log_tool_call(tool_name, arguments, result_text, success=True)
+                self._audit_tool_call(tool_name, arguments, result_text, success=True)
                 return result_text
             except Exception as e:
                 error_msg = f"Error executing goal tool {original_tool_name}: {str(e)}"
-                self.audit_logger.log_tool_call(tool_name, arguments, error_msg, success=False)
+                self._audit_tool_call(tool_name, arguments, error_msg, success=False)
                 return error_msg
 
         # Handle internal tools (report management, schedule management, filesystem, etc.)
@@ -3269,12 +3288,11 @@ class AiAssistAgent:
                 )
 
                 is_success = not (isinstance(result_text, str) and result_text.startswith("Error:"))
-                self.audit_logger.log_tool_call(
+                self._audit_tool_call(
                     tool_name,
                     arguments,
                     result_text,
                     success=is_success,
-                    confirmations=self.filesystem_tools.drain_confirmations(),
                 )
 
                 redirect = self.tool_result_router.handle_result_redirection(
@@ -3286,7 +3304,7 @@ class AiAssistAgent:
                 return result_text
             except Exception as e:
                 error_msg = f"Error executing internal tool {original_tool_name}: {str(e)}"
-                self.audit_logger.log_tool_call(tool_name, arguments, error_msg, success=False)
+                self._audit_tool_call(tool_name, arguments, error_msg, success=False)
                 return error_msg
 
         # Handle regular MCP server tools
@@ -3301,12 +3319,12 @@ class AiAssistAgent:
                 summary = await self.tool_result_router.collect_paginated_to_report(
                     server_name, original_tool_name, arguments, collect_to_report
                 )
-                self.audit_logger.log_tool_call(tool_name, arguments, summary, success=not summary.startswith("Error"))
+                self._audit_tool_call(tool_name, arguments, summary, success=not summary.startswith("Error"))
                 return summary
             except Exception:
                 logger.exception("Error collecting paginated results for %s", tool_name)
                 error_msg = f"Error collecting paginated results for {tool_name}"
-                self.audit_logger.log_tool_call(tool_name, arguments, error_msg, success=False)
+                self._audit_tool_call(tool_name, arguments, error_msg, success=False)
                 return error_msg
 
         session = self.sessions[server_name]
@@ -3336,7 +3354,7 @@ class AiAssistAgent:
                         "timestamp": datetime.now(),
                     }
                 )
-                self.audit_logger.log_tool_call(tool_name, arguments, error_msg, success=False)
+                self._audit_tool_call(tool_name, arguments, error_msg, success=False)
                 return error_msg
 
             # Apply __jq_filter before recording/logging/KG storage so they reflect
@@ -3361,7 +3379,7 @@ class AiAssistAgent:
             if self.knowledge_graph and self.kg_save_enabled:
                 await self._save_tool_result_to_kg(tool_name, original_tool_name, arguments, result_text)
 
-            self.audit_logger.log_tool_call(tool_name, arguments, result_text, success=True)
+            self._audit_tool_call(tool_name, arguments, result_text, success=True)
 
             redirect = self.tool_result_router.handle_result_redirection(
                 result_text, save_to_file, write_to_report, append_to_report
@@ -3372,7 +3390,7 @@ class AiAssistAgent:
             return result_text
         except Exception as e:
             error_msg = f"Error executing tool {original_tool_name}: {str(e)}"
-            self.audit_logger.log_tool_call(tool_name, arguments, error_msg, success=False)
+            self._audit_tool_call(tool_name, arguments, error_msg, success=False)
             return error_msg
 
     async def _save_tool_result_to_kg(self, tool_name: str, original_tool_name: str, arguments: dict, result_text: str):

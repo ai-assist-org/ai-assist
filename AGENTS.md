@@ -87,6 +87,8 @@ Files: `awl_parser.py` (parser), `awl_runtime.py` (executor), `awl_ast.py` (AST 
 
 Commands written in backticks are auto-authorized only for scripts the user started: `/run`, an action whose prompt is the script, or (`is_trusted_by_action` in `awl_executor.py`) a script named by the confirmed prompt of the running action. When such a named script fails, the action is reported as failed even if the agent carries on. The audit log attributes each tool call to its script and task (`AuditLogger.task_context`, entered by `AWLRuntime`).
 
+Each `_execute_tool` call runs inside `audited_call()` (`audit.py`, a `ContextVar`, so concurrent calls stay separate): it gives the call its `correlation_id`, collects the authorization events (`record_authorization_event` — prompts via `FilesystemTools._record_confirmation`, policy refusals of paths, commands and protected configs, plan mode) and lets one record through per call. New refusal paths must record an event, or the call is logged as `autonomous`. See SECURITY.md §6 for the record format, rotation and `AI_ASSIST_AUDIT_SINK`.
+
 See `docs/AWL_SPECIFICATIONS.md` for complete syntax.
 
 ### Knowledge Graph
@@ -333,6 +335,7 @@ Files: `background_tasks.py`, `background_task_tools.py`
 - `state/` - Monitor states and cache
 - `allowed_commands.json` - User-approved shell commands
 - `skill_env.json` - Per-skill env var allowlists
+- `audit/tool_calls.jsonl` - Append-only tool-call audit trail, rotated at 10 MB, rotated files kept 7 days
 - `traces/query_traces.jsonl` - Per-query traces with token usage and cost (100-day retention)
 - `events.jsonl` - Event bridge (monitor→interactive IPC)
 - `interactive_history.txt` - Command history

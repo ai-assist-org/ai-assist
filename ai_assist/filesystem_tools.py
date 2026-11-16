@@ -16,6 +16,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from .audit import AUDIT_SINK_ENV, record_authorization_event
 from .config import AiAssistConfig, get_config_dir
 from .redaction import REDACT_CONFIG_FILE, filter_sensitive_env
 from .security import MCP_TOOL_DEFINITIONS_FILE
@@ -1005,9 +1006,12 @@ _VIRTUAL_FS_ROOTS = frozenset({"proc", "sys", "dev"})
 
 
 def audit_protected_dirs() -> list[Path]:
-    """ai-assist's own audit trail and logs: the agent may read but never write them."""
+    """ai-assist's own audit trail, its sink and logs: the agent may read but never write them."""
     config_dir = get_config_dir()
-    return [config_dir / "audit", config_dir / "logs"]
+    protected = [config_dir / "audit", config_dir / "logs"]
+    if os.getenv(AUDIT_SINK_ENV):
+        protected.append(Path(os.environ[AUDIT_SINK_ENV]).expanduser())
+    return protected
 
 
 def is_audit_protected_path(path: Path) -> bool:
@@ -1651,7 +1655,6 @@ class FilesystemTools:
         self.confirmation_callback: Callable[[str], Awaitable[bool]] | None = None
         self.path_confirmation_callback: Callable[[str], Awaitable[bool]] | None = None
         self.awl_authorized_commands: set[str] = set()
-        self._confirmations: list[dict] = []
         self._saved_outputs = 0  # command outputs saved by _save_full_output
         # question -> the allowlist entry that permits it (None: cannot be allowed
         # permanently); see allowlist_entry_for
@@ -1759,7 +1762,20 @@ class FilesystemTools:
                 return True
         return False
 
+    @staticmethod
+    def _protected_config_refusal(path: str) -> str:
+        error = f"Error: {Path(path).name} is a protected security config file and cannot be modified by the agent."
+        record_authorization_event("protected-config", error, "refused")
+        return error
+
     async def _validate_path(self, path_str: str, reason: str | None = None, for_write: bool = False) -> str | None:
+        """Validate a path (see _check_path), recording a refusal for the audit trail."""
+        error = await self._check_path(path_str, reason, for_write)
+        if error:
+            record_authorization_event("path-policy", error, "refused")
+        return error
+
+    async def _check_path(self, path_str: str, reason: str | None = None, for_write: bool = False) -> str | None:
         """Validate that a path is within allowed directories.
         Falls back to path_confirmation_callback if path is blocked.
 
@@ -2072,7 +2088,6 @@ class FilesystemTools:
         Returns:
             Tool result as string
         """
-        self._confirmations = []
         if tool_name == "read_file":
             return await self._read_file(arguments)
         elif tool_name == "search_in_file":
@@ -2091,13 +2106,8 @@ class FilesystemTools:
             return f"Error: Unknown filesystem tool: {tool_name}"
 
     def _record_confirmation(self, kind: str, question: str, decision: str) -> None:
-        """Record a security prompt and its answer for the audit trail (see drain_confirmations)."""
-        self._confirmations.append({"kind": kind, "question": question[:500], "decision": decision})
-
-    def drain_confirmations(self) -> list[dict]:
-        """Return confirmation events since the last drain and clear the buffer."""
-        events, self._confirmations = self._confirmations, []
-        return events
+        """Record a security prompt and its answer for the audit record of the current tool call."""
+        record_authorization_event(kind, question, decision)
 
     def allowlist_entry_for(self, question: str) -> str | None:
         """The allowlist entry that would permit what a question asked, for an "always allow" answer.
@@ -2131,8 +2141,6 @@ class FilesystemTools:
         """Ask the user to approve an action; refused when nobody can be asked."""
         if self.permission_mode == "autonomous":
             return True
-        if self.confirmation_callback is None:
-            return False
         return await self._ask_command(description)
 
     async def _check_confirmation(self, tool_full_name: str, description: str) -> str | None:
@@ -2892,7 +2900,7 @@ class FilesystemTools:
         Returns an error message if the write is not allowed, None otherwise.
         """
         if self._is_protected_config(path):
-            return f"Error: {Path(path).name} is a protected security config file and cannot be modified by the agent."
+            return self._protected_config_refusal(path)
 
         path_error = await self._validate_path(path, for_write=True)
         if path_error:
@@ -2940,7 +2948,7 @@ class FilesystemTools:
             return "Error: old_string and new_string are identical"
 
         if self._is_protected_config(path):
-            return f"Error: {Path(path).name} is a protected security config file and cannot be modified by the agent."
+            return self._protected_config_refusal(path)
 
         for check in (
             await self._validate_path(path, for_write=True),
@@ -3055,29 +3063,14 @@ class FilesystemTools:
 
         return output
 
-    async def _execute_command(self, args: dict) -> str:
-        """Execute a command with allowlist enforcement"""
-        command = args.get("command")
-        working_dir = args.get("working_directory")
-        timeout = args.get("timeout", 30)
-
-        if not command:
-            return "Error: command parameter is required"
-
+    async def _command_policy_error(self, command: str, working_dir: str | None) -> str | None:
+        """Why the policy refuses to run a command (asking the user when needed), None when allowed."""
         # Block commands that write protected security config files (reading them is fine)
         for cmd_name, path in _extract_command_argument_paths(command, working_dir):
             if cmd_name in _WRITE_TARGET_SOURCES and self._is_protected_config(path):
                 return (
                     f"Error: {Path(path).name} is a protected security config file and cannot be modified by the agent."
                 )
-
-        # In interactive mode (confirmation_callback set), no timeout -- the user
-        # can press Escape to interrupt like any normal interaction.
-        # In non-interactive mode, enforce a timeout to prevent runaway commands.
-        if self.confirmation_callback is not None:
-            timeout = None
-        else:
-            timeout = min(timeout, 300)  # Max 5 minutes
 
         cmd_names = extract_command_names(command)
 
@@ -3130,8 +3123,29 @@ class FilesystemTools:
             arg_error = await self._validate_command_arguments(
                 command, was_auto_allowed and not awl_confirmed, working_dir
             )
-        if arg_error:
-            return arg_error
+        return arg_error
+
+    async def _execute_command(self, args: dict) -> str:
+        """Execute a command with allowlist enforcement"""
+        command = args.get("command")
+        working_dir = args.get("working_directory")
+        timeout = args.get("timeout", 30)
+
+        if not command:
+            return "Error: command parameter is required"
+
+        error = await self._command_policy_error(command, working_dir)
+        if error:
+            record_authorization_event("command-policy", error, "refused")
+            return error
+
+        # In interactive mode (confirmation_callback set), no timeout -- the user
+        # can press Escape to interrupt like any normal interaction.
+        # In non-interactive mode, enforce a timeout to prevent runaway commands.
+        if self.confirmation_callback is not None:
+            timeout = None
+        else:
+            timeout = min(timeout, 300)  # Max 5 minutes
 
         try:
             cwd = None
