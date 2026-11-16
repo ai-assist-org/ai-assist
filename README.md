@@ -1190,6 +1190,18 @@ In interactive mode, `/model` and `/effort` show or change the session values:
 `/model claude-opus-4-6:high`, `/effort low`, and `/effort auto` to restore the
 model-associated default.
 
+### Progressive Disclosure of Tools
+
+Tool definitions are most of what is sent to the model on every turn: an instance with a
+few MCP servers has about 200 tools, roughly 120k tokens. So only the core tools (shell,
+files, reports, knowledge, web, ...) are sent in full; every other tool is listed by name
+and one-line summary, and the model reads its parameters (`introspection__get_tool_help`)
+and calls it (`introspection__call_tool`) when it needs it. Skills work the same way: only
+their front matter is in the system prompt.
+
+This is on by default and needs no configuration. Set `AI_ASSIST_DEFER_TOOLS=false` to
+send every tool in full.
+
 ### Capturing Model Requests (debugging)
 
 When the model answers something odd (ignores the question, loses the thread), set

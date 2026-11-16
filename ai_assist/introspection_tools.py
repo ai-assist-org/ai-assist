@@ -1065,7 +1065,7 @@ Do NOT compact if you still need the old tool results for your current task.
                     {
                         "tool_name": tool_name,
                         "description": tool.get("_full_description", tool["description"]),
-                        "input_schema": tool["input_schema"],
+                        "input_schema": self.agent.schema_as_sent(tool, bool(self.agent.json_tools.jq_path)),
                     },
                     indent=2,
                 )

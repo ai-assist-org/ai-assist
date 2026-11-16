@@ -66,6 +66,7 @@ from .synthesis_engine import SynthesisEngine
 from .system_prompt_builder import SystemPromptBuilder
 from .task_result_tool import TaskResultTool
 from .think_tool import ThinkTool
+from .tool_disclosure import call_tool_definition, split_tools, unwrap
 from .tool_result_router import (
     ToolResultRouter,
     _extract_data_items,  # noqa: F401  (re-exported for tests)
@@ -1339,11 +1340,31 @@ class AiAssistAgent:
             truncated = truncated[:last_space]
         return truncated + "..."
 
+    @staticmethod
+    def schema_as_sent(tool: dict, jq_available: bool) -> dict:
+        """A tool's input schema with the special parameters it supports (__jq_filter, ...).
+
+        Advertised in the schema (instead of prose alone) so the model can reliably
+        discover and use them — see _meta_params_for_tool.
+        """
+        input_schema = tool["input_schema"]
+        meta_params = _meta_params_for_tool(tool["name"], jq_available)
+        if not meta_params:
+            return input_schema
+        return {
+            **input_schema,
+            "properties": {
+                **input_schema.get("properties", {}),
+                **{p: _META_PARAM_SCHEMAS[p] for p in meta_params},
+            },
+        }
+
     def _build_api_tools(self) -> list[dict]:
         """Build tool definitions for the Claude API with progressive disclosure.
 
-        Long MCP tool descriptions are truncated to save context tokens.
-        The model can call introspection__get_tool_help to get full documentation.
+        With defer_tools, only the core tools are sent; the others are listed in the
+        introspection__call_tool proxy (see tool_disclosure). Long MCP tool descriptions
+        are truncated; introspection__get_tool_help gives the full documentation.
 
         Returns:
             List of tool dicts with name, description, input_schema
@@ -1355,6 +1376,9 @@ class AiAssistAgent:
             source_tools = get_planning_tools(self.available_tools)
         if self.task_result_tool.active:
             source_tools = [*source_tools, *self.task_result_tool.get_tool_definitions()]
+        deferred: list[dict] = []
+        if self.config.defer_tools:
+            source_tools, deferred = split_tools(source_tools)
 
         jq_available = bool(self.json_tools.jq_path)
         api_tools = []
@@ -1368,26 +1392,15 @@ class AiAssistAgent:
                     self._truncate_description(full_desc) + " Use introspection__get_tool_help for full documentation."
                 )
 
-            input_schema = tool["input_schema"]
-            meta_params = _meta_params_for_tool(tool["name"], jq_available)
-            if meta_params:
-                # Advertise these in the schema (instead of prose alone) so the model
-                # can reliably discover and use them — see _meta_params_for_tool.
-                input_schema = {
-                    **input_schema,
-                    "properties": {
-                        **input_schema.get("properties", {}),
-                        **{p: _META_PARAM_SCHEMAS[p] for p in meta_params},
-                    },
-                }
-
             api_tools.append(
                 {
                     "name": tool["name"],
                     "description": desc,
-                    "input_schema": input_schema,
+                    "input_schema": self.schema_as_sent(tool, jq_available),
                 }
             )
+        if deferred:
+            api_tools.append(call_tool_definition(deferred))
         return api_tools
 
     def _model_for(self, role: str) -> str:
@@ -3009,29 +3022,36 @@ class AiAssistAgent:
         if cancel_event and cancel_event.is_set():
             return [], False
 
+        # Calls through the introspection__call_tool proxy run as the real tool from here on
+        known = {t["name"] for t in self.available_tools}
+        calls = [unwrap(block.name, block.input, known) for block in tool_blocks]
+
         # Compute signatures and separate cached from uncached
         import hashlib
 
         signatures: list[str] = []
-        for block in tool_blocks:
-            sig = f"{block.name}:{hashlib.md5(json.dumps(block.input, sort_keys=True).encode(), usedforsecurity=False).hexdigest()[:8]}"
+        for name, arguments, _ in calls:
+            sig = f"{name}:{hashlib.md5(json.dumps(arguments, sort_keys=True).encode(), usedforsecurity=False).hexdigest()[:8]}"
             signatures.append(sig)
 
         # Execute uncached tools concurrently
-        async def _run_one(block, sig):
+        async def _run_one(call, sig):
+            name, arguments, error = call
+            if error:
+                return error
             # Repeatable (poll-safe) tools bypass the cache so each call re-executes.
-            repeatable = self._is_repeatable_tool(block.name)
+            repeatable = self._is_repeatable_tool(name)
             if not repeatable and sig in self._tool_result_cache:
                 self._duplicate_tool_call_count += 1
                 return self._tool_result_cache[sig]
-            self._record_query_event("tool_started", turn=turn + 1, tool_name=block.name)
+            self._record_query_event("tool_started", turn=turn + 1, tool_name=name)
             try:
-                result = await self._execute_tool(block.name, block.input)
+                result = await self._execute_tool(name, arguments)
             except Exception as exc:
-                self._record_query_event("tool_failed", turn=turn + 1, tool_name=block.name, detail=type(exc).__name__)
+                self._record_query_event("tool_failed", turn=turn + 1, tool_name=name, detail=type(exc).__name__)
                 raise
-            self._record_query_event("tool_completed", turn=turn + 1, tool_name=block.name)
-            if self._is_write_tool(block.name):
+            self._record_query_event("tool_completed", turn=turn + 1, tool_name=name)
+            if self._is_write_tool(name):
                 # Reads cached before this write may no longer be accurate
                 self._tool_result_cache.clear()
             elif not repeatable:
@@ -3039,21 +3059,19 @@ class AiAssistAgent:
             return result
 
         if progress_callback:
-            for block in tool_blocks:
-                progress_callback("executing_tool", turn + 1, max_turns, block.name)
+            for name, _, _ in calls:
+                progress_callback("executing_tool", turn + 1, max_turns, name)
 
-        results = await asyncio.gather(
-            *[_run_one(block, sig) for block, sig in zip(tool_blocks, signatures, strict=False)]
-        )
+        results = await asyncio.gather(*[_run_one(call, sig) for call, sig in zip(calls, signatures, strict=False)])
 
         # Build tool_results in original order
         tool_results: list[dict[str, Any]] = []
         loop_detected = False
-        for block, sig, result in zip(tool_blocks, signatures, results, strict=False):
+        for block, (name, arguments, _), sig, result in zip(tool_blocks, calls, signatures, results, strict=False):
             is_error = isinstance(result, str) and result.startswith("Error:")
             # All tool output is data, not instructions: mark it with per-call markers
-            path = block.input.get("path") if isinstance(block.input, dict) else None
-            label = f"{block.name} path={path}" if path else block.name
+            path = arguments.get("path") if isinstance(arguments, dict) else None
+            label = f"{name} path={path}" if path else name
             content, _ = sanitize_tool_result(result, label) if isinstance(result, str) else (result, [])
             tool_result: dict[str, Any] = {
                 "type": "tool_result",
@@ -3066,9 +3084,9 @@ class AiAssistAgent:
 
             # Loop detection — skipped for tools marked repeatable (e.g. async status
             # polls like apify__get-actor-run, expected to be called until they finish).
-            if self._is_repeatable_tool(block.name):
+            if self._is_repeatable_tool(name):
                 continue
-            if self._is_write_tool(block.name):
+            if self._is_write_tool(name):
                 # Re-running a read after a write is a check, not a loop; repeated writes still count
                 self._recent_tool_calls_for_loop = [
                     s for s in self._recent_tool_calls_for_loop if self._is_write_tool(s.split(":", 1)[0])

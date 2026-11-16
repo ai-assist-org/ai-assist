@@ -428,6 +428,11 @@ class AiAssistConfig(BaseModel):
         default_factory=lambda: os.getenv("AI_ASSIST_ENABLE_CACHE", "true").lower() == "true",
     )
 
+    # Progressive disclosure of tools: send the core tools, list the others (see tool_disclosure).
+    defer_tools: bool = Field(
+        default_factory=lambda: os.getenv("AI_ASSIST_DEFER_TOOLS", "true").lower() == "true",
+    )
+
     # Save each model request and its response under traces/requests/ (debugging; holds whole conversations).
     capture_model_requests: bool = Field(
         default_factory=lambda: os.getenv("AI_ASSIST_CAPTURE_MODEL_REQUESTS", "false").lower() == "true",
@@ -719,6 +724,7 @@ class AiAssistConfig(BaseModel):
             model_tier_efforts=_env_model_tier_efforts(),
             model_tiers=_env_model_tiers(),
             enable_prompt_caching=os.getenv("AI_ASSIST_ENABLE_CACHE", "true").lower() == "true",
+            defer_tools=os.getenv("AI_ASSIST_DEFER_TOOLS", "true").lower() == "true",
             capture_model_requests=os.getenv("AI_ASSIST_CAPTURE_MODEL_REQUESTS", "false").lower() == "true",
             enable_mlflow=os.getenv("AI_ASSIST_ENABLE_MLFLOW", "false").lower() == "true",
             mlflow_tracking_uri=os.getenv("MLFLOW_TRACKING_URI"),
