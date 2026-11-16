@@ -177,3 +177,24 @@ async def test_http_error_limits_provider_message():
     with _patch_client(_FakeClient(response=resp)), pytest.raises(JevError) as exc:
         await jev_decide(_config(), state="s", questions={"q": noul("?")})
     assert len(str(exc.value)) < 600
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "fake",
+    [
+        _FakeClient(post_exc=httpx.ConnectError("[Errno -3] Temporary failure in name resolution")),
+        _FakeClient(post_exc=httpx.TimeoutException("slow")),
+        _FakeClient(
+            response=httpx.Response(
+                200, content=b"not json", request=httpx.Request("POST", "https://example.test/api/v1/systemone")
+            )
+        ),
+    ],
+    ids=["connect", "timeout", "invalid_json"],
+)
+async def test_failures_are_logged_once_by_the_caller(fake, caplog):
+    """The caller logs the JevError, whose traceback includes the cause: logging here too doubled it."""
+    with _patch_client(fake), pytest.raises(JevError):
+        await jev_decide(_config(), state="s", questions={"q": noul("?")})
+    assert not caplog.records

@@ -90,11 +90,10 @@ async def jev_decide(config: Any, state: str, questions: dict[str, dict[str, Any
         if detail:
             message += f": {detail}"
         raise JevError(message) from e
+    # No logging here: callers log the JevError, and its traceback includes the cause.
     except (httpx.ConnectError, httpx.TimeoutException) as e:
-        logger.exception("jev request failed to connect")
         raise JevError(f"jev connection error: {e}") from e
     except ValueError as e:  # includes JSONDecodeError
-        logger.exception("jev returned invalid JSON")
         raise JevError("jev returned invalid JSON") from e
 
 
