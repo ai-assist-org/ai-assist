@@ -2,6 +2,7 @@
 
 import ssl
 
+import anthropic
 import httpx2
 import pytest
 
@@ -65,6 +66,38 @@ async def test_dropped_stream_is_retried(make_replay_agent, error):
 
     assert await agent.query("Hello") == "All good."
     assert calls["count"] == 2
+
+
+def _status_error(status: int, error_type: str) -> anthropic.APIStatusError:
+    """An API error as the SDK raises it; status 200 means it arrived mid-stream as an SSE event."""
+    body = {"type": "error", "error": {"type": error_type, "message": "upstream failure"}}
+    response = httpx2.Response(status, request=httpx2.Request("POST", "https://api.example.com/v1/messages"))
+    return anthropic.APIStatusError(str(body), response=response, body=body)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error_type", ["api_error", "overloaded_error"])
+async def test_mid_stream_api_error_is_retried(make_replay_agent, error_type):
+    agent = await make_replay_agent([_text("All good.")])
+    calls = _drop_first_streams(agent, [_status_error(200, error_type)])
+
+    assert await agent.query("Hello") == "All good."
+    assert calls["count"] == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "error",
+    [_status_error(200, "invalid_request_error"), _status_error(400, "api_error")],
+    ids=["mid_stream_invalid_request", "http_status"],
+)
+async def test_other_api_errors_are_not_retried(make_replay_agent, error):
+    agent = await make_replay_agent([_text("never reached")])
+    calls = _drop_first_streams(agent, [error])
+
+    with pytest.raises(QueryAPIError):
+        await agent.query("Hello", raise_on_api_error=True)
+    assert calls["count"] == 1
 
 
 @pytest.mark.asyncio

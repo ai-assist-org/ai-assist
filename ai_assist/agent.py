@@ -15,7 +15,15 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-from anthropic import Anthropic, AnthropicVertex, APIConnectionError, APIError, BadRequestError, RateLimitError
+from anthropic import (
+    Anthropic,
+    AnthropicVertex,
+    APIConnectionError,
+    APIError,
+    APIStatusError,
+    BadRequestError,
+    RateLimitError,
+)
 from anthropic.types import TextBlockParam
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.extension import NotificationBinding
@@ -96,18 +104,27 @@ _FINAL_TURN_REPORT = (
 # Waits before retrying a model turn whose stream dropped mid-reply; one entry
 # per retry. The SDK's own retries only cover failures before the response starts.
 _STREAM_RETRY_BACKOFF_SECONDS = (1, 3)
+# Error types sent as an SSE event mid-stream that a fresh attempt can clear
+_TRANSIENT_STREAM_ERROR_TYPES = {"api_error", "overloaded_error"}
 
 
 def _is_transient_stream_error(exc: BaseException) -> bool:
-    """Whether ``exc`` (or an exception it wraps) is a dropped connection worth retrying.
+    """Whether ``exc`` (or an exception it wraps) is a dropped stream worth retrying.
 
     Matches transport errors by class name so both httpx and its httpx2 fork
-    (used by the Anthropic SDK) are covered without importing either.
+    (used by the Anthropic SDK) are covered without importing either. Also
+    matches server-side errors sent as an SSE event after the stream opened
+    (HTTP 200): the SDK's own retries only cover the initial request.
     """
     current: BaseException | None = exc
     while current is not None:
         if isinstance(current, ssl.SSLError | ConnectionError):
             return True
+        if isinstance(current, APIStatusError) and current.status_code == 200:
+            body = current.body if isinstance(current.body, dict) else {}
+            error = body.get("error")
+            if isinstance(error, dict) and error.get("type") in _TRANSIENT_STREAM_ERROR_TYPES:
+                return True
         if any(cls.__name__ == "TransportError" for cls in type(current).__mro__):
             return True
         current = current.__cause__ or current.__context__
