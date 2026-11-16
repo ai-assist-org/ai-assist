@@ -108,6 +108,20 @@ _STREAM_RETRY_BACKOFF_SECONDS = (1, 3)
 _TRANSIENT_STREAM_ERROR_TYPES = {"api_error", "overloaded_error"}
 
 
+# Values a model sends to mean "not set" for a __ meta-parameter
+_UNSET_META_VALUES = frozenset({"", "false", "null", "none"})
+
+
+def _meta_param(arguments: dict, key: str):
+    """Pop a __ meta-parameter; None when absent or a "not set" value (False, "false", "null", "")."""
+    value = arguments.pop(key, None)
+    if value is None or value is False:
+        return None
+    if isinstance(value, str) and value.strip().lower() in _UNSET_META_VALUES:
+        return None
+    return value
+
+
 def _is_transient_stream_error(exc: BaseException) -> bool:
     """Whether ``exc`` (or an exception it wraps) is a dropped stream worth retrying.
 
@@ -1673,6 +1687,69 @@ class AiAssistAgent:
                         item["content"] = "[Result already retrieved]"
 
     @staticmethod
+    def _message_chars(message: dict) -> int:
+        """Size of a message's content, as counted against the total-messages budget."""
+        content = message.get("content", "")
+        if isinstance(content, str):
+            return len(content)
+        total = 0
+        for block in content if isinstance(content, list) else []:
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") == "text":
+                total += len(block.get("text", ""))
+            elif block.get("type") == "tool_result":
+                total += len(str(block.get("content", "")))
+            elif block.get("type") == "tool_use":
+                total += len(json.dumps(block.get("input", {})))
+        return total
+
+    @staticmethod
+    def _is_user_text_turn(message: dict) -> bool:
+        """A user message that starts an exchange (not tool results)."""
+        if message.get("role") != "user":
+            return False
+        content = message.get("content")
+        if isinstance(content, str):
+            return True
+        return isinstance(content, list) and not any(
+            isinstance(b, dict) and b.get("type") == "tool_result" for b in content
+        )
+
+    @classmethod
+    def _trim_oldest_messages(cls, messages: list, max_chars: int, protect_from: int) -> int:
+        """Drop the oldest exchanges in place until the messages fit in max_chars.
+
+        Whole exchanges only: the list keeps starting on a user text turn, so no
+        tool_result is left without its tool_use. Messages from index protect_from
+        on (the current query's question and its turns) are never dropped, even if
+        they alone exceed the budget.
+
+        Returns:
+            Number of messages removed from the front
+        """
+        total = sum(cls._message_chars(m) for m in messages)
+        removed = 0
+        while total > max_chars and removed < protect_from:
+            # Drop up to the next user text turn (or the protected question)
+            end = removed + 1
+            while end < protect_from and not cls._is_user_text_turn(messages[end]):
+                end += 1
+            total -= sum(cls._message_chars(m) for m in messages[removed:end])
+            removed = end
+        if removed:
+            del messages[:removed]
+            logger.info(
+                "History over budget: dropped the %d oldest messages (%d chars left, limit %d)",
+                removed,
+                total,
+                max_chars,
+            )
+        if total > max_chars:
+            logger.warning("Current query alone exceeds the message budget (%d > %d chars)", total, max_chars)
+        return removed
+
+    @staticmethod
     def _has_thinking_block(messages: list) -> bool:
         """Check whether any assistant message already contains a thinking block.
 
@@ -2185,6 +2262,8 @@ class AiAssistAgent:
 
             # Store messages for introspection tools to access
             self._conversation_messages = messages
+            # This query's user turn: history trimming never drops it or what follows
+            query_start = len(messages) - 1
 
             # Time-based timeout for streaming queries (only when explicitly set)
             start_time = time.time()
@@ -2303,9 +2382,8 @@ class AiAssistAgent:
                                 total_chars += (
                                     len(block.get("content", "")) if isinstance(block.get("content"), str) else 0
                                 )
-                while total_chars > MAX_TOTAL_MESSAGE_CHARS and len(messages) > 2 and not thinking_block_present:
-                    messages.pop(0)
-                    total_chars = sum(len(str(m.get("content", ""))) for m in messages)
+                if total_chars > MAX_TOTAL_MESSAGE_CHARS and not thinking_block_present:
+                    query_start -= self._trim_oldest_messages(messages, MAX_TOTAL_MESSAGE_CHARS, query_start)
 
                 # Newer models reject assistant "prefill": the request must end with a
                 # user message. Log the culprit's role sequence, and add a user turn.
@@ -3027,11 +3105,11 @@ class AiAssistAgent:
         """
 
         # Extract special redirection parameters before validation
-        save_to_file = arguments.pop("__save_to_file", None)
-        write_to_report = arguments.pop("__write_to_report", None)
-        append_to_report = arguments.pop("__append_to_report", None)
-        collect_to_report = arguments.pop("__collect_to_report", None)
-        jq_filter = arguments.pop("__jq_filter", None)
+        save_to_file = _meta_param(arguments, "__save_to_file")
+        write_to_report = _meta_param(arguments, "__write_to_report")
+        append_to_report = _meta_param(arguments, "__append_to_report")
+        collect_to_report = _meta_param(arguments, "__collect_to_report")
+        jq_filter = _meta_param(arguments, "__jq_filter")
         if self.plan_mode:
             from .plan_mode import is_planning_tool
 
