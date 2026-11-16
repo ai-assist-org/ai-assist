@@ -32,7 +32,7 @@ eval = [
 ]
 docs = [
     "mkdocs-material>=9.8.0",
-    "pymdown-extensions>=12.3",
+    "pymdown-extensions>=13.1",
 ]
 dev = [
     "pytest>=9.2.0",
