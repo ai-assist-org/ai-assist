@@ -2,14 +2,13 @@
 
 ai-assist validates and reads the file, redacts it, and hands the text to a child process
 (`transform_harness`) that runs the payload with RestrictedPython and preloaded modules only, after
-confining itself with the kernel (Landlock + seccomp on Linux; on macOS it is started under
-sandbox-exec): the payload cannot import, open a file, write, spawn or reach the network.
+confining itself with the kernel (Landlock + seccomp on Linux, Seatbelt on macOS): the payload
+cannot import, open a file, write, spawn or reach the network.
 """
 
 import asyncio
 import json
 import logging
-import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -25,35 +24,11 @@ INPUT_CAP = 50 * 1024 * 1024
 HARNESS = [sys.executable, "-I", "-m", "ai_assist.transform_harness"]
 
 
-def _sandbox_profile() -> str:
-    """macOS sandbox-exec profile: no network, process, write, nor read in $HOME outside Python."""
-
-    def quoted(path: str) -> str:
-        return '"' + path.replace("\\", "\\\\").replace('"', '\\"') + '"'
-
-    readable = {sys.prefix, sys.base_prefix, str(Path(__file__).resolve().parent.parent)}
-    allowed = " ".join(f"(subpath {quoted(p)})" for p in sorted(readable))
-    return (
-        "(version 1)\n(allow default)\n(deny network*)\n(deny process-exec*)\n(deny process-fork)\n"
-        f"(deny file-write*)\n(deny file-read* (subpath {quoted(str(Path.home()))}))\n"
-        f"(allow file-read* {allowed})\n"
-    )
-
-
-def child_command() -> tuple[list[str], bool]:
-    """The command starting the harness, and whether it runs under sandbox-exec (macOS)."""
-    sandbox_exec = shutil.which("sandbox-exec") if sys.platform == "darwin" else None
-    if sandbox_exec:
-        return [sandbox_exec, "-p", _sandbox_profile(), *HARNESS], True
-    return list(HARNESS), False
-
-
 async def run_child(request: dict[str, Any], timeout: float) -> dict | str:
     """Run the harness in a child process; its JSON result, or an error text."""
-    command, sandboxed = child_command()
     with tempfile.TemporaryDirectory(prefix="ai-assist-transform-") as cwd:
         proc = await asyncio.create_subprocess_exec(
-            *command,
+            *HARNESS,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -61,7 +36,7 @@ async def run_child(request: dict[str, Any], timeout: float) -> dict | str:
             env={},
             start_new_session=True,
         )
-        payload = json.dumps({**request, "sandboxed": sandboxed}).encode()
+        payload = json.dumps(request).encode()
         try:
             stdout, stderr = await asyncio.wait_for(proc.communicate(payload), timeout)
         except TimeoutError:

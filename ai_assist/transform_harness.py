@@ -7,7 +7,8 @@ Two layers. The payload is compiled by RestrictedPython: no `_`-prefixed or fram
 attributes, no str.format, no imports; modules are given as namespaces of their public names only.
 And before running it, the process confines itself with the kernel (Landlock on Linux): no file
 access at all, so no further module can be loaded either (no socket, no ctypes), no TCP, no new
-process. The second layer is what makes a payload that escapes the first one harmless.
+process. On macOS, Seatbelt: no network, no new process, no write, no read in the home directory
+outside Python's own files. The second layer is what makes a payload that escapes the first one harmless.
 """
 
 import ast
@@ -32,6 +33,7 @@ import textwrap
 import traceback
 import types
 import warnings
+from pathlib import Path
 
 import yaml
 from RestrictedPython import PrintCollector, compile_restricted, safe_builtins
@@ -296,11 +298,41 @@ def _deny_syscalls(libc: ctypes.CDLL) -> str | None:
     return None
 
 
-def lock_down(sandboxed: bool = False) -> str:
+def _seatbelt_profile() -> str:
+    """macOS Seatbelt profile: no network, process, write, nor read in $HOME outside Python."""
+
+    def quoted(path: str) -> str:
+        return '"' + path.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+    readable = {sys.prefix, sys.base_prefix, str(Path(__file__).resolve().parent.parent)}
+    allowed = " ".join(f"(subpath {quoted(p)})" for p in sorted(readable))
+    return (
+        "(version 1)\n(allow default)\n(deny network*)\n(deny process-exec*)\n(deny process-fork)\n"
+        f"(deny file-write*)\n(deny file-read* (subpath {quoted(str(Path.home()))}))\n"
+        f"(allow file-read* {allowed})\n"
+    )
+
+
+def _seatbelt_lock_down() -> str:
+    """Apply the Seatbelt profile to this process, for good (what sandbox-exec does before exec).
+
+    Done here rather than with sandbox-exec: Python has started by now, so the venv resolution
+    and the re-spawn by a framework build's launcher are not caught by the profile.
+    """
+    libsystem = ctypes.CDLL("/usr/lib/libSystem.B.dylib")
+    error = ctypes.c_char_p()
+    if libsystem.sandbox_init(_seatbelt_profile().encode(), ctypes.c_uint64(0), ctypes.byref(error)) != 0:
+        message = (error.value or b"unknown error").decode(errors="replace")
+        libsystem.sandbox_free_error(error)
+        return f"unavailable: sandbox_init failed: {message}"
+    return "seatbelt: no network, no new process, no file write, no read in the home directory"
+
+
+def lock_down() -> str:
     """Confine this process for good; describe the confinement, or why there is none."""
     _limit_resources()
-    if sandboxed:  # macOS: started under sandbox-exec by transform_tools.child_command
-        return "sandbox-exec: no network, no new process, no file write, no read in the home directory"
+    if sys.platform == "darwin":
+        return _seatbelt_lock_down()
     libc = _libc()
     if libc is None:
         return f"unavailable: no kernel confinement on {sys.platform}"
@@ -400,7 +432,7 @@ def main() -> None:
     # strptime imports _strptime, locale and calendar on first use: load them while files are readable
     datetime.datetime.strptime("2000-01-01", "%Y-%m-%d")
     # the input is read and the modules are loaded: nothing else needs the file system
-    confinement = lock_down(bool(request.get("sandboxed")))
+    confinement = lock_down()
     runner = _run_unguarded if request.get("test_unguarded") else run
     result = runner(request["code"], request["text"], request["path"])
     sys.stdout.write(json.dumps({**result, "confinement": confinement}))

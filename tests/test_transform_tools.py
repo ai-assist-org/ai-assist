@@ -271,29 +271,54 @@ async def test_full_confinement_adds_no_note(tools, workdir):
     assert out == "1\n"
 
 
-# --- macOS: the child runs under sandbox-exec (built here, executed only on a Mac) ---
+# --- macOS: the child confines itself with sandbox_init (checked here with a fake libSystem) ---
 
 
-def test_macos_child_runs_under_sandbox_exec(monkeypatch):
-    import ai_assist.transform_tools as mod
+class _FakeLibSystem:
+    def __init__(self, status=0):
+        self.status, self.profiles = status, []
 
-    monkeypatch.setattr(mod.sys, "platform", "darwin")
-    monkeypatch.setattr(mod.shutil, "which", lambda name: "/usr/bin/sandbox-exec" if name == "sandbox-exec" else None)
-    command, sandboxed = mod.child_command()
-    assert command[:2] == ["/usr/bin/sandbox-exec", "-p"] and sandboxed
-    assert command[3:] == [mod.sys.executable, "-I", "-m", "ai_assist.transform_harness"]
-    profile = command[2]
+    def sandbox_init(self, profile, flags, errorbuf):
+        self.profiles.append((profile.decode(), flags))
+        if self.status:
+            errorbuf._obj.value = b"bad profile"
+        return self.status
+
+    def sandbox_free_error(self, errorbuf):
+        pass
+
+
+@pytest.fixture
+def macos_harness(monkeypatch):
+    import ai_assist.transform_harness as harness
+
+    monkeypatch.setattr(harness.sys, "platform", "darwin")
+    monkeypatch.setattr(harness, "_limit_resources", lambda: None)  # never in the test process
+    return harness
+
+
+def test_macos_child_confines_itself_after_startup(macos_harness, monkeypatch):
+    """sandbox-exec confined Python before it started (venv resolution, Homebrew launcher re-spawn)."""
+    lib = _FakeLibSystem()
+    monkeypatch.setattr(macos_harness.ctypes, "CDLL", lambda name, **kwargs: lib)
+    confinement = macos_harness.lock_down()
+    assert confinement.startswith("seatbelt: no network, no new process")
+    [(profile, flags)] = lib.profiles
+    assert getattr(flags, "value", flags) == 0  # a raw profile, not a named one
     for rule in ("(deny network*)", "(deny process-exec*)", "(deny process-fork)", "(deny file-write*)"):
         assert rule in profile
-    assert f'(subpath "{mod.sys.prefix}")' in profile and "(deny file-read* (subpath" in profile
+    assert f'(subpath "{macos_harness.sys.prefix}")' in profile and "(deny file-read* (subpath" in profile
 
 
-def test_linux_child_needs_no_wrapper(monkeypatch):
+def test_macos_confinement_failure_is_reported(macos_harness, monkeypatch):
+    monkeypatch.setattr(macos_harness.ctypes, "CDLL", lambda name, **kwargs: _FakeLibSystem(status=-1))
+    assert macos_harness.lock_down() == "unavailable: sandbox_init failed: bad profile"
+
+
+def test_child_runs_without_a_wrapper():
     import ai_assist.transform_tools as mod
 
-    monkeypatch.setattr(mod.sys, "platform", "linux")
-    command, sandboxed = mod.child_command()
-    assert command == [mod.sys.executable, "-I", "-m", "ai_assist.transform_harness"] and not sandboxed
+    assert mod.HARNESS == [mod.sys.executable, "-I", "-m", "ai_assist.transform_harness"]
 
 
 async def test_confinement_status_reports_the_child_confinement():
