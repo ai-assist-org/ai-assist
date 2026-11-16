@@ -299,7 +299,10 @@ def _deny_syscalls(libc: ctypes.CDLL) -> str | None:
 
 
 def _seatbelt_profile() -> str:
-    """macOS Seatbelt profile: no network, process, write, nor read in $HOME outside Python."""
+    """macOS Seatbelt profile: no network, process, write, nor read in $HOME outside Python.
+
+    Seatbelt matches resolved paths: a home directory reached through a link must be resolved.
+    """
 
     def quoted(path: str) -> str:
         return '"' + path.replace("\\", "\\\\").replace('"', '\\"') + '"'
@@ -308,7 +311,7 @@ def _seatbelt_profile() -> str:
     allowed = " ".join(f"(subpath {quoted(p)})" for p in sorted(readable))
     return (
         "(version 1)\n(allow default)\n(deny network*)\n(deny process-exec*)\n(deny process-fork)\n"
-        f"(deny file-write*)\n(deny file-read* (subpath {quoted(str(Path.home()))}))\n"
+        f"(deny file-write*)\n(deny file-read* (subpath {quoted(str(Path.home().resolve()))}))\n"
         f"(allow file-read* {allowed})\n"
     )
 

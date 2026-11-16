@@ -2,6 +2,7 @@
 
 import json
 import re
+import sys
 
 import pytest
 
@@ -325,7 +326,7 @@ async def test_confinement_status_reports_the_child_confinement():
     from ai_assist.transform_tools import confinement_status
 
     status = await confinement_status()
-    assert status.startswith(("landlock", "unavailable:", "sandbox-exec"))
+    assert status.startswith(("seatbelt",) if sys.platform == "darwin" else ("landlock", "unavailable:"))
 
 
 # --- common idioms work; what stays refused is explained ---
