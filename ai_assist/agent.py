@@ -1381,6 +1381,11 @@ class AiAssistAgent:
         patterns = getattr(self.config, "repeatable_tools", None) or []
         return any(fnmatch.fnmatch(tool_name, pattern) for pattern in patterns)
 
+    def _is_write_tool(self, tool_name: str) -> bool:
+        """True if the tool is annotated as changing state, so earlier cached reads can be stale."""
+        tool_def = next((t for t in self.available_tools if t["name"] == tool_name), None)
+        return tool_def is not None and tool_def.get("_readonly") is False
+
     def _effort_for(self, role: str) -> str | None:
         """Resolve the effort for a role, mirroring ``_model_for``.
 
@@ -2919,7 +2924,10 @@ class AiAssistAgent:
                 self._record_query_event("tool_failed", turn=turn + 1, tool_name=block.name, detail=type(exc).__name__)
                 raise
             self._record_query_event("tool_completed", turn=turn + 1, tool_name=block.name)
-            if not repeatable:
+            if self._is_write_tool(block.name):
+                # Reads cached before this write may no longer be accurate
+                self._tool_result_cache.clear()
+            elif not repeatable:
                 self._tool_result_cache[sig] = result
             return result
 
@@ -2937,7 +2945,9 @@ class AiAssistAgent:
         for block, sig, result in zip(tool_blocks, signatures, results, strict=False):
             is_error = isinstance(result, str) and result.startswith("Error:")
             # All tool output is data, not instructions: mark it with per-call markers
-            content, _ = sanitize_tool_result(result, block.name) if isinstance(result, str) else (result, [])
+            path = block.input.get("path") if isinstance(block.input, dict) else None
+            label = f"{block.name} path={path}" if path else block.name
+            content, _ = sanitize_tool_result(result, label) if isinstance(result, str) else (result, [])
             tool_result: dict[str, Any] = {
                 "type": "tool_result",
                 "tool_use_id": block.id,
@@ -2951,6 +2961,11 @@ class AiAssistAgent:
             # polls like apify__get-actor-run, expected to be called until they finish).
             if self._is_repeatable_tool(block.name):
                 continue
+            if self._is_write_tool(block.name):
+                # Re-running a read after a write is a check, not a loop; repeated writes still count
+                self._recent_tool_calls_for_loop = [
+                    s for s in self._recent_tool_calls_for_loop if self._is_write_tool(s.split(":", 1)[0])
+                ]
             self._recent_tool_calls_for_loop.append(sig)
             if len(self._recent_tool_calls_for_loop) > 5:
                 self._recent_tool_calls_for_loop.pop(0)
