@@ -93,10 +93,12 @@ The `fixtures/` directory is copied into the workspace root, so `fixtures/report
 
 ## Output
 
-Results are saved to `eval/runs/<skill>/<run-id>/`:
+Results are saved to `eval/runs/<skill>/<run-id>/`. The default run ID is unique per run
+(start time, model, random suffix), so concurrent runs — such as the pre-commit replay hook
+during a live run — never share a workspace or results; pass `--run-id` to choose one.
 
 ```
-eval/runs/ai-assist-internal-tools/2026-06-02-claude-sonnet-4-6/
+eval/runs/ai-assist-internal-tools/2026-06-02-091502-claude-sonnet-4-6-3f9a1c/
   summary.yaml              # aggregated judge results
   cases/
     report-list/
