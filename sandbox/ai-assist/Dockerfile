@@ -1,4 +1,4 @@
-FROM registry.fedoraproject.org/fedora:44@sha256:526646a990bb8442f936827d98253677dd7a4c28fad33f938e32c7ffdadb72c1
+FROM registry.fedoraproject.org/fedora:44@sha256:86d20cf3b872310bafeb1e09152ffa95d0d76d79f08ec6be5f1765366bfd0adf
 
 RUN dnf install -y \
         python3.14 python3.14-pip \
