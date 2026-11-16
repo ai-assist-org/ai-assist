@@ -299,16 +299,14 @@ def _deny_syscalls(libc: ctypes.CDLL) -> str | None:
 
 
 def _seatbelt_profile() -> str:
-    """macOS Seatbelt profile: no network, process, write, nor read in $HOME outside Python.
-
-    Seatbelt matches resolved paths: a home directory reached through a link must be resolved.
-    """
+    """macOS Seatbelt profile: no network, process, write, nor read in $HOME outside Python."""
 
     def quoted(path: str) -> str:
         return '"' + path.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
     readable = {sys.prefix, sys.base_prefix, str(Path(__file__).resolve().parent.parent)}
     allowed = " ".join(f"(subpath {quoted(p)})" for p in sorted(readable))
+    # Seatbelt matches resolved paths: a home reached through a link must be resolved
     return (
         "(version 1)\n(allow default)\n(deny network*)\n(deny process-exec*)\n(deny process-fork)\n"
         f"(deny file-write*)\n(deny file-read* (subpath {quoted(str(Path.home().resolve()))}))\n"
@@ -317,11 +315,9 @@ def _seatbelt_profile() -> str:
 
 
 def _seatbelt_lock_down() -> str:
-    """Apply the Seatbelt profile to this process, for good (what sandbox-exec does before exec).
-
-    Done here rather than with sandbox-exec: Python has started by now, so the venv resolution
-    and the re-spawn by a framework build's launcher are not caught by the profile.
-    """
+    """Apply the Seatbelt profile to this process, for good."""
+    # Not with sandbox-exec, which confines before Python starts: the venv resolution and the
+    # re-spawn by a framework build's launcher would be refused.
     libsystem = ctypes.CDLL("/usr/lib/libSystem.B.dylib")
     error = ctypes.c_char_p()
     if libsystem.sandbox_init(_seatbelt_profile().encode(), ctypes.c_uint64(0), ctypes.byref(error)) != 0:

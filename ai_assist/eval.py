@@ -186,10 +186,7 @@ class QueryEventStore:
 def capture_model_request(
     query_id: str | None, turn: int, request: dict, response: dict, trace_dir: Path | None = None
 ) -> Path:
-    """Save one model request, exactly as sent, and its response (AI_ASSIST_CAPTURE_MODEL_REQUESTS).
-
-    For debugging a model's answer: the file holds the whole conversation, so it is private.
-    """
+    """Save one model request, exactly as sent, and its response in a private file."""
     capture_dir = (trace_dir or get_config_dir() / "traces") / "requests"
     capture_dir.mkdir(parents=True, exist_ok=True)
     now = datetime.now()

@@ -1,21 +1,18 @@
-"""Progressive disclosure of tools: send the core tools, list the others, call them through a proxy.
+"""Send only the core tools; list the others in a proxy tool that calls them by name.
 
-Tool input schemas are most of the prompt (MCP servers bring dozens of tools each), so only the
-tools used in nearly every conversation are sent in full. Every other tool is listed by name and
-first sentence in the description of the proxy tool: the model reads its schema with
-introspection__get_tool_help, then calls it through introspection__call_tool. The agent unwraps the
-proxied call before running it, so caching, write and loop detection, plan mode, the audit trail
-and the tool-call log all see the real tool.
-
-The tool list stays the same within and across queries: nothing is loaded on demand, so the
-prompt cache and the thinking-block signatures (bound to the exact prefix) are never disturbed.
+The tool list never changes, so the prompt cache and thinking-block signatures stay valid.
 """
 
+import logging
 from typing import Any
+
+import jsonschema
+
+logger = logging.getLogger(__name__)
 
 CALL_TOOL = "introspection__call_tool"
 
-# The tools behind ~98% of the calls in real use (audit trails), plus the ones the loop relies on.
+# The tools behind ~98% of the calls in the audit trails, plus those the agent loop relies on.
 CORE_TOOLS = frozenset(
     {
         "internal__execute_command",
@@ -44,7 +41,6 @@ CORE_TOOLS = frozenset(
 
 
 def first_sentence(description: str, max_length: int = 200) -> str:
-    """The first sentence (or line) of a description, at most about max_length characters."""
     description = description.strip()
     for sep in (". ", ".\n", "\n"):
         idx = description.find(sep)
@@ -56,12 +52,10 @@ def first_sentence(description: str, max_length: int = 200) -> str:
 
 
 def split_tools(tools: list[dict]) -> tuple[list[dict], list[dict]]:
-    """The tools to send, and the ones to list in the proxy (both in their original order)."""
     return [t for t in tools if t["name"] in CORE_TOOLS], [t for t in tools if t["name"] not in CORE_TOOLS]
 
 
 def call_tool_definition(deferred: list[dict]) -> dict:
-    """The proxy tool, whose description lists the deferred tools."""
     catalog = "".join(
         f"- {t['name']}: {first_sentence(t.get('_full_description') or t['description'])}\n" for t in deferred
     )
@@ -85,7 +79,6 @@ def call_tool_definition(deferred: list[dict]) -> dict:
 
 
 def unwrap(name: str, arguments: Any, known: set[str]) -> tuple[str, dict, str | None]:
-    """Resolve a proxied call to (tool name, arguments, error); other calls pass through."""
     if name != CALL_TOOL:
         return name, arguments, None
     target = arguments.get("name") if isinstance(arguments, dict) else None
@@ -97,3 +90,24 @@ def unwrap(name: str, arguments: Any, known: set[str]) -> tuple[str, dict, str |
     if not isinstance(inner, dict):
         return target, {}, "Error: `arguments` must be an object."
     return target, inner, None
+
+
+def tool_documentation(tool: dict, schema: dict) -> dict:
+    return {
+        "tool_name": tool["name"],
+        "description": tool.get("_full_description", tool["description"]),
+        "input_schema": schema,
+    }
+
+
+def check_arguments(schema: dict, arguments: dict) -> list[str]:
+    """The problems with arguments, unknown parameters included (strict); empty when valid."""
+    strict = {**schema, "additionalProperties": schema.get("additionalProperties", False)}
+    validator = jsonschema.validators.validator_for(strict, default=jsonschema.Draft202012Validator)
+    try:
+        validator.check_schema(strict)
+    except jsonschema.SchemaError:
+        # MCP servers ship their own schemas: a broken one must not block the tool
+        logger.exception("Invalid JSON Schema, arguments not checked")
+        return []
+    return [f"{error.json_path}: {error.message}" for error in validator(strict).iter_errors(arguments)]

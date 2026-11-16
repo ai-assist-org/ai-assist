@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 from .pricing import prompt_tokens
 from .skill_performance import SkillPerformanceStore
+from .tool_disclosure import tool_documentation
 
 if TYPE_CHECKING:
     from .agent import AiAssistAgent
@@ -1061,14 +1062,8 @@ Do NOT compact if you still need the old tool results for your current task.
 
         for tool in self.agent.available_tools:
             if tool["name"] == tool_name:
-                return json.dumps(
-                    {
-                        "tool_name": tool_name,
-                        "description": tool.get("_full_description", tool["description"]),
-                        "input_schema": self.agent.schema_as_sent(tool, bool(self.agent.json_tools.jq_path)),
-                    },
-                    indent=2,
-                )
+                schema = self.agent.schema_as_sent(tool, bool(self.agent.json_tools.jq_path))
+                return json.dumps(tool_documentation(tool, schema), indent=2)
 
         return json.dumps({"error": f"Tool not found: {tool_name}"})
 

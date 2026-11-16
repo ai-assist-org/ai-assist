@@ -372,10 +372,10 @@ ai-assist
 \begin{column}{0.48\textwidth}
 \textbf{Project Stats}
 \begin{itemize}\scriptsize
-  \item 33,000+ lines of production code
-  \item 3,100+ tests across 145 test files
-  \item 16 core dependencies
-  \item Pre-commit hooks: black, ruff, mypy, bandit, pylint similarities, pytest, eval replay, portability
+  \item 35,000+ lines of production code
+  \item 3,400+ tests across 158 test files
+  \item 17 core dependencies
+  \item Pre-commit hooks: black, ruff, mypy, bandit, pylint similarities, pytest, eval replay, portability, action pins, markdown links
   \item Comprehensive user documentation: \href{https://ai-assist-org.github.io/ai-assist/}{\texttt{ai-assist-org.github.io/ai-assist}}
 \end{itemize}
 \end{column}
@@ -676,6 +676,7 @@ Skills are \alert{untrusted code} --- defense in depth:
 \begin{itemize}\scriptsize\setlength{\itemsep}{0pt}
   \item Search KG entities / history
   \item Tool documentation
+  \item Rarely used tools called on demand
   \item MCP prompts
 \end{itemize}
 
@@ -699,7 +700,7 @@ Skills are \alert{untrusted code} --- defense in depth:
 
 \vfill
 \centering
-\scriptsize\color{gray} 30+ built-in tools --- the agent decides which to use based on the query
+\scriptsize\color{gray} 30+ built-in tools --- the most used are sent in full, the others and MCP tools are listed and read on demand
 \end{frame}
 
 % ── Report Management ────────────────────────────────────────────
@@ -1966,7 +1967,7 @@ A weekly workflow step failing every run, reported as a success & Skill scripts 
 \begin{columns}[T]
 \begin{column}{0.48\textwidth}
 \textbf{Recently Completed}
-\begin{itemize}\scriptsize\setlength{\itemsep}{1pt}
+\begin{itemize}\scriptsize\setlength{\itemsep}{0.5pt}
   \item \textcolor{green!60!black}{\checkmark} \alert{Autonomous goal-driven agent (OODA)}
   \item \textcolor{green!60!black}{\checkmark} Systemd user service (\texttt{/service install})
   \item \textcolor{green!60!black}{\checkmark} Vector-based semantic search (sqlite-vec)
@@ -1983,6 +1984,7 @@ A weekly workflow step failing every run, reported as a success & Skill scripts 
   \item \textcolor{green!60!black}{\checkmark} LoCoMo memory benchmark: 86.2\%
   \item \textcolor{green!60!black}{\checkmark} \alert{Security audit hardening}
   \item \textcolor{green!60!black}{\checkmark} \alert{Self-improvement} workflow with reviewer verdicts
+  \item \textcolor{green!60!black}{\checkmark} \alert{Progressive tool disclosure}
 \end{itemize}
 \end{column}
 \begin{column}{0.48\textwidth}

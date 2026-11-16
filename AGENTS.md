@@ -370,7 +370,7 @@ Files: `config.py`, `state.py`, `config_watcher.py`, `file_watchdog.py`
 
 **MCP tools** from configured servers are dynamically loaded and prefixed with server name.
 
-**Progressive disclosure of tools** (`tool_disclosure.py`, `AI_ASSIST_DEFER_TOOLS`, on by default): input schemas are most of the prompt (an instance with a few MCP servers sends ~200 tools, ~120k tokens per turn), so only `CORE_TOOLS` — the tools behind ~98% of calls in real audit trails — are sent. Every other tool, MCP or internal, is listed by name and first sentence in the description of `introspection__call_tool`; the model reads its schema with `introspection__get_tool_help` (the schema as it would be sent, special `__` parameters included, via `AiAssistAgent.schema_as_sent`) and calls it through the proxy. `_execute_tools_concurrently` unwraps proxied calls first (`tool_disclosure.unwrap`), so the result cache, write and loop detection, plan mode, the audit trail and `last_tool_calls` all see the real tool; a deferred tool called directly by name still runs. The tool list never changes within or across queries, so the prompt cache and thinking-block signatures are not disturbed. Change `CORE_TOOLS` from usage data (the audit trails), not by guess. Skills follow the same principle: only their front matter is in the system prompt, the body is read with `introspection__get_skill_help` (so a long body is not a warning, only a long description is).
+**Progressive disclosure of tools** (`tool_disclosure.py`, `AI_ASSIST_DEFER_TOOLS`, on by default): only `CORE_TOOLS` are sent in full; every other tool, MCP or internal, is listed in the description of `introspection__call_tool`, read with `introspection__get_tool_help` and called through that proxy. `_execute_tools_concurrently` unwraps proxied calls first, so caching, write and loop detection, plan mode, the audit trail and `last_tool_calls` see the real tool, and validates them against the tool's schema (`check_arguments`, strict): an invalid call is not run and the error carries the tool's documentation. The tool list never changes, so the prompt cache and thinking-block signatures stay valid. Choose `CORE_TOOLS` from the audit trails, not by guess. Skills work the same way: only their front matter is in the system prompt.
 
 **Startup log**: `setup_logging()` logs the source commit of the ai-assist checkout (with "(uncommitted changes)" when tracked files changed), or nothing when it does not run from its own git checkout (`get_source_commit()` in `config.py`).
 
@@ -881,6 +881,7 @@ One-time future actions are `once` actions in `event-schedules.json`, created wi
 ai_assist/
 ├── main.py                    # CLI entry point
 ├── agent.py                   # MCP agent with tool execution
+├── tool_disclosure.py         # Core tools sent, others listed and called through a proxy
 ├── tool_result_router.py      # Result redirection/pagination (agent collaborator)
 ├── synthesis_engine.py        # Conversation synthesis + KG connections (agent collaborator)
 ├── system_prompt_builder.py   # System prompt + KG context assembly (agent collaborator)

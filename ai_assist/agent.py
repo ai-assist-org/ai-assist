@@ -66,7 +66,14 @@ from .synthesis_engine import SynthesisEngine
 from .system_prompt_builder import SystemPromptBuilder
 from .task_result_tool import TaskResultTool
 from .think_tool import ThinkTool
-from .tool_disclosure import call_tool_definition, split_tools, unwrap
+from .tool_disclosure import (
+    CALL_TOOL,
+    call_tool_definition,
+    check_arguments,
+    split_tools,
+    tool_documentation,
+    unwrap,
+)
 from .tool_result_router import (
     ToolResultRouter,
     _extract_data_items,  # noqa: F401  (re-exported for tests)
@@ -1342,11 +1349,7 @@ class AiAssistAgent:
 
     @staticmethod
     def schema_as_sent(tool: dict, jq_available: bool) -> dict:
-        """A tool's input schema with the special parameters it supports (__jq_filter, ...).
-
-        Advertised in the schema (instead of prose alone) so the model can reliably
-        discover and use them — see _meta_params_for_tool.
-        """
+        """The input schema with the special parameters the tool supports (see _meta_params_for_tool)."""
         input_schema = tool["input_schema"]
         meta_params = _meta_params_for_tool(tool["name"], jq_available)
         if not meta_params:
@@ -3025,6 +3028,10 @@ class AiAssistAgent:
         # Calls through the introspection__call_tool proxy run as the real tool from here on
         known = {t["name"] for t in self.available_tools}
         calls = [unwrap(block.name, block.input, known) for block in tool_blocks]
+        calls = [
+            self._check_proxied_call(call) if block.name == CALL_TOOL else call
+            for block, call in zip(tool_blocks, calls, strict=True)
+        ]
 
         # Compute signatures and separate cached from uncached
         import hashlib
@@ -3098,6 +3105,24 @@ class AiAssistAgent:
                 loop_detected = True
 
         return tool_results, loop_detected
+
+    def _check_proxied_call(self, call: tuple[str, dict, str | None]) -> tuple[str, dict, str | None]:
+        """Refuse a proxied call that does not match the tool's schema, returning its documentation."""
+        name, arguments, error = call
+        if error:
+            return call
+        tool = next(t for t in self.available_tools if t["name"] == name)
+        schema = self.schema_as_sent(tool, bool(self.json_tools.jq_path))
+        problems = check_arguments(schema, arguments)
+        if not problems:
+            return call
+        documentation = json.dumps(tool_documentation(tool, schema), indent=2)
+        return (
+            name,
+            arguments,
+            f"Error: invalid arguments for {name}: {'; '.join(problems[:5])}. The call was not run: "
+            f"call it again with arguments matching its documentation:\n{documentation}",
+        )
 
     @staticmethod
     def _parse_report_param(value: str) -> tuple[str, str]:

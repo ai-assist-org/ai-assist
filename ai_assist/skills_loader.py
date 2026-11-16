@@ -365,8 +365,7 @@ class SkillsLoader:
         # Validate metadata
         metadata.validate()
 
-        # Validate skill description and body for injection patterns. Only the description is in
-        # the system prompt; the body is read on demand, so its length is not a concern.
+        # The body is read on demand, not in the system prompt: its length is not checked
         for part, warnings in (
             ("description", validate_tool_description(f"skill:{metadata.name}", metadata.description)),
             ("body", validate_tool_description(f"skill:{metadata.name}/body", body, max_length=None)),

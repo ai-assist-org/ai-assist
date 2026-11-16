@@ -149,3 +149,91 @@ async def test_tool_help_gives_the_schema_as_it_would_be_sent(make_replay_agent)
     properties = help_text["input_schema"]["properties"]
     assert "device_id" in properties and "__save_to_file" in properties
     assert "many details" in help_text["description"]
+
+
+# --- proxied calls are checked against the tool's schema before they run ---
+
+SEARCH_TOOL = {
+    "name": "homeassistant__search",
+    "description": "Search entities. Valid types: automation, script.",
+    "_full_description": "Search entities. Valid types: automation, script. Long usage notes follow.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string"},
+            "search_types": {"type": "array", "items": {"enum": ["automation", "script"]}},
+        },
+        "required": ["query"],
+    },
+    "_server": "homeassistant",
+    "_original_name": "search",
+}
+
+
+async def _proxied(agent, tool: dict, arguments: dict) -> tuple[str, list]:
+    """Run one proxied call; the result text and the calls that actually ran."""
+    agent.available_tools.append(tool)
+    agent._tool_result_cache, agent._recent_tool_calls_for_loop, agent._duplicate_tool_call_count = {}, [], 0
+    ran = []
+
+    async def fake_execute(tool_name, args):
+        ran.append((tool_name, args))
+        return "ok"
+
+    agent._execute_tool = fake_execute
+
+    class Block:
+        type, id, name = "tool_use", "t1", CALL_TOOL
+        input = {"name": tool["name"], "arguments": arguments}
+
+    [result], _ = await agent._execute_tools_concurrently([Block()])
+    return json.dumps(result["content"]), ran
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("arguments", "problem"),
+    [
+        ({"query": "light", "start_time": "now"}, "start_time"),
+        ({"query": "light", "search_types": ["entity"]}, "entity"),
+        ({"search_types": ["script"]}, "query"),
+    ],
+    ids=["unknown parameter", "invalid value", "missing parameter"],
+)
+async def test_a_proxied_call_with_invalid_arguments_is_not_run(make_replay_agent, arguments, problem):
+    """Guessed arguments (the schema was not read) come back with the documentation, without running."""
+    agent = await make_replay_agent([DONE])
+    result, ran = await _proxied(agent, SEARCH_TOOL, arguments)
+    assert ran == []
+    assert "Error: invalid arguments for homeassistant__search" in result and problem in result
+    assert "Long usage notes follow." in result and "search_types" in result  # full description and schema
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "arguments",
+    [{"query": "light"}, {"query": "light", "search_types": ["script"], "__jq_filter": ".[0]"}],
+    ids=["valid", "with a special parameter"],
+)
+async def test_a_proxied_call_with_valid_arguments_runs(make_replay_agent, arguments):
+    agent = await make_replay_agent([DONE])
+    result, ran = await _proxied(agent, SEARCH_TOOL, arguments)
+    assert ran == [("homeassistant__search", arguments)] and "ok" in result
+
+
+@pytest.mark.asyncio
+async def test_a_schema_allowing_other_properties_accepts_them(make_replay_agent):
+    agent = await make_replay_agent([DONE])
+    tool = {**SEARCH_TOOL, "input_schema": {**SEARCH_TOOL["input_schema"], "additionalProperties": True}}
+    _, ran = await _proxied(agent, tool, {"query": "light", "extra": 1})
+    assert ran
+
+
+@pytest.mark.asyncio
+async def test_a_broken_schema_does_not_block_the_call(make_replay_agent, caplog):
+    """MCP servers ship their own schemas: one that is not valid JSON Schema is logged, not a reason to refuse."""
+    agent = await make_replay_agent([DONE])
+    tool = {**SEARCH_TOOL, "input_schema": {"type": "object", "properties": {"query": {"type": "no-such-type"}}}}
+    _, ran = await _proxied(agent, tool, {"query": "light"})
+    assert ran
+    assert "Invalid JSON Schema, arguments not checked" in caplog.text and "Traceback" in caplog.text
