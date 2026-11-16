@@ -1656,6 +1656,18 @@ class AiAssistAgent:
         except Exception:
             logger.debug("Failed to write query diagnostic event", exc_info=True)
 
+    def _capture_model_request(self, turn: int, request: dict[str, Any], final_message: Any) -> None:
+        """Save the request and its response for debugging; never fails the query."""
+        try:
+            from .eval import capture_model_request
+
+            status = self._active_query_diagnostics
+            capture_model_request(
+                status["query_id"] if status else None, turn, request, final_message.model_dump(mode="json")
+            )
+        except Exception:
+            logger.exception("Failed to capture the model request")
+
     @staticmethod
     def _mask_old_observations(messages: list, keep_recent: int = 10) -> None:
         """Replace old tool results with compact placeholders in-place.
@@ -2405,23 +2417,21 @@ class AiAssistAgent:
                     first_event_timeout = getattr(self.config, "model_stream_first_event_timeout_seconds", 120)
                     idle_timeout = getattr(self.config, "model_stream_idle_timeout_seconds", 120)
 
-                    def create_stream(
-                        system: Any = system_prompt,
-                        tools: Any = turn_tools,
-                        request_messages: Any = (
+                    request: dict[str, Any] = {
+                        "model": self.config.model,
+                        "max_tokens": self.get_max_tokens(),
+                        "system": system_prompt,
+                        "tools": turn_tools,
+                        "messages": (
                             self._with_message_cache_breakpoints(messages)
                             if self.config.enable_prompt_caching
                             else messages
                         ),
-                    ) -> Any:
-                        return self.anthropic.messages.stream(
-                            model=self.config.model,
-                            max_tokens=self.get_max_tokens(),
-                            system=system,
-                            tools=tools,
-                            messages=request_messages,
-                            **effort_output_config(getattr(self.config, "effort", None)),
-                        )
+                        **effort_output_config(getattr(self.config, "effort", None)),
+                    }
+
+                    def create_stream(request: dict[str, Any] = request) -> Any:
+                        return self.anthropic.messages.stream(**request)
 
                     stream_context: Any = await asyncio.wait_for(
                         asyncio.to_thread(create_stream),
@@ -2470,6 +2480,8 @@ class AiAssistAgent:
                         self._track_token_usage(
                             final_message, turn, prefix_sha=self._prefix_sha(turn_tools, system_prompt)
                         )
+                        if self.config.capture_model_requests:
+                            self._capture_model_request(turn + 1, request, final_message)
 
                         if getattr(final_message, "stop_reason", None) == "refusal":
                             self._last_turn_count = turn + 1

@@ -337,6 +337,7 @@ Files: `background_tasks.py`, `background_task_tools.py`
 - `skill_env.json` - Per-skill env var allowlists
 - `audit/tool_calls.jsonl` - Append-only tool-call audit trail, rotated at 10 MB, rotated files kept 7 days
 - `traces/query_traces.jsonl` - Per-query traces with token usage and cost (100-day retention)
+- `traces/requests/` - Each model request as sent and its response, one JSON file per turn, only with `AI_ASSIST_CAPTURE_MODEL_REQUESTS=true` (debugging; mode 0600, not pruned)
 - `events.jsonl` - Event bridge (monitor→interactive IPC)
 - `interactive_history.txt` - Command history
 

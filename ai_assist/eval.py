@@ -1,6 +1,7 @@
 """Agent evaluation framework: query traces and metrics"""
 
 import json
+import os
 import re
 from collections import defaultdict
 from dataclasses import asdict, dataclass, field
@@ -180,6 +181,29 @@ class QueryEventStore:
             event["detail"] = detail[:200]
         with open(self.event_file, "a") as f:
             f.write(json.dumps(event) + "\n")
+
+
+def capture_model_request(
+    query_id: str | None, turn: int, request: dict, response: dict, trace_dir: Path | None = None
+) -> Path:
+    """Save one model request, exactly as sent, and its response (AI_ASSIST_CAPTURE_MODEL_REQUESTS).
+
+    For debugging a model's answer: the file holds the whole conversation, so it is private.
+    """
+    capture_dir = (trace_dir or get_config_dir() / "traces") / "requests"
+    capture_dir.mkdir(parents=True, exist_ok=True)
+    now = datetime.now()
+    path = capture_dir / f"{now.strftime('%Y%m%dT%H%M%S%f')}-{query_id or 'no-query'}-turn{turn}.json"
+    record = {
+        "timestamp": now.isoformat(),
+        "query_id": query_id,
+        "turn": turn,
+        "request": request,
+        "response": response,
+    }
+    with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as f:
+        json.dump(record, f, ensure_ascii=False, indent=1, default=str)
+    return path
 
 
 @dataclass

@@ -1190,6 +1190,17 @@ In interactive mode, `/model` and `/effort` show or change the session values:
 `/model claude-opus-4-6:high`, `/effort low`, and `/effort auto` to restore the
 model-associated default.
 
+### Capturing Model Requests (debugging)
+
+When the model answers something odd (ignores the question, loses the thread), set
+`AI_ASSIST_CAPTURE_MODEL_REQUESTS=true` and reproduce. Each model turn is saved to
+`~/.ai-assist/traces/requests/<timestamp>-<query_id>-turn<N>.json` with the exact request
+(model, system prompt, tools, messages as sent) and the full response, including any extra
+fields the provider returns. The `query_id` matches `traces/query_events.jsonl`.
+
+The files hold whole conversations (written with mode 0600) and are never pruned: turn the
+option off and delete them once done.
+
 ### MLflow Tracing (optional)
 
 In addition to the built-in query traces (`/eval-stats`, `/cost`), ai-assist can

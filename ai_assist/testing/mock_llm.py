@@ -90,6 +90,13 @@ class FakeMessage:
         self.stop_reason = stop_reason
         self.usage = usage
 
+    def model_dump(self, **_kwargs: Any) -> dict[str, Any]:
+        return {
+            "content": [block.model_dump() for block in self.content],
+            "stop_reason": self.stop_reason,
+            "usage": vars(self.usage),
+        }
+
 
 def _block_from_dict(d: dict[str, Any]) -> FakeBlock:
     if d.get("type") == "tool_use":
