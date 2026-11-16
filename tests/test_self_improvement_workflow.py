@@ -203,7 +203,10 @@ def signals(tmp_path, flow, awk_dir):
     ]
     audit_dir = tmp_path / "cfg" / "audit"
     audit_dir.mkdir(parents=True)
-    (audit_dir / "tool_calls.jsonl").write_text("\n".join(map(json.dumps, audit)) + "\nnot json\n")
+    # half of the records sit in a rotated file: the aggregator must read both
+    half = len(audit) // 2
+    (audit_dir / "tool_calls-20261101T000000000000.jsonl").write_text("\n".join(map(json.dumps, audit[:half])) + "\n")
+    (audit_dir / "tool_calls.jsonl").write_text("\n".join(map(json.dumps, audit[half:])) + "\nnot json\n")
     out = tmp_path / "signals.jsonl"
     run(
         "awl-signals-aggregate.sh",

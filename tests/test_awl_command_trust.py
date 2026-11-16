@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from ai_assist.action_tools import ActionTools
+from ai_assist.audit import audited_call
 from ai_assist.awl_ast import TaskNode, WorkflowNode
 from ai_assist.awl_executor import run_awl_script
 from ai_assist.awl_runtime import AWLRuntime
@@ -447,12 +448,15 @@ async def test_filesystem_records_command_confirmation(tmp_path):
         return True
 
     tools.confirmation_callback = approve
-    await tools.execute_tool("execute_command", {"command": "python3 -c 'print(1)'"})
+    with audited_call() as call:
+        await tools.execute_tool("execute_command", {"command": "python3 -c 'print(1)'"})
 
-    conf = tools.drain_confirmations()
+    conf = call.events
     assert conf and conf[0]["decision"] == "approved"
     assert "python3" in conf[0]["question"]
-    assert tools.drain_confirmations() == []  # drained
+    with audited_call() as next_call:
+        pass
+    assert next_call.events == []  # each call has its own events
 
 
 @pytest.mark.asyncio
@@ -469,7 +473,8 @@ async def test_filesystem_records_path_denial(tmp_path, tmp_path_factory):
         return False
 
     tools.path_confirmation_callback = deny
-    await tools.execute_tool("write_file", {"path": str(outside / "x.txt"), "content": "x"})
+    with audited_call() as call:
+        await tools.execute_tool("write_file", {"path": str(outside / "x.txt"), "content": "x"})
 
-    conf = tools.drain_confirmations()
+    conf = call.events
     assert conf and conf[0]["decision"] == "denied" and conf[0]["kind"] == "path"

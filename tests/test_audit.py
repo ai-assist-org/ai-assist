@@ -6,7 +6,7 @@ import time
 
 import pytest
 
-from ai_assist.audit import AuditLogger
+from ai_assist.audit import AuditLogger, audited_call, record_authorization_event
 
 
 @pytest.fixture
@@ -86,43 +86,43 @@ def test_audit_log_truncates_large_results(logger, audit_dir):
     assert len(entry["result_summary"]) <= 4100  # 4000 chars + truncation message
 
 
-def test_audit_log_rotation(audit_dir):
-    """Old entries are cleaned up by cleanup()"""
-    log_file = audit_dir / "tool_calls.jsonl"
+def test_cleanup_deletes_old_rotated_files_and_never_touches_the_live_log(audit_dir):
+    live = audit_dir / "tool_calls.jsonl"
+    live.write_text('{"timestamp": "2020-01-01T00:00:00"}\n')
+    old = audit_dir / "tool_calls-20200101T000000000000.jsonl"
+    recent = audit_dir / "tool_calls-20991231T000000000000.jsonl"
+    old.write_text("{}\n")
+    recent.write_text("{}\n")
+    ancient = time.time() - 30 * 86400
+    os.utime(old, (ancient, ancient))
+    os.utime(live, (ancient, ancient))
 
-    # Write entries with old timestamps
-    old_entries = []
+    removed = AuditLogger(audit_dir=audit_dir).cleanup(max_age_days=7)
+
+    assert removed == 1
+    assert not old.exists()
+    assert recent.exists()
+    assert live.read_text() == '{"timestamp": "2020-01-01T00:00:00"}\n'
+
+
+def test_rotation_renames_the_live_log_and_keeps_it_owner_only(audit_dir):
+    logger = AuditLogger(audit_dir=audit_dir, max_bytes=200)
     for i in range(5):
-        entry = {
-            "tool_name": f"old_tool_{i}",
-            "arguments": {},
-            "result_summary": "old result",
-            "success": True,
-            "timestamp": "2020-01-01T00:00:00",
-        }
-        old_entries.append(json.dumps(entry))
+        logger.log_tool_call("x__y", {"i": i}, "r" * 100, success=True)
 
-    # Write a recent entry
-    recent_entry = {
-        "tool_name": "recent_tool",
-        "arguments": {},
-        "result_summary": "recent result",
-        "success": True,
-        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
-    }
-    old_entries.append(json.dumps(recent_entry))
+    rotated = logger.rotated_files()
+    assert rotated
+    live = audit_dir / "tool_calls.jsonl"
+    for path in [*rotated, live]:
+        assert os.stat(path).st_mode & 0o777 == 0o600
+    # Nothing lost or rewritten: every record is in exactly one file, in order
+    lines = [json.loads(line) for path in [*rotated, live] for line in path.read_text().splitlines()]
+    assert [entry["arguments"]["i"] for entry in lines] == list(range(5))
 
-    log_file.write_text("\n".join(old_entries) + "\n")
 
-    logger = AuditLogger(audit_dir=audit_dir)
-    removed = logger.cleanup(max_age_days=7)
-
-    assert removed == 5  # 5 old entries removed
-
-    # Recent entry should remain
-    remaining = log_file.read_text().strip().split("\n")
-    assert len(remaining) == 1
-    assert "recent_tool" in remaining[0]
+def test_new_log_file_is_created_owner_only(audit_dir):
+    AuditLogger(audit_dir=audit_dir).log_tool_call("x__y", {}, "ok", success=True)
+    assert os.stat(audit_dir / "tool_calls.jsonl").st_mode & 0o777 == 0o600
 
 
 def test_audit_log_multiple_entries(logger, audit_dir):
@@ -233,3 +233,99 @@ def test_confirmation_questions_are_sanitized(logger, audit_dir):
     [entry] = _entries(audit_dir)
     assert "ghp_abc123secret" not in entry["confirmations"][0]["question"]
     assert entry["confirmations"][0]["decision"] == "approved"
+
+
+def test_unprompted_call_is_autonomous_with_its_rule(logger, audit_dir):
+    logger.log_tool_call("srv__tool", {}, "ok", success=True, rule="MCP tool: no approval gate")
+    entry = _entries(audit_dir)[0]
+    assert entry["authorization"] == {"decision": "autonomous", "rule": "MCP tool: no approval gate"}
+
+
+def test_approved_call_records_approver_and_question(logger, audit_dir):
+    with audited_call():
+        record_authorization_event("command", "python3 -c execution", "approved")
+        logger.log_tool_call("internal__execute_command", {}, "ok", success=True)
+    auth = _entries(audit_dir)[0]["authorization"]
+    assert auth["decision"] == "approved"
+    assert auth["approver"] == "user"
+    assert auth["questions"] == ["python3 -c execution"]
+    assert auth["rule"] == "command-confirmation"
+
+
+@pytest.mark.parametrize(
+    "decision,rule",
+    [
+        ("denied", "path-confirmation: denied by user"),
+        ("auto-denied (non-interactive)", "path-confirmation: no approver (non-interactive)"),
+    ],
+)
+def test_refused_prompt_is_recorded(logger, audit_dir, decision, rule):
+    with audited_call():
+        record_authorization_event("path", "Access path: /x", decision)
+        logger.log_tool_call("internal__write_file", {}, "Error: rejected", success=False)
+    auth = _entries(audit_dir)[0]["authorization"]
+    assert auth == {"decision": "refused", "rule": rule, "reason": "Access path: /x"}
+
+
+def test_policy_refusal_is_recorded(logger, audit_dir):
+    with audited_call():
+        record_authorization_event("command-policy", "Error: rm is not allowed", "refused")
+        logger.log_tool_call("internal__execute_command", {}, "Error: rm is not allowed", success=False)
+    auth = _entries(audit_dir)[0]["authorization"]
+    assert auth["decision"] == "refused"
+    assert auth["rule"] == "command-policy"
+
+
+def test_every_record_has_a_known_decision(logger, audit_dir):
+    for decision in ("approved", "denied", "auto-denied (non-interactive)", "refused"):
+        with audited_call():
+            record_authorization_event("command", "q", decision)
+            logger.log_tool_call("x__y", {}, "r", success=True)
+    logger.log_tool_call("x__y", {}, "r", success=True)
+    assert {e["authorization"]["decision"] for e in _entries(audit_dir)} == {"approved", "refused", "autonomous"}
+
+
+def test_one_record_per_call_with_a_unique_correlation_id(logger, audit_dir):
+    with audited_call() as call:
+        logger.log_tool_call("x__y", {}, "ok", success=True)
+        logger.log_tool_call("x__y", {}, "Error: again", success=False)  # dropped
+    with audited_call():
+        logger.log_tool_call("x__y", {}, "ok", success=True)
+    entries = _entries(audit_dir)
+    assert len(entries) == 2
+    assert entries[0]["correlation_id"] == call.correlation_id
+    assert entries[0]["success"] is True
+    assert entries[0]["correlation_id"] != entries[1]["correlation_id"]
+
+
+def test_authorization_question_is_sanitized(logger, audit_dir):
+    with audited_call():
+        record_authorization_event("command", "curl -H 'Authorization: ghp_abc123secret'", "approved")
+        logger.log_tool_call("internal__execute_command", {}, "ok", success=True)
+    entry = _entries(audit_dir)[0]
+    assert "ghp_abc123secret" not in json.dumps(entry)
+
+
+def test_sink_receives_every_record(audit_dir, tmp_path):
+    sink = tmp_path / "elsewhere" / "audit.jsonl"
+    sink.parent.mkdir()
+    logger = AuditLogger(audit_dir=audit_dir, sink_path=sink)
+    logger.log_tool_call("x__y", {}, "ok", success=True)
+    assert json.loads(sink.read_text()) == _entries(audit_dir)[0]
+    assert "sink_unavailable" not in _entries(audit_dir)[0]
+
+
+def test_sink_from_environment(audit_dir, tmp_path, monkeypatch):
+    sink = tmp_path / "sink.jsonl"
+    monkeypatch.setenv("AI_ASSIST_AUDIT_SINK", str(sink))
+    AuditLogger(audit_dir=audit_dir).log_tool_call("x__y", {}, "ok", success=True)
+    assert sink.exists()
+
+
+def test_unreachable_sink_is_flagged_not_fatal(audit_dir, tmp_path):
+    logger = AuditLogger(audit_dir=audit_dir, sink_path=tmp_path / "missing-dir" / "audit.jsonl")
+    for _ in range(3):
+        logger.log_tool_call("x__y", {}, "ok", success=True)
+    entries = _entries(audit_dir)
+    assert len(entries) == 3
+    assert all(e["sink_unavailable"] is True for e in entries)
