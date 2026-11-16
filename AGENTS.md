@@ -364,7 +364,7 @@ Files: `config.py`, `state.py`, `config_watcher.py`, `file_watchdog.py`
 - `filesystem_tools.py` - File operations (read, write, edit, search, execute). `execute_command` runs a command with a pipe under bash with a fixed trailer reporting each stage's exit status (`PIPESTATUS`), so a failure hidden by the last command's exit code is reported (SIGPIPE, 141, is not a failure); its output limits save the full output in the session tmpdir (`get_session_tmpdir()`) and allow reading it
 - `think_tool.py` - Planning/reasoning scratchpad
 - `json_tools.py` - JSON querying via jq (requires jq installed)
-- `transform_tools.py` - `internal__transform`: a short Python payload over one file, run by `transform_harness.py` in a child process: RestrictedPython guard (`import` limited to the preloaded modules, no `_` names, modules as public-name namespaces), then kernel confinement applied by the child itself after reading its input (Landlock + seccomp on Linux, `sandbox-exec` on macOS); without it the tool runs anyway and says so (`confinement_status()`, shown by `/doctor`)
+- `transform_tools.py` - `internal__transform`: a short Python payload over one file, run by `transform_harness.py` in a child process: RestrictedPython guard (`import` limited to the preloaded modules, no `_` names, modules as public-name namespaces), then kernel confinement applied by the child itself after reading its input (Landlock + seccomp on Linux, Seatbelt via `sandbox_init()` on macOS); without it the tool runs anyway and says so (`confinement_status()`, shown by `/doctor`)
 - `introspection_tools.py` - Context awareness (current date/time, working directory, user info)
 
 **MCP tools** from configured servers are dynamically loaded and prefixed with server name.
