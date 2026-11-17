@@ -159,13 +159,13 @@ DESCRIPTION_SUSPICIOUS_PATTERNS: list[tuple[str, re.Pattern]] = [
 ]
 
 
-def validate_tool_description(tool_name: str, description: str, max_length: int = 5000) -> list[str]:
+def validate_tool_description(tool_name: str, description: str, max_length: int | None = 5000) -> list[str]:
     """Validate a tool description for suspicious content (tool poisoning).
 
     Args:
         tool_name: Tool name (for logging context)
         description: Tool description text
-        max_length: Maximum acceptable description length
+        max_length: Maximum acceptable description length (None: no length check)
 
     Returns:
         List of warning messages (empty if clean)
@@ -175,7 +175,7 @@ def validate_tool_description(tool_name: str, description: str, max_length: int 
 
     warnings = []
 
-    if len(description) > max_length:
+    if max_length is not None and len(description) > max_length:
         warnings.append(f"Description length ({len(description)} chars) exceeds maximum ({max_length})")
 
     for pattern_name, pattern in DESCRIPTION_SUSPICIOUS_PATTERNS:

@@ -17,6 +17,7 @@ import subprocess
 import sys
 import textwrap
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
@@ -382,6 +383,11 @@ def print_results(config, run_id, per_case, aggregated, judges, run_output):
     return has_failures
 
 
+def default_run_id(model):
+    """Unique per run, sorted by start time: concurrent runs must not share a workspace or results."""
+    return f"{datetime.now().strftime('%Y-%m-%d-%H%M%S')}-{model}-{uuid.uuid4().hex[:6]}"
+
+
 def run_pipeline(config_path, model, run_id=None, cases=None, parallelism=1, no_llm_judges=False):
     config = EvalConfig.from_yaml(config_path)
 
@@ -390,7 +396,7 @@ def run_pipeline(config_path, model, run_id=None, cases=None, parallelism=1, no_
     config.runner.command = [c.replace("{project_root}", project_root) for c in config.runner.command]
 
     if not run_id:
-        run_id = f"{datetime.now().strftime('%Y-%m-%d')}-{model}"
+        run_id = default_run_id(model)
 
     all_cases = discover_cases(config)
     if cases:

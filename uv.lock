@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.14"
 resolution-markers = [
     "python_full_version >= '3.15'",
@@ -25,6 +25,7 @@ dependencies = [
     { name = "ddgs" },
     { name = "fastembed" },
     { name = "httpx" },
+    { name = "jsonschema" },
     { name = "markdownify" },
     { name = "mcp" },
     { name = "mcp-agent" },
@@ -55,6 +56,7 @@ dev = [
     { name = "pytest-mock" },
     { name = "pytest-xdist" },
     { name = "ruff" },
+    { name = "types-jsonschema" },
     { name = "types-pyyaml" },
 ]
 docs = [
@@ -86,6 +88,7 @@ dev = [
     { name = "pytest-mock" },
     { name = "pytest-xdist" },
     { name = "ruff" },
+    { name = "types-jsonschema" },
     { name = "types-pyyaml" },
 ]
 
@@ -101,6 +104,7 @@ requires-dist = [
     { name = "ddgs", specifier = ">=9.16.1" },
     { name = "fastembed", specifier = ">=0.9.1" },
     { name = "httpx", specifier = ">=0.28.1" },
+    { name = "jsonschema", specifier = ">=4.26.0" },
     { name = "markdownify", specifier = ">=0.13.1" },
     { name = "mcp", specifier = ">=2.3.0" },
     { name = "mcp-agent", specifier = ">=0.2.6" },
@@ -126,6 +130,7 @@ requires-dist = [
     { name = "sqlalchemy", marker = "extra == 'mlflow'", specifier = ">=2.1.8" },
     { name = "sqlite-vec", specifier = ">=0.1.9" },
     { name = "trafilatura", specifier = ">=2.0.0" },
+    { name = "types-jsonschema", marker = "extra == 'dev'", specifier = ">=4.26.0.20261006" },
     { name = "types-pyyaml", marker = "extra == 'dev'", specifier = ">=6.0.12.20260724" },
 ]
 provides-extras = ["mqtt", "dbus", "mlflow", "eval", "docs", "dev"]
@@ -143,6 +148,7 @@ dev = [
     { name = "pytest-mock", specifier = ">=3.17.0" },
     { name = "pytest-xdist", specifier = ">=3.8.0" },
     { name = "ruff", specifier = ">=0.17.5" },
+    { name = "types-jsonschema", specifier = ">=4.26.0.20261006" },
     { name = "types-pyyaml", specifier = ">=6.0.12.20260724" },
 ]
 
@@ -3505,6 +3511,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/ae/40/4a3db7990d1f62a53182aa96eaef57aeb2886a27f90a195bc66713565d31/typer-0.27.1.tar.gz", hash = "sha256:a79bef8469a79c45498e7b814ecf8d603cc7644e9acbd9e19cac0334240b18df", size = 203994, upload-time = "2026-08-03T14:41:03.438Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/43/89/9518bc0c3929bee36b3a4a8e3daddd6e03f92f9961c66d4983b837160543/typer-0.27.1-py3-none-any.whl", hash = "sha256:53150287edd11baeb4e4722c8e394fcdf8181c0ae89485cba8d25c778d5edd56", size = 122874, upload-time = "2026-08-03T14:41:04.391Z" },
+]
+
+[[package]]
+name = "types-jsonschema"
+version = "4.26.0.20261006"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "referencing" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/29/d2/1f742605f5a6d39f993134885b8de41c98af606871d3ebddaf3e776bd1eb/types_jsonschema-4.26.0.20261006.tar.gz", hash = "sha256:3eb7db61b6819d40addfdaac7173e749071a7d4a9a4394f0c844598ec84b2500", size = 16843, upload-time = "2026-10-06T08:16:07.318Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/8b/a0/4f2e3c0dc3d5cad958006f2e0307065cc8fe4fbf0393ff0b69d55ee9bbe5/types_jsonschema-4.26.0.20261006-py3-none-any.whl", hash = "sha256:29301f4e65e3928540cdf5e23ad716e38bb0c0b416a48dada213edd3d70206ec", size = 16113, upload-time = "2026-10-06T08:16:06.355Z" },
 ]
 
 [[package]]

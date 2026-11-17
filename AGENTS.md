@@ -337,6 +337,7 @@ Files: `background_tasks.py`, `background_task_tools.py`
 - `skill_env.json` - Per-skill env var allowlists
 - `audit/tool_calls.jsonl` - Append-only tool-call audit trail, rotated at 10 MB, rotated files kept 7 days
 - `traces/query_traces.jsonl` - Per-query traces with token usage and cost (100-day retention)
+- `traces/requests/` - Each model request as sent and its response, one JSON file per turn, only with `AI_ASSIST_CAPTURE_MODEL_REQUESTS=true` (debugging; mode 0600, not pruned)
 - `events.jsonl` - Event bridge (monitor→interactive IPC)
 - `interactive_history.txt` - Command history
 
@@ -368,6 +369,8 @@ Files: `config.py`, `state.py`, `config_watcher.py`, `file_watchdog.py`
 - `introspection_tools.py` - Context awareness (current date/time, working directory, user info)
 
 **MCP tools** from configured servers are dynamically loaded and prefixed with server name.
+
+**Progressive disclosure of tools** (`tool_disclosure.py`, `AI_ASSIST_DEFER_TOOLS`, on by default): only `CORE_TOOLS` are sent in full; every other tool, MCP or internal, is listed in the description of `introspection__call_tool`, read with `introspection__get_tool_help` and called through that proxy. `_execute_tools_concurrently` unwraps proxied calls first, so caching, write and loop detection, plan mode, the audit trail and `last_tool_calls` see the real tool, and validates them against the tool's schema (`check_arguments`, strict): an invalid call is not run and the error carries the tool's documentation. The tool list never changes, so the prompt cache and thinking-block signatures stay valid. Choose `CORE_TOOLS` from the audit trails, not by guess. Skills work the same way: only their front matter is in the system prompt.
 
 **Startup log**: `setup_logging()` logs the source commit of the ai-assist checkout (with "(uncommitted changes)" when tracked files changed), or nothing when it does not run from its own git checkout (`get_source_commit()` in `config.py`).
 
@@ -878,6 +881,7 @@ One-time future actions are `once` actions in `event-schedules.json`, created wi
 ai_assist/
 ├── main.py                    # CLI entry point
 ├── agent.py                   # MCP agent with tool execution
+├── tool_disclosure.py         # Core tools sent, others listed and called through a proxy
 ├── tool_result_router.py      # Result redirection/pagination (agent collaborator)
 ├── synthesis_engine.py        # Conversation synthesis + KG connections (agent collaborator)
 ├── system_prompt_builder.py   # System prompt + KG context assembly (agent collaborator)

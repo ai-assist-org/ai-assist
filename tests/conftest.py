@@ -31,16 +31,15 @@ def isolate_git_env(monkeypatch):
 def isolate_config_dir(tmp_path, monkeypatch):
     """Prevent tests from writing to ~/.ai-assist by redirecting get_config_dir() to a temp directory.
 
-    Sets AI_ASSIST_CONFIG_DIR (read live inside get_config_dir) so modules that bound
-    the function at import time via ``from .config import get_config_dir`` are also
-    isolated, and additionally patches the symbol for callers referencing it directly.
+    Sets AI_ASSIST_CONFIG_DIR, read live inside get_config_dir, so every caller is isolated.
+    Not a patch of the function: a module imported lazily under the patch (``from .config
+    import get_config_dir``) would keep that test's directory for the rest of the session.
     """
     test_config_dir = tmp_path / ".ai-assist"
     test_config_dir.mkdir(exist_ok=True)
     monkeypatch.setenv("AI_ASSIST_CONFIG_DIR", str(test_config_dir))
     monkeypatch.delenv("AI_ASSIST_PERMISSION_MODE", raising=False)
-    with patch("ai_assist.config.get_config_dir", return_value=test_config_dir):
-        yield test_config_dir
+    yield test_config_dir
 
 
 @pytest.fixture(autouse=True)

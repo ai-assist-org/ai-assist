@@ -2,9 +2,17 @@
 
 import json
 
+import pytest
+
 from ai_assist.agent import AiAssistAgent
 from ai_assist.config import AiAssistConfig
 from ai_assist.introspection_tools import IntrospectionTools
+
+
+@pytest.fixture(autouse=True)
+def _send_all_tools(monkeypatch):
+    """These tests cover the tools as sent in full (AI_ASSIST_DEFER_TOOLS=false); see test_tool_disclosure."""
+    monkeypatch.setenv("AI_ASSIST_DEFER_TOOLS", "false")
 
 
 def _prompt_text(blocks: list[dict]) -> str:
