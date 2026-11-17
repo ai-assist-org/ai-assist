@@ -80,6 +80,7 @@ instance-dir/
     .ai-assist/   <- config dir (no credentials)
     reports/      <- output reports
     workspace/    <- agent working area
+    dci-files/    <- /tmp/dci in the ai-assist and dci-mcp-server containers (dci feature)
 ```
 
 Credentials reach each container exclusively via compose environment injection.

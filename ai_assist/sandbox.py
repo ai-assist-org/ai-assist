@@ -70,6 +70,9 @@ def _compose_cmd(instance_dir: Path) -> list[str]:
 
 
 DEFAULT_IMAGE = "ai-assist-sandbox:latest"
+DCI_DOWNLOADS_DIR = "dci-files"
+DCI_DOWNLOADS_PATH = "/tmp/dci"  # nosec B108 - inside the containers, bind-mounted from DCI_DOWNLOADS_DIR
+DCI_DOWNLOADS_VOLUME = f"./sandbox/{DCI_DOWNLOADS_DIR}:{DCI_DOWNLOADS_PATH}:rw,z"
 
 
 def _build_compose(features: set[str], image: str = DEFAULT_IMAGE) -> dict:
@@ -152,9 +155,14 @@ def _build_compose(features: set[str], image: str = DEFAULT_IMAGE) -> dict:
 
     if "dci" in features:
         ai_assist_service.setdefault("depends_on", {})["dci-mcp-server"] = {"condition": "service_healthy"}
+        # The agent reads what the server downloads (rca prompt): same /tmp/dci, and the
+        # server's user (1001) mapped to the host user, as the ai-assist container is.
+        volumes.append(DCI_DOWNLOADS_VOLUME)
         services["dci-mcp-server"] = {
             "image": "dci-mcp-server:latest",
             "restart": "unless-stopped",
+            "userns_mode": "keep-id:uid=1001,gid=1001",
+            "volumes": [DCI_DOWNLOADS_VOLUME],
             "healthcheck": {
                 "test": [
                     "CMD",
@@ -175,11 +183,13 @@ def _build_compose(features: set[str], image: str = DEFAULT_IMAGE) -> dict:
                 "DCI_CS_URL": "${DCI_CS_URL:-https://api.distributed-ci.io}",
                 "JIRA_URL": "${JIRA_URL:-https://redhat.atlassian.net}",
                 "JIRA_API_TOKEN": "${JIRA_API_TOKEN:-}",
+                "JIRA_EMAIL": "${JIRA_EMAIL:-}",
                 "JIRA_WRITE_ENABLED": "${JIRA_WRITE_ENABLED:-false}",
                 "GITHUB_TOKEN": "${GITHUB_TOKEN:-}",
                 "GITLAB_TOKEN": "${GITLAB_TOKEN:-}",
                 "GITLAB_URL": "${GITLAB_URL:-https://gitlab.cee.redhat.com}",
                 "OFFLINE_TOKEN": "${OFFLINE_TOKEN:-}",
+                "DCI_DOWNLOAD_DIR_SHARED": "true",
             },
             "networks": ["mcp-net"],
         }
@@ -240,6 +250,16 @@ def _write_allowed_commands(path: Path, features: set[str]) -> None:
         commands.extend(FEATURE_COMMANDS.get(feature, []))
     with open(path, "w") as f:
         json.dump(commands, f, indent=2)
+        f.write("\n")
+
+
+def _allow_path(path: Path, allowed: str) -> None:
+    """Add a path to allowed_paths.json."""
+    import json
+
+    paths = json.loads(path.read_text())
+    with open(path, "w") as f:
+        json.dump([*paths, allowed], f, indent=2)
         f.write("\n")
 
 
@@ -307,6 +327,9 @@ def sandbox_init(name: str, features: set[str] | None = None, image: str = DEFAU
         yaml.dump(compose, f, default_flow_style=False, sort_keys=False)
 
     _write_allowed_commands(sandbox / ".ai-assist" / "allowed_commands.json", features)
+    if "dci" in features:
+        (sandbox / DCI_DOWNLOADS_DIR).mkdir()
+        _allow_path(sandbox / ".ai-assist" / "allowed_paths.json", DCI_DOWNLOADS_PATH)
     _write_command_env(sandbox / ".ai-assist" / "command_env.json", features)
     _write_mcp_servers(sandbox / ".ai-assist" / "mcp_servers.yaml", features)
     _write_litellm_config(sandbox / ".ai-assist" / "litellm_config.yaml", features)

@@ -146,6 +146,24 @@ class TestBuildCompose:
         assert "dci-mcp-server" not in compose["services"]
         assert "depends_on" not in compose["services"]["ai-assist"]
 
+    def test_dci_downloads_are_shared_with_the_agent(self):
+        """The rca prompt downloads files the agent must read: same /tmp/dci, same host user."""
+        services = _build_compose({"dci"})["services"]
+        shared = "./sandbox/dci-files:/tmp/dci:rw,z"
+        assert shared in services["ai-assist"]["volumes"]
+        assert services["dci-mcp-server"]["volumes"] == [shared]
+        assert services["dci-mcp-server"]["userns_mode"] == "keep-id:uid=1001,gid=1001"
+        assert services["dci-mcp-server"]["environment"]["DCI_DOWNLOAD_DIR_SHARED"] == "true"
+
+    def test_dci_passes_the_jira_email(self):
+        """Jira Cloud API tokens need basic auth with the account email; without it, bearer auth fails."""
+        env = _build_compose({"dci"})["services"]["dci-mcp-server"]["environment"]
+        assert env["JIRA_EMAIL"] == "${JIRA_EMAIL:-}"
+
+    def test_no_dci_no_shared_downloads(self):
+        volumes = _build_compose(set())["services"]["ai-assist"]["volumes"]
+        assert not any("dci-files" in v for v in volumes)
+
     def test_mcp_server_has_no_ai_credentials(self):
         compose = _build_compose(ALL_FEATURES)
         env = compose["services"]["dci-mcp-server"]["environment"]
@@ -289,6 +307,22 @@ class TestSandboxInit:
 
         command_env = tmp_path / "with-gh" / "sandbox" / ".ai-assist" / "command_env.json"
         assert json.loads(command_env.read_text()) == ["GITHUB_TOKEN"]
+
+    def test_dci_feature_prepares_the_shared_download_dir(self, tmp_path):
+        with patch.dict("os.environ", {"AI_ASSIST_INSTANCES_DIR": str(tmp_path)}):
+            sandbox_init("with-dci", features={"dci"})
+
+        sandbox = tmp_path / "with-dci" / "sandbox"
+        assert (sandbox / "dci-files").is_dir()  # podman refuses a missing bind-mount source
+        assert "/tmp/dci" in json.loads((sandbox / ".ai-assist" / "allowed_paths.json").read_text())
+
+    def test_no_shared_download_dir_without_dci(self, tmp_path):
+        with patch.dict("os.environ", {"AI_ASSIST_INSTANCES_DIR": str(tmp_path)}):
+            sandbox_init("no-dci", features={"git"})
+
+        sandbox = tmp_path / "no-dci" / "sandbox"
+        assert not (sandbox / "dci-files").exists()
+        assert "/tmp/dci" not in json.loads((sandbox / ".ai-assist" / "allowed_paths.json").read_text())
 
     def test_no_command_env_without_gh(self, tmp_path):
         with patch.dict("os.environ", {"AI_ASSIST_INSTANCES_DIR": str(tmp_path)}):
