@@ -22,6 +22,7 @@ podman build -t ai-assist-dev -f sandbox/profiles/dev/Dockerfile .
 ai-assist /sandbox init my-instance                        # default features (git,dci,vertex), base image
 ai-assist /sandbox init my-instance --features=ssh,git     # only ssh and git
 ai-assist /sandbox init my-instance --image=ai-assist-dev  # use dev image
+ai-assist /sandbox init my-instance --timezone=America/New_York  # default: the host's zone
 
 # Configure credentials
 cp ~/.ai-assist-instances/my-instance/.env.example ~/.ai-assist-instances/my-instance/.env

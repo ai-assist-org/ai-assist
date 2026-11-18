@@ -45,6 +45,21 @@ SANDBOX_TEMPLATE_FILES = {
 }
 
 
+_LOCALTIME = Path("/etc/localtime")
+
+
+def _host_timezone() -> str | None:
+    """The host's IANA timezone, so the sandbox's schedules fire when the user expects.
+
+    None when it cannot be determined: the container then keeps the image default (UTC).
+    """
+    if _LOCALTIME.is_symlink():
+        parts = _LOCALTIME.resolve().parts
+        if "zoneinfo" in parts:
+            return "/".join(parts[parts.index("zoneinfo") + 1 :])
+    return os.getenv("TZ") or None
+
+
 def get_instances_dir() -> Path:
     """Resolve the instances root directory.
 
@@ -70,13 +85,19 @@ def _compose_cmd(instance_dir: Path) -> list[str]:
 
 
 DEFAULT_IMAGE = "ai-assist-sandbox:latest"
+_UNSET = "\0unset"  # "use the host timezone", distinct from an explicit empty --timezone=
 DCI_DOWNLOADS_DIR = "dci-files"
 DCI_DOWNLOADS_PATH = "/tmp/dci"  # nosec B108 - inside the containers, bind-mounted from DCI_DOWNLOADS_DIR
 DCI_DOWNLOADS_VOLUME = f"./sandbox/{DCI_DOWNLOADS_DIR}:{DCI_DOWNLOADS_PATH}:rw,z"
 
 
-def _build_compose(features: set[str], image: str = DEFAULT_IMAGE) -> dict:
-    """Build compose dict with only the requested features."""
+def _build_compose(features: set[str], image: str = DEFAULT_IMAGE, timezone: str | None = None) -> dict:
+    """Build compose dict with only the requested features.
+
+    The timezone goes to every container: it decides when the agent's scheduled
+    actions fire, and keeps the clock of the files they share and of their logs
+    the same.  Tools that must answer in UTC do so explicitly, whatever TZ says.
+    """
     volumes = [
         "./sandbox:/workspace:rw,z",
     ]
@@ -227,6 +248,10 @@ def _build_compose(features: set[str], image: str = DEFAULT_IMAGE) -> dict:
             "networks": ["mcp-net"],
         }
 
+    if timezone:
+        for service in services.values():
+            service["environment"]["TZ"] = timezone
+
     return {
         "services": services,
         "networks": {"mcp-net": {"driver": "bridge"}},
@@ -301,8 +326,12 @@ def _parse_features(feature_str: str | None) -> set[str]:
     return features
 
 
-def sandbox_init(name: str, features: set[str] | None = None, image: str = DEFAULT_IMAGE) -> None:
+def sandbox_init(
+    name: str, features: set[str] | None = None, image: str = DEFAULT_IMAGE, timezone: str | None = _UNSET
+) -> None:
     """Scaffold a new sandbox instance directory."""
+    if timezone is _UNSET:
+        timezone = _host_timezone()
     if features is None:
         features = set(DEFAULT_FEATURES)
     for feature in sorted(features & HOST_ACCESS_WARNINGS.keys()):
@@ -322,7 +351,7 @@ def sandbox_init(name: str, features: set[str] | None = None, image: str = DEFAU
         dst = sandbox / dest_rel
         shutil.copy2(src, dst)
 
-    compose = _build_compose(features, image=image)
+    compose = _build_compose(features, image=image, timezone=timezone)
     with open(instance / "compose.yaml", "w") as f:
         yaml.dump(compose, f, default_flow_style=False, sort_keys=False)
 
@@ -340,6 +369,7 @@ def sandbox_init(name: str, features: set[str] | None = None, image: str = DEFAU
     console_print(f"Sandbox '{name}' initialized at {instance}")
     console_print(f"Image: {image}")
     console_print(f"Features: {enabled}")
+    console_print(f"Timezone: {timezone or 'container default (UTC)'}")
     console_print("\nNext steps:")
     console_print("  1. Copy .env.example to .env and fill in credentials:")
     console_print(f"     cp {instance}/.env.example {instance}/.env")
@@ -641,13 +671,16 @@ async def handle_sandbox_command(args: list[str]) -> None:
         name = args[1]
         feature_str = None
         image = DEFAULT_IMAGE
+        timezone: str | None = _UNSET
         for arg in args[2:]:
             if arg.startswith("--features="):
                 feature_str = arg.split("=", 1)[1]
             elif arg.startswith("--image="):
                 image = arg.split("=", 1)[1]
+            elif arg.startswith("--timezone="):
+                timezone = arg.split("=", 1)[1]
         features = _parse_features(feature_str)
-        sandbox_init(name, features, image=image)
+        sandbox_init(name, features, image=image, timezone=timezone)
     elif subcmd == "run":
         if len(args) < 3:
             console_print("Usage: ai-assist /sandbox run <name> /mode [args...]")
@@ -688,6 +721,7 @@ def _print_init_usage():
     console_print("ssh, gpg, gh and dbus give the sandbox host credentials or host control: enable them explicitly.")
     console_print()
     console_print(f"Default image: {DEFAULT_IMAGE}")
+    console_print(f"Default timezone: the host's ({_host_timezone() or 'undetermined: UTC'}); --timezone= for UTC")
     console_print("Build custom images from sandbox/profiles/ (e.g. ai-assist-dev)")
 
 

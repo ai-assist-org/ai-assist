@@ -637,6 +637,7 @@ ai-assist /sandbox init my-agent                          # all features, base i
 ai-assist /sandbox init my-agent --features=ssh,git       # only ssh and git
 ai-assist /sandbox init my-agent --features=litellm       # + a litellm sidecar for Gemini/GPT-5
 ai-assist /sandbox init my-agent --image=ai-assist-dev    # use dev image with extra tools
+ai-assist /sandbox init my-agent --timezone=America/New_York  # schedules fire in this zone (default: the host's)
 cp ~/.ai-assist-instances/my-agent/.env.example ~/.ai-assist-instances/my-agent/.env
 # Edit .env with credentials, edit sandbox/.ai-assist/identity.yaml
 

@@ -15,6 +15,7 @@ from ai_assist.sandbox import (
     SANDBOX_TEMPLATE_FILES,
     _build_compose,
     _compose_cmd,
+    _host_timezone,
     _parse_features,
     get_instances_dir,
     sandbox_init,
@@ -215,6 +216,65 @@ class TestBuildCompose:
         depends_on = compose["services"]["ai-assist"]["depends_on"]
         assert depends_on["dci-mcp-server"] == {"condition": "service_healthy"}
         assert depends_on["litellm"] == {"condition": "service_healthy"}
+
+
+class TestTimezone:
+    """The sandbox runs scheduled actions: its clock decides when they fire."""
+
+    def test_timezone_applies_to_every_container(self):
+        """They share files and their logs are read side by side: one clock for all."""
+        services = _build_compose({"dci", "litellm"}, timezone="America/New_York")["services"]
+        assert set(services) == {"ai-assist", "dci-mcp-server", "litellm"}
+        for name, service in services.items():
+            assert service["environment"]["TZ"] == "America/New_York", name
+
+    def test_no_timezone_leaves_the_containers_default(self):
+        services = _build_compose({"dci"}, timezone=None)["services"]
+        for name, service in services.items():
+            assert "TZ" not in service["environment"], name
+
+    def test_host_timezone_is_read_from_etc_localtime(self, tmp_path, monkeypatch):
+        zone = tmp_path / "usr/share/zoneinfo/Europe/Paris"
+        zone.parent.mkdir(parents=True)
+        zone.write_text("")
+        link = tmp_path / "localtime"
+        link.symlink_to(zone)
+        monkeypatch.setattr("ai_assist.sandbox._LOCALTIME", link)
+        assert _host_timezone() == "Europe/Paris"
+
+    def test_host_timezone_is_none_when_undeterminable(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("ai_assist.sandbox._LOCALTIME", tmp_path / "absent")
+        monkeypatch.delenv("TZ", raising=False)
+        assert _host_timezone() is None
+
+    def test_init_defaults_to_the_host_timezone(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("ai_assist.sandbox._host_timezone", lambda: "Europe/Paris")
+        with patch.dict("os.environ", {"AI_ASSIST_INSTANCES_DIR": str(tmp_path)}):
+            sandbox_init("tz-default", features=set())
+        compose = yaml.safe_load((tmp_path / "tz-default" / "compose.yaml").read_text())
+        assert compose["services"]["ai-assist"]["environment"]["TZ"] == "Europe/Paris"
+
+
+class TestInitTimezoneFlag:
+    @pytest.mark.asyncio
+    async def test_flag_overrides_the_host_timezone(self, tmp_path, monkeypatch):
+        from ai_assist.sandbox import handle_sandbox_command
+
+        monkeypatch.setattr("ai_assist.sandbox._host_timezone", lambda: "Europe/Paris")
+        with patch.dict("os.environ", {"AI_ASSIST_INSTANCES_DIR": str(tmp_path)}):
+            await handle_sandbox_command(["init", "tzflag", "--features=dci", "--timezone=America/New_York"])
+        compose = yaml.safe_load((tmp_path / "tzflag" / "compose.yaml").read_text())
+        assert compose["services"]["ai-assist"]["environment"]["TZ"] == "America/New_York"
+
+    @pytest.mark.asyncio
+    async def test_empty_flag_keeps_the_container_on_utc(self, tmp_path, monkeypatch):
+        from ai_assist.sandbox import handle_sandbox_command
+
+        monkeypatch.setattr("ai_assist.sandbox._host_timezone", lambda: "Europe/Paris")
+        with patch.dict("os.environ", {"AI_ASSIST_INSTANCES_DIR": str(tmp_path)}):
+            await handle_sandbox_command(["init", "tzutc", "--features=dci", "--timezone="])
+        compose = yaml.safe_load((tmp_path / "tzutc" / "compose.yaml").read_text())
+        assert "TZ" not in compose["services"]["ai-assist"]["environment"]
 
 
 class TestParseFeatures:
