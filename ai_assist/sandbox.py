@@ -486,8 +486,37 @@ def _sandbox_service_file(name: str) -> Path:
     return Path.home() / ".config" / "systemd" / "user" / f"{_sandbox_service_name(name)}.service"
 
 
+def _mcp_ready_commands(instance: Path, compose_cmd: str) -> list[str]:
+    """Unit lines bringing the MCP servers up and waiting until they are healthy.
+
+    podman only creates the timer that runs a container's healthcheck when it is
+    started from a session, not from a systemd service, so the compose
+    "service_healthy" condition would never be met and ai-assist would never
+    start.  Running the healthcheck here satisfies it.
+    """
+    services = _get_mcp_services(instance)
+    if not services:
+        return []
+    podman = shutil.which("podman") or "podman"
+    lines = [f"ExecStartPre={compose_cmd} up -d {' '.join(services)}"]
+    for service in services:
+        # $$ is a literal $ for systemd; the container is found by its compose labels
+        container = (
+            f"$$({podman} ps -q --filter label=io.podman.compose.project={instance.name} "
+            f"--filter label=io.podman.compose.service={service})"
+        )
+        lines.append(
+            f"ExecStartPre=/bin/sh -c 'until c={container}; "
+            f'[ -n "$$c" ] && {podman} healthcheck run "$$c" >/dev/null 2>&1; do sleep 2; done\''
+        )
+    return lines
+
+
 def _sandbox_service_content(name: str, instance: Path) -> str:
-    compose_cmd = " ".join(_compose_cmd(instance))
+    compose = _compose_cmd(instance)
+    # systemd resolves the executable against its own PATH, not Environment=PATH below
+    compose[0] = shutil.which(compose[0]) or compose[0]
+    compose_cmd = " ".join(compose)
     current_path = os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin")
 
     lines = [
@@ -501,6 +530,7 @@ def _sandbox_service_content(name: str, instance: Path) -> str:
         f"WorkingDirectory={instance}",
         f"Environment=PATH={current_path}",
         "Environment=PYTHONUNBUFFERED=1",
+        *_mcp_ready_commands(instance, compose_cmd),
         f"ExecStart={compose_cmd} up",
         f"ExecStop={compose_cmd} down",
         "Restart=on-failure",

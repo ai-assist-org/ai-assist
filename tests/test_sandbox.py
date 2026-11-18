@@ -447,13 +447,49 @@ class TestSandboxService:
     def test_service_content(self, tmp_path):
         from ai_assist.sandbox import _sandbox_service_content
 
-        content = _sandbox_service_content("test", tmp_path)
+        instance = self._instance(tmp_path, {"dci"})
+        content = _sandbox_service_content("test", instance)
         assert "[Unit]" in content
         assert "[Service]" in content
         assert "[Install]" in content
-        assert str(tmp_path) in content
+        assert str(instance) in content
         assert "podman-compose" in content
-        assert "podman-compose" in content
+
+    def _instance(self, tmp_path, features):
+        """A scaffolded instance whose compose.yaml the unit generator reads."""
+        with patch.dict("os.environ", {"AI_ASSIST_INSTANCES_DIR": str(tmp_path)}):
+            sandbox_init("svc", features=features)
+        return tmp_path / "svc"
+
+    def test_service_runs_compose_by_absolute_path(self, tmp_path):
+        """systemd resolves ExecStart against its own PATH and ignores Environment=PATH."""
+        from ai_assist.sandbox import _sandbox_service_content
+
+        instance = self._instance(tmp_path, {"dci"})
+        with patch("ai_assist.sandbox.shutil.which", return_value="/home/u/.local/bin/podman-compose"):
+            content = _sandbox_service_content("svc", instance)
+        for line in content.splitlines():
+            if line.startswith(("ExecStart=", "ExecStop=")):
+                assert line.split("=", 1)[1].startswith("/"), line
+
+    def test_service_makes_mcp_servers_ready_itself(self, tmp_path):
+        """podman creates no healthcheck timer under systemd, so condition:service_healthy never fires."""
+        from ai_assist.sandbox import _sandbox_service_content
+
+        instance = self._instance(tmp_path, {"dci"})
+        content = _sandbox_service_content("svc", instance)
+        pre = [line for line in content.splitlines() if line.startswith("ExecStartPre=")]
+        assert pre, "the unit must bring the MCP servers up and wait for them before ai-assist"
+        assert any("up -d" in p and "dci-mcp-server" in p for p in pre)
+        assert any("healthcheck run" in p for p in pre)
+        assert any("io.podman.compose.service=dci-mcp-server" in p for p in pre)
+
+    def test_service_without_mcp_servers_has_no_readiness_step(self, tmp_path):
+        from ai_assist.sandbox import _sandbox_service_content
+
+        instance = self._instance(tmp_path, set())
+        content = _sandbox_service_content("svc", instance)
+        assert not [line for line in content.splitlines() if line.startswith("ExecStartPre=")]
 
     def test_service_name(self):
         from ai_assist.sandbox import _sandbox_service_name
