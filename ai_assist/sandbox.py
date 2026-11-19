@@ -16,14 +16,15 @@ logger = logging.getLogger(__name__)
 
 TEMPLATES_DIR = Path(__file__).parent / "sandbox_templates"
 
-ALL_FEATURES = {"ssh", "gpg", "git", "gh", "dci", "dbus", "litellm", "vertex"}
+ALL_FEATURES = {"ssh", "gpg", "git", "gh", "dci", "dbus", "litellm", "vertex", "web"}
 DEFAULT_FEATURES = {"git", "dci", "vertex"}
-# Features that hand the sandbox host credentials or host control
+# Features that widen what the sandbox can reach, read or do
 HOST_ACCESS_WARNINGS = {
     "ssh": "the SSH agent lets the sandbox log in to every host your keys can reach",
     "dbus": "the session bus lets the sandbox start programs on the host (e.g. via systemd --user)",
     "gpg": "your GnuPG keyring is readable inside the sandbox",
     "gh": "your GitHub CLI credentials and GITHUB_TOKEN are usable inside the sandbox",
+    "web": "web search and fetch send what the agent is working on to third-party providers",
 }
 
 SANDBOX_SUBDIRS = [
@@ -43,6 +44,21 @@ SANDBOX_TEMPLATE_FILES = {
     ".ai-assist/allowed_commands.json": "allowed_commands.json",
     ".ai-assist/allowed_paths.json": "allowed_paths.json",
 }
+
+
+_LOCALTIME = Path("/etc/localtime")
+
+
+def _host_timezone() -> str | None:
+    """The host's IANA timezone, so the sandbox's schedules fire when the user expects.
+
+    None when it cannot be determined: the container then keeps the image default (UTC).
+    """
+    if _LOCALTIME.is_symlink():
+        parts = _LOCALTIME.resolve().parts
+        if "zoneinfo" in parts:
+            return "/".join(parts[parts.index("zoneinfo") + 1 :])
+    return os.getenv("TZ") or None
 
 
 def get_instances_dir() -> Path:
@@ -70,15 +86,27 @@ def _compose_cmd(instance_dir: Path) -> list[str]:
 
 
 DEFAULT_IMAGE = "ai-assist-sandbox:latest"
+_UNSET = "\0unset"  # "use the host timezone", distinct from an explicit empty --timezone=
+DCI_DOWNLOADS_DIR = "dci-files"
+DCI_DOWNLOADS_PATH = "/tmp/dci"  # nosec B108 - inside the containers, bind-mounted from DCI_DOWNLOADS_DIR
+DCI_DOWNLOADS_VOLUME = f"./sandbox/{DCI_DOWNLOADS_DIR}:{DCI_DOWNLOADS_PATH}:rw,z"
 
 
-def _build_compose(features: set[str], image: str = DEFAULT_IMAGE) -> dict:
-    """Build compose dict with only the requested features."""
+def _build_compose(features: set[str], image: str = DEFAULT_IMAGE, timezone: str | None = None) -> dict:
+    """Build compose dict with only the requested features.
+
+    The timezone goes to every container: it decides when the agent's scheduled
+    actions fire, and keeps the clock of the files they share and of their logs
+    the same.  Tools that must answer in UTC do so explicitly, whatever TZ says.
+    """
     volumes = [
         "./sandbox:/workspace:rw,z",
     ]
     environment: dict[str, str] = {
         "HOME": "/workspace",
+        # HOME is /workspace, so a script installing a tool for the user (uv, pip --user)
+        # lands in /workspace/.local/bin: without this nothing can run it afterwards
+        "PATH": "/workspace/.local/bin:/usr/local/bin:/usr/bin:/usr/local/sbin:/usr/sbin",
         "AI_ASSIST_CONFIG_DIR": "/workspace/.ai-assist",
         "AI_ASSIST_REPORTS_DIR": "/workspace/reports",
         "FASTEMBED_CACHE_PATH": "/workspace/.ai-assist/fastembed-cache",
@@ -96,6 +124,11 @@ def _build_compose(features: set[str], image: str = DEFAULT_IMAGE) -> dict:
         "AI_ASSIST_MODEL_MAX_TOKENS": "${AI_ASSIST_MODEL_MAX_TOKENS:-}",
         "AI_ASSIST_MODEL_CONTEXT_WINDOW": "${AI_ASSIST_MODEL_CONTEXT_WINDOW:-}",
     }
+    if "web" not in features:
+        # An agent triaging private work would send it to search providers
+        environment["AI_ASSIST_WEB_SEARCH_ENABLED"] = "false"
+        environment["AI_ASSIST_WEB_FETCH_ENABLED"] = "false"
+
     security_opt = []
 
     if "vertex" in features:
@@ -152,9 +185,14 @@ def _build_compose(features: set[str], image: str = DEFAULT_IMAGE) -> dict:
 
     if "dci" in features:
         ai_assist_service.setdefault("depends_on", {})["dci-mcp-server"] = {"condition": "service_healthy"}
+        # The agent reads what the server downloads (rca prompt): same /tmp/dci, and the
+        # server's user (1001) mapped to the host user, as the ai-assist container is.
+        volumes.append(DCI_DOWNLOADS_VOLUME)
         services["dci-mcp-server"] = {
             "image": "dci-mcp-server:latest",
             "restart": "unless-stopped",
+            "userns_mode": "keep-id:uid=1001,gid=1001",
+            "volumes": [DCI_DOWNLOADS_VOLUME],
             "healthcheck": {
                 "test": [
                     "CMD",
@@ -175,11 +213,13 @@ def _build_compose(features: set[str], image: str = DEFAULT_IMAGE) -> dict:
                 "DCI_CS_URL": "${DCI_CS_URL:-https://api.distributed-ci.io}",
                 "JIRA_URL": "${JIRA_URL:-https://redhat.atlassian.net}",
                 "JIRA_API_TOKEN": "${JIRA_API_TOKEN:-}",
+                "JIRA_EMAIL": "${JIRA_EMAIL:-}",
                 "JIRA_WRITE_ENABLED": "${JIRA_WRITE_ENABLED:-false}",
                 "GITHUB_TOKEN": "${GITHUB_TOKEN:-}",
                 "GITLAB_TOKEN": "${GITLAB_TOKEN:-}",
                 "GITLAB_URL": "${GITLAB_URL:-https://gitlab.cee.redhat.com}",
                 "OFFLINE_TOKEN": "${OFFLINE_TOKEN:-}",
+                "DCI_DOWNLOAD_DIR_SHARED": "true",
             },
             "networks": ["mcp-net"],
         }
@@ -217,6 +257,10 @@ def _build_compose(features: set[str], image: str = DEFAULT_IMAGE) -> dict:
             "networks": ["mcp-net"],
         }
 
+    if timezone:
+        for service in services.values():
+            service["environment"]["TZ"] = timezone
+
     return {
         "services": services,
         "networks": {"mcp-net": {"driver": "bridge"}},
@@ -240,6 +284,16 @@ def _write_allowed_commands(path: Path, features: set[str]) -> None:
         commands.extend(FEATURE_COMMANDS.get(feature, []))
     with open(path, "w") as f:
         json.dump(commands, f, indent=2)
+        f.write("\n")
+
+
+def _allow_path(path: Path, allowed: str) -> None:
+    """Add a path to allowed_paths.json."""
+    import json
+
+    paths = json.loads(path.read_text())
+    with open(path, "w") as f:
+        json.dump([*paths, allowed], f, indent=2)
         f.write("\n")
 
 
@@ -281,8 +335,12 @@ def _parse_features(feature_str: str | None) -> set[str]:
     return features
 
 
-def sandbox_init(name: str, features: set[str] | None = None, image: str = DEFAULT_IMAGE) -> None:
+def sandbox_init(
+    name: str, features: set[str] | None = None, image: str = DEFAULT_IMAGE, timezone: str | None = _UNSET
+) -> None:
     """Scaffold a new sandbox instance directory."""
+    if timezone is _UNSET:
+        timezone = _host_timezone()
     if features is None:
         features = set(DEFAULT_FEATURES)
     for feature in sorted(features & HOST_ACCESS_WARNINGS.keys()):
@@ -302,11 +360,14 @@ def sandbox_init(name: str, features: set[str] | None = None, image: str = DEFAU
         dst = sandbox / dest_rel
         shutil.copy2(src, dst)
 
-    compose = _build_compose(features, image=image)
+    compose = _build_compose(features, image=image, timezone=timezone)
     with open(instance / "compose.yaml", "w") as f:
         yaml.dump(compose, f, default_flow_style=False, sort_keys=False)
 
     _write_allowed_commands(sandbox / ".ai-assist" / "allowed_commands.json", features)
+    if "dci" in features:
+        (sandbox / DCI_DOWNLOADS_DIR).mkdir()
+        _allow_path(sandbox / ".ai-assist" / "allowed_paths.json", DCI_DOWNLOADS_PATH)
     _write_command_env(sandbox / ".ai-assist" / "command_env.json", features)
     _write_mcp_servers(sandbox / ".ai-assist" / "mcp_servers.yaml", features)
     _write_litellm_config(sandbox / ".ai-assist" / "litellm_config.yaml", features)
@@ -317,6 +378,7 @@ def sandbox_init(name: str, features: set[str] | None = None, image: str = DEFAU
     console_print(f"Sandbox '{name}' initialized at {instance}")
     console_print(f"Image: {image}")
     console_print(f"Features: {enabled}")
+    console_print(f"Timezone: {timezone or 'container default (UTC)'}")
     console_print("\nNext steps:")
     console_print("  1. Copy .env.example to .env and fill in credentials:")
     console_print(f"     cp {instance}/.env.example {instance}/.env")
@@ -463,8 +525,37 @@ def _sandbox_service_file(name: str) -> Path:
     return Path.home() / ".config" / "systemd" / "user" / f"{_sandbox_service_name(name)}.service"
 
 
+def _mcp_ready_commands(instance: Path, compose_cmd: str) -> list[str]:
+    """Unit lines bringing the MCP servers up and waiting until they are healthy.
+
+    podman only creates the timer that runs a container's healthcheck when it is
+    started from a session, not from a systemd service, so the compose
+    "service_healthy" condition would never be met and ai-assist would never
+    start.  Running the healthcheck here satisfies it.
+    """
+    services = _get_mcp_services(instance)
+    if not services:
+        return []
+    podman = shutil.which("podman") or "podman"
+    lines = [f"ExecStartPre={compose_cmd} up -d {' '.join(services)}"]
+    for service in services:
+        # $$ is a literal $ for systemd; the container is found by its compose labels
+        container = (
+            f"$$({podman} ps -q --filter label=io.podman.compose.project={instance.name} "
+            f"--filter label=io.podman.compose.service={service})"
+        )
+        lines.append(
+            f"ExecStartPre=/bin/sh -c 'until c={container}; "
+            f'[ -n "$$c" ] && {podman} healthcheck run "$$c" >/dev/null 2>&1; do sleep 2; done\''
+        )
+    return lines
+
+
 def _sandbox_service_content(name: str, instance: Path) -> str:
-    compose_cmd = " ".join(_compose_cmd(instance))
+    compose = _compose_cmd(instance)
+    # systemd resolves the executable against its own PATH, not Environment=PATH below
+    compose[0] = shutil.which(compose[0]) or compose[0]
+    compose_cmd = " ".join(compose)
     current_path = os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin")
 
     lines = [
@@ -478,6 +569,7 @@ def _sandbox_service_content(name: str, instance: Path) -> str:
         f"WorkingDirectory={instance}",
         f"Environment=PATH={current_path}",
         "Environment=PYTHONUNBUFFERED=1",
+        *_mcp_ready_commands(instance, compose_cmd),
         f"ExecStart={compose_cmd} up",
         f"ExecStop={compose_cmd} down",
         "Restart=on-failure",
@@ -588,13 +680,16 @@ async def handle_sandbox_command(args: list[str]) -> None:
         name = args[1]
         feature_str = None
         image = DEFAULT_IMAGE
+        timezone: str | None = _UNSET
         for arg in args[2:]:
             if arg.startswith("--features="):
                 feature_str = arg.split("=", 1)[1]
             elif arg.startswith("--image="):
                 image = arg.split("=", 1)[1]
+            elif arg.startswith("--timezone="):
+                timezone = arg.split("=", 1)[1]
         features = _parse_features(feature_str)
-        sandbox_init(name, features, image=image)
+        sandbox_init(name, features, image=image, timezone=timezone)
     elif subcmd == "run":
         if len(args) < 3:
             console_print("Usage: ai-assist /sandbox run <name> /mode [args...]")
@@ -635,6 +730,7 @@ def _print_init_usage():
     console_print("ssh, gpg, gh and dbus give the sandbox host credentials or host control: enable them explicitly.")
     console_print()
     console_print(f"Default image: {DEFAULT_IMAGE}")
+    console_print(f"Default timezone: the host's ({_host_timezone() or 'undetermined: UTC'}); --timezone= for UTC")
     console_print("Build custom images from sandbox/profiles/ (e.g. ai-assist-dev)")
 
 

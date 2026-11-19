@@ -337,9 +337,11 @@ async def run_awl_script(
             logger.exception("AWL workflow aborted")
             raise RuntimeError(f"AWL workflow aborted: {e}") from e
         if not result.success:
-            raise RuntimeError(
-                f"AWL workflow failed: {result.task_outcomes[-1].summary if result.task_outcomes else 'unknown error'}"
-            )
+            # the task that failed, not the last one to run: a later task succeeding
+            # made a failed workflow read as a success
+            failed = next((o for o in result.task_outcomes if o.status != "success"), None)
+            reason = f"task '{failed.task_id}': {failed.summary}" if failed else "unknown error"
+            raise RuntimeError(f"AWL workflow failed: {reason}")
         value = result.return_value
         if not value:
             return "Workflow completed successfully."

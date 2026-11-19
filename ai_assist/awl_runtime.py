@@ -64,6 +64,7 @@ class _BreakSignal(Exception):
 
 @dataclass
 class TaskOutcome:
+    task_id: str
     status: str
     summary: str
     exposed: dict[str, Any] = field(default_factory=dict)
@@ -593,6 +594,7 @@ class AWLRuntime:
                 expose_methods = dict.fromkeys(pre_exposed, "pre_extract")
                 self._variables.update(pre_exposed)
                 outcome = TaskOutcome(
+                    task_id=task.task_id,
                     status="success",
                     summary="pre-extracted from reports",
                     exposed=pre_exposed,
@@ -688,13 +690,17 @@ class AWLRuntime:
 
             self._variables.update(exposed)
             outcome = TaskOutcome(
-                status="success", summary=response[:200], exposed=exposed, expose_methods=expose_methods
+                task_id=task.task_id,
+                status="success",
+                summary=response[:200],
+                exposed=exposed,
+                expose_methods=expose_methods,
             )
             self._task_outcomes.append(outcome)
             self._log_exposed(task, exposed, expose_methods)
             await self._verify_task_success_jev(task, outcome)
         except Exception as e:
-            outcome = TaskOutcome(status="failed", summary=str(e))
+            outcome = TaskOutcome(task_id=task.task_id, status="failed", summary=str(e))
             self._task_outcomes.append(outcome)
             logger.exception("AWL task '%s' failed", task.task_id)
             console_print(f"    [-] failed: {e}")

@@ -110,6 +110,35 @@ class TestRunAwlScriptLocking:
                 fh.close()
 
     @pytest.mark.asyncio
+    async def test_failure_names_the_task_that_failed(self, tmp_path):
+        """It reported the last task's summary, so a failed run read as "written OK"."""
+        from ai_assist.awl_runtime import TaskOutcome
+
+        workflow, awl_path = self._mock_workflow(tmp_path)
+        with (
+            patch("ai_assist.awl_executor.get_config_dir", return_value=tmp_path),
+            patch("ai_assist.awl_executor.load_awl_workflow", return_value=(workflow, awl_path)),
+            patch("ai_assist.awl_executor.load_local_variables", return_value={}),
+            patch("ai_assist.awl_executor.get_reports_dir", return_value=tmp_path / "reports"),
+            patch("ai_assist.awl_runtime.AWLRuntime.execute", new_callable=AsyncMock) as mock_execute,
+        ):
+            mock_result = MagicMock()
+            mock_result.success = False
+            mock_result.task_outcomes = [
+                TaskOutcome(task_id="update_job_comment", status="failed", summary="process_job.sh exited with 1"),
+                TaskOutcome(task_id="write_report", status="success", summary="Report written OK"),
+            ]
+            mock_execute.return_value = mock_result
+
+            with pytest.raises(RuntimeError) as excinfo:
+                await run_awl_script("test.awl", MagicMock())
+
+        message = str(excinfo.value)
+        assert "update_job_comment" in message
+        assert "process_job.sh exited with 1" in message
+        assert "Report written OK" not in message
+
+    @pytest.mark.asyncio
     async def test_releases_lock_on_success(self, tmp_path):
         workflow, awl_path = self._mock_workflow(tmp_path)
 

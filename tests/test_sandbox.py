@@ -15,6 +15,7 @@ from ai_assist.sandbox import (
     SANDBOX_TEMPLATE_FILES,
     _build_compose,
     _compose_cmd,
+    _host_timezone,
     _parse_features,
     get_instances_dir,
     sandbox_init,
@@ -146,6 +147,24 @@ class TestBuildCompose:
         assert "dci-mcp-server" not in compose["services"]
         assert "depends_on" not in compose["services"]["ai-assist"]
 
+    def test_dci_downloads_are_shared_with_the_agent(self):
+        """The rca prompt downloads files the agent must read: same /tmp/dci, same host user."""
+        services = _build_compose({"dci"})["services"]
+        shared = "./sandbox/dci-files:/tmp/dci:rw,z"
+        assert shared in services["ai-assist"]["volumes"]
+        assert services["dci-mcp-server"]["volumes"] == [shared]
+        assert services["dci-mcp-server"]["userns_mode"] == "keep-id:uid=1001,gid=1001"
+        assert services["dci-mcp-server"]["environment"]["DCI_DOWNLOAD_DIR_SHARED"] == "true"
+
+    def test_dci_passes_the_jira_email(self):
+        """Jira Cloud API tokens need basic auth with the account email; without it, bearer auth fails."""
+        env = _build_compose({"dci"})["services"]["dci-mcp-server"]["environment"]
+        assert env["JIRA_EMAIL"] == "${JIRA_EMAIL:-}"
+
+    def test_no_dci_no_shared_downloads(self):
+        volumes = _build_compose(set())["services"]["ai-assist"]["volumes"]
+        assert not any("dci-files" in v for v in volumes)
+
     def test_mcp_server_has_no_ai_credentials(self):
         compose = _build_compose(ALL_FEATURES)
         env = compose["services"]["dci-mcp-server"]["environment"]
@@ -197,6 +216,90 @@ class TestBuildCompose:
         depends_on = compose["services"]["ai-assist"]["depends_on"]
         assert depends_on["dci-mcp-server"] == {"condition": "service_healthy"}
         assert depends_on["litellm"] == {"condition": "service_healthy"}
+
+
+class TestWebAccess:
+    """An autonomous agent searching the web sends whatever it is looking at to third parties."""
+
+    def test_web_is_off_unless_asked_for(self):
+        environment = _build_compose(DEFAULT_FEATURES)["services"]["ai-assist"]["environment"]
+        assert environment["AI_ASSIST_WEB_SEARCH_ENABLED"] == "false"
+        assert environment["AI_ASSIST_WEB_FETCH_ENABLED"] == "false"
+
+    def test_web_feature_leaves_the_tools_enabled(self):
+        environment = _build_compose({"web"})["services"]["ai-assist"]["environment"]
+        assert "AI_ASSIST_WEB_SEARCH_ENABLED" not in environment
+        assert "AI_ASSIST_WEB_FETCH_ENABLED" not in environment
+
+    def test_web_is_not_a_default_feature(self):
+        assert "web" in ALL_FEATURES
+        assert "web" not in DEFAULT_FEATURES
+
+
+class TestUserPath:
+    def test_user_installed_tools_are_reachable(self):
+        """HOME is /workspace, so scripts install into /workspace/.local/bin; PATH must find them."""
+        environment = _build_compose(DEFAULT_FEATURES)["services"]["ai-assist"]["environment"]
+        assert environment["PATH"].split(":")[0] == "/workspace/.local/bin"
+
+
+class TestTimezone:
+    """The sandbox runs scheduled actions: its clock decides when they fire."""
+
+    def test_timezone_applies_to_every_container(self):
+        """They share files and their logs are read side by side: one clock for all."""
+        services = _build_compose({"dci", "litellm"}, timezone="America/New_York")["services"]
+        assert set(services) == {"ai-assist", "dci-mcp-server", "litellm"}
+        for name, service in services.items():
+            assert service["environment"]["TZ"] == "America/New_York", name
+
+    def test_no_timezone_leaves_the_containers_default(self):
+        services = _build_compose({"dci"}, timezone=None)["services"]
+        for name, service in services.items():
+            assert "TZ" not in service["environment"], name
+
+    def test_host_timezone_is_read_from_etc_localtime(self, tmp_path, monkeypatch):
+        zone = tmp_path / "usr/share/zoneinfo/Europe/Paris"
+        zone.parent.mkdir(parents=True)
+        zone.write_text("")
+        link = tmp_path / "localtime"
+        link.symlink_to(zone)
+        monkeypatch.setattr("ai_assist.sandbox._LOCALTIME", link)
+        assert _host_timezone() == "Europe/Paris"
+
+    def test_host_timezone_is_none_when_undeterminable(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("ai_assist.sandbox._LOCALTIME", tmp_path / "absent")
+        monkeypatch.delenv("TZ", raising=False)
+        assert _host_timezone() is None
+
+    def test_init_defaults_to_the_host_timezone(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("ai_assist.sandbox._host_timezone", lambda: "Europe/Paris")
+        with patch.dict("os.environ", {"AI_ASSIST_INSTANCES_DIR": str(tmp_path)}):
+            sandbox_init("tz-default", features=set())
+        compose = yaml.safe_load((tmp_path / "tz-default" / "compose.yaml").read_text())
+        assert compose["services"]["ai-assist"]["environment"]["TZ"] == "Europe/Paris"
+
+
+class TestInitTimezoneFlag:
+    @pytest.mark.asyncio
+    async def test_flag_overrides_the_host_timezone(self, tmp_path, monkeypatch):
+        from ai_assist.sandbox import handle_sandbox_command
+
+        monkeypatch.setattr("ai_assist.sandbox._host_timezone", lambda: "Europe/Paris")
+        with patch.dict("os.environ", {"AI_ASSIST_INSTANCES_DIR": str(tmp_path)}):
+            await handle_sandbox_command(["init", "tzflag", "--features=dci", "--timezone=America/New_York"])
+        compose = yaml.safe_load((tmp_path / "tzflag" / "compose.yaml").read_text())
+        assert compose["services"]["ai-assist"]["environment"]["TZ"] == "America/New_York"
+
+    @pytest.mark.asyncio
+    async def test_empty_flag_keeps_the_container_on_utc(self, tmp_path, monkeypatch):
+        from ai_assist.sandbox import handle_sandbox_command
+
+        monkeypatch.setattr("ai_assist.sandbox._host_timezone", lambda: "Europe/Paris")
+        with patch.dict("os.environ", {"AI_ASSIST_INSTANCES_DIR": str(tmp_path)}):
+            await handle_sandbox_command(["init", "tzutc", "--features=dci", "--timezone="])
+        compose = yaml.safe_load((tmp_path / "tzutc" / "compose.yaml").read_text())
+        assert "TZ" not in compose["services"]["ai-assist"]["environment"]
 
 
 class TestParseFeatures:
@@ -290,6 +393,22 @@ class TestSandboxInit:
         command_env = tmp_path / "with-gh" / "sandbox" / ".ai-assist" / "command_env.json"
         assert json.loads(command_env.read_text()) == ["GITHUB_TOKEN"]
 
+    def test_dci_feature_prepares_the_shared_download_dir(self, tmp_path):
+        with patch.dict("os.environ", {"AI_ASSIST_INSTANCES_DIR": str(tmp_path)}):
+            sandbox_init("with-dci", features={"dci"})
+
+        sandbox = tmp_path / "with-dci" / "sandbox"
+        assert (sandbox / "dci-files").is_dir()  # podman refuses a missing bind-mount source
+        assert "/tmp/dci" in json.loads((sandbox / ".ai-assist" / "allowed_paths.json").read_text())
+
+    def test_no_shared_download_dir_without_dci(self, tmp_path):
+        with patch.dict("os.environ", {"AI_ASSIST_INSTANCES_DIR": str(tmp_path)}):
+            sandbox_init("no-dci", features={"git"})
+
+        sandbox = tmp_path / "no-dci" / "sandbox"
+        assert not (sandbox / "dci-files").exists()
+        assert "/tmp/dci" not in json.loads((sandbox / ".ai-assist" / "allowed_paths.json").read_text())
+
     def test_no_command_env_without_gh(self, tmp_path):
         with patch.dict("os.environ", {"AI_ASSIST_INSTANCES_DIR": str(tmp_path)}):
             sandbox_init("no-gh", features={"git"})
@@ -350,7 +469,7 @@ class TestSandboxInit:
         assert any("gcloud" in v for v in volumes)
         assert "dci-mcp-server" in compose["services"]
 
-    @pytest.mark.parametrize("feature", ["ssh", "dbus", "gpg", "gh"])
+    @pytest.mark.parametrize("feature", ["ssh", "dbus", "gpg", "gh", "web"])
     def test_init_warns_about_host_access_features(self, tmp_path, capsys, feature):
         with patch.dict("os.environ", {"AI_ASSIST_INSTANCES_DIR": str(tmp_path)}):
             sandbox_init("risky", features={feature})
@@ -413,13 +532,49 @@ class TestSandboxService:
     def test_service_content(self, tmp_path):
         from ai_assist.sandbox import _sandbox_service_content
 
-        content = _sandbox_service_content("test", tmp_path)
+        instance = self._instance(tmp_path, {"dci"})
+        content = _sandbox_service_content("test", instance)
         assert "[Unit]" in content
         assert "[Service]" in content
         assert "[Install]" in content
-        assert str(tmp_path) in content
+        assert str(instance) in content
         assert "podman-compose" in content
-        assert "podman-compose" in content
+
+    def _instance(self, tmp_path, features):
+        """A scaffolded instance whose compose.yaml the unit generator reads."""
+        with patch.dict("os.environ", {"AI_ASSIST_INSTANCES_DIR": str(tmp_path)}):
+            sandbox_init("svc", features=features)
+        return tmp_path / "svc"
+
+    def test_service_runs_compose_by_absolute_path(self, tmp_path):
+        """systemd resolves ExecStart against its own PATH and ignores Environment=PATH."""
+        from ai_assist.sandbox import _sandbox_service_content
+
+        instance = self._instance(tmp_path, {"dci"})
+        with patch("ai_assist.sandbox.shutil.which", return_value="/home/u/.local/bin/podman-compose"):
+            content = _sandbox_service_content("svc", instance)
+        for line in content.splitlines():
+            if line.startswith(("ExecStart=", "ExecStop=")):
+                assert line.split("=", 1)[1].startswith("/"), line
+
+    def test_service_makes_mcp_servers_ready_itself(self, tmp_path):
+        """podman creates no healthcheck timer under systemd, so condition:service_healthy never fires."""
+        from ai_assist.sandbox import _sandbox_service_content
+
+        instance = self._instance(tmp_path, {"dci"})
+        content = _sandbox_service_content("svc", instance)
+        pre = [line for line in content.splitlines() if line.startswith("ExecStartPre=")]
+        assert pre, "the unit must bring the MCP servers up and wait for them before ai-assist"
+        assert any("up -d" in p and "dci-mcp-server" in p for p in pre)
+        assert any("healthcheck run" in p for p in pre)
+        assert any("io.podman.compose.service=dci-mcp-server" in p for p in pre)
+
+    def test_service_without_mcp_servers_has_no_readiness_step(self, tmp_path):
+        from ai_assist.sandbox import _sandbox_service_content
+
+        instance = self._instance(tmp_path, set())
+        content = _sandbox_service_content("svc", instance)
+        assert not [line for line in content.splitlines() if line.startswith("ExecStartPre=")]
 
     def test_service_name(self):
         from ai_assist.sandbox import _sandbox_service_name

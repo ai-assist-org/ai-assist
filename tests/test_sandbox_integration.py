@@ -214,6 +214,42 @@ class TestMcpServerConnectivity:
         finally:
             subprocess.run([*compose, "down"], cwd=sandbox_instance, capture_output=True, check=False)
 
+    def test_agent_reads_and_writes_the_servers_downloads(self, sandbox_instance):
+        """The rca prompt downloads in the server and reads in the agent: one /tmp/dci, one owner."""
+        compose = _compose_cmd(sandbox_instance)
+        subprocess.run([*compose, "up", "-d", "dci-mcp-server"], cwd=sandbox_instance, check=True)
+        try:
+            server = subprocess.run(
+                [*compose, "exec", "dci-mcp-server", "sh", "-c", "mkdir -p /tmp/dci/job && echo log > /tmp/dci/job/f"],
+                cwd=sandbox_instance,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            assert server.returncode == 0, f"server cannot write /tmp/dci: {server.stderr}"
+            agent = subprocess.run(
+                [
+                    *compose,
+                    "run",
+                    "--rm",
+                    "--entrypoint",
+                    "sh",
+                    "ai-assist",
+                    "-c",
+                    "cat /tmp/dci/job/f && echo x > /tmp/dci/job/extracted && echo r > /tmp/dci/rca-job.md",
+                ],
+                cwd=sandbox_instance,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            assert agent.returncode == 0 and "log" in agent.stdout, f"agent: {agent.stdout} {agent.stderr}"
+            files = sandbox_instance / "sandbox" / "dci-files"
+            assert (files / "job" / "f").stat().st_uid == os.getuid()  # the server wrote as the host user
+            assert (files / "rca-job.md").read_text() == "r\n"
+        finally:
+            subprocess.run([*compose, "down"], cwd=sandbox_instance, capture_output=True, check=False)
+
 
 @skip_no_podman
 @skip_no_base_image
@@ -277,6 +313,22 @@ class TestHostConfigMounts:
             check=False,
         )
         assert "OK" in result.stdout
+
+
+@skip_no_podman
+@skip_no_base_image
+class TestBaseImage:
+    def test_base_image_has_gitleaks(self, sandbox_instance):
+        """Repos the agent commits to run a gitleaks pre-commit hook; without it commits abort."""
+        compose = _compose_cmd(sandbox_instance)
+        result = subprocess.run(
+            [*compose, "run", "--rm", "--no-deps", "--entrypoint", "gitleaks", "ai-assist", "version"],
+            cwd=sandbox_instance,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, f"gitleaks missing from the base image: {result.stderr[-300:]}"
 
 
 @skip_no_podman

@@ -22,6 +22,7 @@ podman build -t ai-assist-dev -f sandbox/profiles/dev/Dockerfile .
 ai-assist /sandbox init my-instance                        # default features (git,dci,vertex), base image
 ai-assist /sandbox init my-instance --features=ssh,git     # only ssh and git
 ai-assist /sandbox init my-instance --image=ai-assist-dev  # use dev image
+ai-assist /sandbox init my-instance --timezone=America/New_York  # default: the host's zone
 
 # Configure credentials
 cp ~/.ai-assist-instances/my-instance/.env.example ~/.ai-assist-instances/my-instance/.env
@@ -59,8 +60,9 @@ ai-assist /sandbox service my-instance remove
 | `gpg` | no | your GnuPG keyring |
 | `gh` | no | your GitHub CLI config and `GITHUB_TOKEN` |
 | `dbus` | no | your desktop session bus: it can start programs on the host |
+| `web` | no | `internal__web_search` / `internal__web_fetch`: the agent can send what it is working on to third-party providers |
 
-`/sandbox init` warns when `ssh`, `gpg`, `gh` or `dbus` is enabled. The sandbox
+`/sandbox init` warns when `ssh`, `gpg`, `gh`, `dbus` or `web` is enabled. The sandbox
 is the boundary for `autonomous` mode, so keep these off unless needed.
 
 **Note:** Systemd user services only run while you're logged in. To start at boot:
@@ -80,6 +82,7 @@ instance-dir/
     .ai-assist/   <- config dir (no credentials)
     reports/      <- output reports
     workspace/    <- agent working area
+    dci-files/    <- /tmp/dci in the ai-assist and dci-mcp-server containers (dci feature)
 ```
 
 Credentials reach each container exclusively via compose environment injection.
@@ -92,7 +95,7 @@ in `sandbox/profiles/` extend it with workload-specific tools:
 
 | Profile | Image | Tools |
 |---------|-------|-------|
-| base | `ai-assist-sandbox` | jq, git, ssh, gpg, gh |
+| base | `ai-assist-sandbox` | jq, git, ssh, gpg, gh, gitleaks |
 | dev | `ai-assist-dev` | + Go, Ansible, uv, shellcheck, yamllint, gcc, make, cmake |
 
 Create your own profile: add a `sandbox/profiles/<name>/Dockerfile` starting with

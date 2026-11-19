@@ -2,7 +2,7 @@ FROM registry.fedoraproject.org/fedora:44@sha256:86d20cf3b872310bafeb1e09152ffa9
 
 RUN dnf install -y \
         python3.14 python3.14-pip \
-        jq git openssh-clients gnupg2 gh && \
+        jq git openssh-clients gnupg2 gh gitleaks && \
     dnf clean all
 
 COPY . /opt/ai-assist
