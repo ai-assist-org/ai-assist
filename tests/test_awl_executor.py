@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from ai_assist.awl_executor import _try_lock_script, run_awl_script
+from ai_assist.awl_executor import AWLExecutionError, AWLScriptLockedError, _try_lock_script, run_awl_script
 
 
 @pytest.fixture
@@ -103,9 +103,8 @@ class TestRunAwlScriptLocking:
             assert fh is not None
 
             try:
-                result = await run_awl_script("test.awl", MagicMock())
-                assert "Skipped" in result
-                assert "already running" in result
+                with pytest.raises(AWLScriptLockedError, match="already running"):
+                    await run_awl_script("test.awl", MagicMock())
             finally:
                 fh.close()
 
@@ -252,3 +251,45 @@ class TestAllowSessionTmpdir:
 
         agent = MagicMock(spec=[])  # no filesystem_tools attribute
         _allow_session_tmpdir(agent)  # must not raise
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("success", [True, False])
+async def test_goal_cycle_result_is_propagated(tmp_path, success):
+    from ai_assist.awl_runtime import TaskOutcome, WorkflowResult
+
+    script = tmp_path / "goal.awl"
+    script.write_text("@start\n@goal check\n  Success: All done\n@end\n@end\n")
+    result = WorkflowResult(
+        success=success,
+        task_outcomes=[TaskOutcome(task_id="write", status="failed", summary="write refused")] if not success else [],
+    )
+    with patch("ai_assist.goal_runner.GoalRunner.run_cycle", new_callable=AsyncMock, return_value=result):
+        if success:
+            output = await run_awl_script(str(script), MagicMock())
+            assert "cycle completed" in output
+            assert "Status: active" in output
+        else:
+            with pytest.raises(AWLExecutionError, match="write refused"):
+                await run_awl_script(str(script), MagicMock())
+    lock = _try_lock_script(script)
+    assert lock is not None
+    lock.close()
+
+
+@pytest.mark.asyncio
+async def test_failure_message_uses_failed_task_not_last_task(tmp_path):
+    from ai_assist.awl_runtime import TaskOutcome, WorkflowResult
+
+    script = tmp_path / "flow.awl"
+    script.write_text("@start\n@end\n")
+    result = WorkflowResult(
+        success=False,
+        task_outcomes=[
+            TaskOutcome(task_id="write", status="failed", summary="write refused"),
+            TaskOutcome(task_id="cleanup", status="success", summary="cleanup done"),
+        ],
+    )
+    with patch("ai_assist.awl_runtime.AWLRuntime.execute", new_callable=AsyncMock, return_value=result):
+        with pytest.raises(AWLExecutionError, match="write refused"):
+            await run_awl_script(str(script), MagicMock())

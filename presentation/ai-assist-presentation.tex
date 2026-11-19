@@ -372,8 +372,8 @@ ai-assist
 \begin{column}{0.48\textwidth}
 \textbf{Project Stats}
 \begin{itemize}\scriptsize
-  \item 35,000+ lines of production code
-  \item 3,400+ tests across 158 test files
+  \item 35,363+ lines of production code
+  \item 3,420+ tests across 158 test files
   \item 17 core dependencies
   \item Pre-commit hooks: black, ruff, mypy, bandit, pylint similarities, pytest, eval replay, portability, action pins, markdown links
   \item Comprehensive user documentation: \href{https://ai-assist-org.github.io/ai-assist/}{\texttt{ai-assist-org.github.io/ai-assist}}
@@ -1719,6 +1719,7 @@ introspection__execute_awl_script(
   \item \alert{Success criteria} evaluated each cycle
   \item Variables \alert{persist between cycles}
   \item Safety: \texttt{max\_actions} limit per cycle
+  \item Failed cycles propagate to the scheduled action
 \end{itemize}
 
 \smallskip

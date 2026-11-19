@@ -257,3 +257,45 @@ def test_reminder_flag_round_trips():
 
     assert ActionDefinition.from_dict(action.to_dict()).reminder is True
     assert "reminder" not in _make_action().to_dict()
+
+
+@pytest.mark.asyncio
+async def test_locked_awl_action_records_failure(engine, state_manager, tmp_path):
+    from ai_assist.awl_executor import _try_lock_script
+
+    script = tmp_path / "locked.awl"
+    script.write_text("@start\n@end\n")
+    lock = _try_lock_script(script)
+    assert lock is not None
+    try:
+        with patch.object(engine, "_send_failure_notification", new_callable=AsyncMock):
+            result = await engine.execute_action(_make_action(prompt=str(script)))
+    finally:
+        lock.close()
+    assert result.success is False
+    assert "already running" in result.output
+    state = state_manager.get_monitor_state("action_test-action")
+    assert state.last_results["last_success"] is False
+    history = state_manager.get_history("action_test-action", limit=1)
+    entry = history[0].get("result", history[0])
+    assert entry["success"] is False
+    assert "already running" in entry["error"]
+
+
+@pytest.mark.asyncio
+async def test_failed_goal_action_records_failure(engine, state_manager, tmp_path):
+    from ai_assist.awl_runtime import TaskOutcome, WorkflowResult
+
+    script = tmp_path / "goal.awl"
+    script.write_text("@start\n@goal check\n  Success: All done\n@end\n@end\n")
+    outcome = WorkflowResult(
+        success=False, task_outcomes=[TaskOutcome(task_id="write", status="failed", summary="write refused")]
+    )
+    with (
+        patch("ai_assist.goal_runner.GoalRunner.run_cycle", new_callable=AsyncMock, return_value=outcome),
+        patch.object(engine, "_send_failure_notification", new_callable=AsyncMock),
+    ):
+        result = await engine.execute_action(_make_action(prompt=str(script)))
+    assert result.success is False
+    assert "write refused" in result.output
+    assert state_manager.get_monitor_state("action_test-action").last_results["last_success"] is False

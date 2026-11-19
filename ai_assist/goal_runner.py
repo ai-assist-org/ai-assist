@@ -80,7 +80,7 @@ class GoalRunner:
         state.cycle_count += 1
         state.last_run = datetime.now().isoformat()
 
-        if success_met:
+        if result.success and success_met:
             state.status = "completed"
             state.success_reason = result.variables.get("_goal_success_reason", "")
             logger.info("Goal %s completed: %s", self.goal_id, state.success_reason)
