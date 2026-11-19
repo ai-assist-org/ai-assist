@@ -236,6 +236,13 @@ class TestWebAccess:
         assert "web" not in DEFAULT_FEATURES
 
 
+class TestUserPath:
+    def test_user_installed_tools_are_reachable(self):
+        """HOME is /workspace, so scripts install into /workspace/.local/bin; PATH must find them."""
+        environment = _build_compose(DEFAULT_FEATURES)["services"]["ai-assist"]["environment"]
+        assert environment["PATH"].split(":")[0] == "/workspace/.local/bin"
+
+
 class TestTimezone:
     """The sandbox runs scheduled actions: its clock decides when they fire."""
 

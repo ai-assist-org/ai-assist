@@ -104,6 +104,9 @@ def _build_compose(features: set[str], image: str = DEFAULT_IMAGE, timezone: str
     ]
     environment: dict[str, str] = {
         "HOME": "/workspace",
+        # HOME is /workspace, so a script installing a tool for the user (uv, pip --user)
+        # lands in /workspace/.local/bin: without this nothing can run it afterwards
+        "PATH": "/workspace/.local/bin:/usr/local/bin:/usr/bin:/usr/local/sbin:/usr/sbin",
         "AI_ASSIST_CONFIG_DIR": "/workspace/.ai-assist",
         "AI_ASSIST_REPORTS_DIR": "/workspace/reports",
         "FASTEMBED_CACHE_PATH": "/workspace/.ai-assist/fastembed-cache",
