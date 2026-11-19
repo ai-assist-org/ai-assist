@@ -316,6 +316,22 @@ class TestHostConfigMounts:
 
 
 @skip_no_podman
+@skip_no_base_image
+class TestBaseImage:
+    def test_base_image_has_gitleaks(self, sandbox_instance):
+        """Repos the agent commits to run a gitleaks pre-commit hook; without it commits abort."""
+        compose = _compose_cmd(sandbox_instance)
+        result = subprocess.run(
+            [*compose, "run", "--rm", "--no-deps", "--entrypoint", "gitleaks", "ai-assist", "version"],
+            cwd=sandbox_instance,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, f"gitleaks missing from the base image: {result.stderr[-300:]}"
+
+
+@skip_no_podman
 @skip_no_dev_image
 class TestDevImage:
     def test_dev_image_has_go(self, tmp_path):

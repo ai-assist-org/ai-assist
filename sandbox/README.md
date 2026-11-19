@@ -95,7 +95,7 @@ in `sandbox/profiles/` extend it with workload-specific tools:
 
 | Profile | Image | Tools |
 |---------|-------|-------|
-| base | `ai-assist-sandbox` | jq, git, ssh, gpg, gh |
+| base | `ai-assist-sandbox` | jq, git, ssh, gpg, gh, gitleaks |
 | dev | `ai-assist-dev` | + Go, Ansible, uv, shellcheck, yamllint, gcc, make, cmake |
 
 Create your own profile: add a `sandbox/profiles/<name>/Dockerfile` starting with
