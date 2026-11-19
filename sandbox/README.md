@@ -60,8 +60,9 @@ ai-assist /sandbox service my-instance remove
 | `gpg` | no | your GnuPG keyring |
 | `gh` | no | your GitHub CLI config and `GITHUB_TOKEN` |
 | `dbus` | no | your desktop session bus: it can start programs on the host |
+| `web` | no | `internal__web_search` / `internal__web_fetch`: the agent can send what it is working on to third-party providers |
 
-`/sandbox init` warns when `ssh`, `gpg`, `gh` or `dbus` is enabled. The sandbox
+`/sandbox init` warns when `ssh`, `gpg`, `gh`, `dbus` or `web` is enabled. The sandbox
 is the boundary for `autonomous` mode, so keep these off unless needed.
 
 **Note:** Systemd user services only run while you're logged in. To start at boot:

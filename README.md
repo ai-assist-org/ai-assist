@@ -659,7 +659,7 @@ ai-assist /sandbox service my-agent stop
 ai-assist /sandbox service my-agent remove
 ```
 
-Available features: `ssh` (agent forwarding), `gpg` (commit signing), `git` (gitconfig), `gh` (GitHub CLI), `dci` (DCI MCP server), `dbus` (session bus).
+Available features: `ssh` (agent forwarding), `gpg` (commit signing), `git` (gitconfig), `gh` (GitHub CLI), `dci` (DCI MCP server), `dbus` (session bus), `web` (web search and fetch).
 
 Set `AI_ASSIST_PERMISSION_MODE` to `manual` (default), `auto`, or `autonomous`.
 Auto mode skips approval for conservative local development operations and asks
@@ -667,7 +667,9 @@ for unknown or external side effects. In interactive mode, `/mode` displays or
 temporarily changes the mode. `autonomous` is accepted only in an ai-assist
 sandbox and removes ai-assist command/path approval checks; it can use every
 credential, mount, MCP server, and network capability enabled for that sandbox.
-Vertex AI (gcloud) is always included. Default: all features enabled.
+Vertex AI (gcloud) is always included. Default: `git,dci,vertex`. Without `web`, the web
+search and fetch tools are disabled in the sandbox, so an autonomous agent cannot send
+what it is working on to third-party search providers.
 
 Image profiles allow different toolchains per workload. The base image (`ai-assist-sandbox`) has only runtime essentials.
 Custom profiles in `sandbox/profiles/` extend it — e.g. `ai-assist-dev` adds Go, Ansible, Python dev tools, shellcheck, and yamllint.

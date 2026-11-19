@@ -218,6 +218,24 @@ class TestBuildCompose:
         assert depends_on["litellm"] == {"condition": "service_healthy"}
 
 
+class TestWebAccess:
+    """An autonomous agent searching the web sends whatever it is looking at to third parties."""
+
+    def test_web_is_off_unless_asked_for(self):
+        environment = _build_compose(DEFAULT_FEATURES)["services"]["ai-assist"]["environment"]
+        assert environment["AI_ASSIST_WEB_SEARCH_ENABLED"] == "false"
+        assert environment["AI_ASSIST_WEB_FETCH_ENABLED"] == "false"
+
+    def test_web_feature_leaves_the_tools_enabled(self):
+        environment = _build_compose({"web"})["services"]["ai-assist"]["environment"]
+        assert "AI_ASSIST_WEB_SEARCH_ENABLED" not in environment
+        assert "AI_ASSIST_WEB_FETCH_ENABLED" not in environment
+
+    def test_web_is_not_a_default_feature(self):
+        assert "web" in ALL_FEATURES
+        assert "web" not in DEFAULT_FEATURES
+
+
 class TestTimezone:
     """The sandbox runs scheduled actions: its clock decides when they fire."""
 
@@ -444,7 +462,7 @@ class TestSandboxInit:
         assert any("gcloud" in v for v in volumes)
         assert "dci-mcp-server" in compose["services"]
 
-    @pytest.mark.parametrize("feature", ["ssh", "dbus", "gpg", "gh"])
+    @pytest.mark.parametrize("feature", ["ssh", "dbus", "gpg", "gh", "web"])
     def test_init_warns_about_host_access_features(self, tmp_path, capsys, feature):
         with patch.dict("os.environ", {"AI_ASSIST_INSTANCES_DIR": str(tmp_path)}):
             sandbox_init("risky", features={feature})

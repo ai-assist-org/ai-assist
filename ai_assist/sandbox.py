@@ -16,14 +16,15 @@ logger = logging.getLogger(__name__)
 
 TEMPLATES_DIR = Path(__file__).parent / "sandbox_templates"
 
-ALL_FEATURES = {"ssh", "gpg", "git", "gh", "dci", "dbus", "litellm", "vertex"}
+ALL_FEATURES = {"ssh", "gpg", "git", "gh", "dci", "dbus", "litellm", "vertex", "web"}
 DEFAULT_FEATURES = {"git", "dci", "vertex"}
-# Features that hand the sandbox host credentials or host control
+# Features that widen what the sandbox can reach, read or do
 HOST_ACCESS_WARNINGS = {
     "ssh": "the SSH agent lets the sandbox log in to every host your keys can reach",
     "dbus": "the session bus lets the sandbox start programs on the host (e.g. via systemd --user)",
     "gpg": "your GnuPG keyring is readable inside the sandbox",
     "gh": "your GitHub CLI credentials and GITHUB_TOKEN are usable inside the sandbox",
+    "web": "web search and fetch send what the agent is working on to third-party providers",
 }
 
 SANDBOX_SUBDIRS = [
@@ -120,6 +121,11 @@ def _build_compose(features: set[str], image: str = DEFAULT_IMAGE, timezone: str
         "AI_ASSIST_MODEL_MAX_TOKENS": "${AI_ASSIST_MODEL_MAX_TOKENS:-}",
         "AI_ASSIST_MODEL_CONTEXT_WINDOW": "${AI_ASSIST_MODEL_CONTEXT_WINDOW:-}",
     }
+    if "web" not in features:
+        # An agent triaging private work would send it to search providers
+        environment["AI_ASSIST_WEB_SEARCH_ENABLED"] = "false"
+        environment["AI_ASSIST_WEB_FETCH_ENABLED"] = "false"
+
     security_opt = []
 
     if "vertex" in features:
