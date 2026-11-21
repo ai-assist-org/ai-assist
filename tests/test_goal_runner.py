@@ -1,7 +1,7 @@
 """Tests for GoalRunner"""
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -197,3 +197,20 @@ class TestGoalRunner:
         state = state_mgr.load("test_goal")
         assert state.variables["failure_rate"] == 8
         assert state.status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_failed_cycle_cannot_complete_goal(tmp_path):
+    from ai_assist.awl_runtime import WorkflowResult
+
+    script = tmp_path / "goal.awl"
+    script.write_text(AWL_BASIC)
+    manager = GoalStateManager(tmp_path / "state")
+    runner = GoalRunner(script, _make_mock_agent(), manager)
+    runner.load()
+    outcome = WorkflowResult(success=False, variables={"_goal_success_met": True})
+    with patch("ai_assist.goal_runner.AWLRuntime.execute", new_callable=AsyncMock, return_value=outcome):
+        assert await runner.run_cycle() is outcome
+    state = manager.load("test_goal")
+    assert state.status == "active"
+    assert state.cycle_count == 1

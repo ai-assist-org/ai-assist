@@ -776,6 +776,10 @@ uv run ai-assist /run workflow.awl
 uv run ai-assist /run workflow.awl project=CILAB days=7
 ```
 
+A script already running in another session is reported as a non-execution error.
+Scheduled actions report failed AWL workflows as failures, including failed goal cycles.
+A successful goal cycle can leave the goal active for a later cycle.
+
 Initial variables can be passed as `key=value` arguments and are available as `${key}` in the script.
 
 AWL scripts define intent-driven workflows where the agent autonomously selects tools:

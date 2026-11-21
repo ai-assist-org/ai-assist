@@ -478,3 +478,29 @@ async def test_filesystem_records_path_denial(tmp_path, tmp_path_factory):
 
     conf = call.events
     assert conf and conf[0]["decision"] == "denied" and conf[0]["kind"] == "path"
+
+
+@pytest.mark.asyncio
+async def test_action_fails_when_named_script_is_locked(named_script):
+    from ai_assist.awl_executor import _try_lock_script
+
+    engine, action = _action_running_script(named_script, [])
+    from ai_assist.introspection_tools import IntrospectionTools
+
+    tools = IntrospectionTools()
+    tools.agent = engine.agent
+
+    async def query(prompt, **kwargs):
+        output = await tools.execute_tool("execute_awl_script", {"script_path": str(named_script)})
+        assert "already running" in output
+        return "Done, I emailed a summary."
+
+    engine.agent.query = AsyncMock(side_effect=query)
+    lock = _try_lock_script(named_script)
+    assert lock is not None
+    try:
+        result = await engine.execute_action(action)
+    finally:
+        lock.close()
+    assert result.success is False
+    assert "already running" in result.output

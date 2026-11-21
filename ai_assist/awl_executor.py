@@ -15,9 +15,12 @@ from contextvars import ContextVar
 from datetime import UTC, datetime
 from io import TextIOWrapper
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .config import get_config_dir, get_reports_dir, load_local_variables
+
+if TYPE_CHECKING:
+    from .awl_runtime import WorkflowResult
 
 logger = logging.getLogger(__name__)
 
@@ -244,6 +247,21 @@ def get_missing_variables(
     return required - provided
 
 
+class AWLExecutionError(RuntimeError):
+    """An AWL script failed or could not execute."""
+
+
+class AWLScriptLockedError(AWLExecutionError):
+    """The script did not execute because another run holds its lock."""
+
+
+def _check_workflow_result(result: WorkflowResult) -> None:
+    if not result.success:
+        failed = next((outcome for outcome in result.task_outcomes if outcome.status != "success"), None)
+        reason = f"task '{failed.task_id}': {failed.summary}" if failed else "unknown error"
+        raise AWLExecutionError(f"AWL workflow failed: {reason}")
+
+
 async def run_awl_script(
     prompt: str,
     agent: object,
@@ -287,7 +305,7 @@ async def run_awl_script(
                 }
             ),
         )
-        return f"Skipped: '{prompt}' is already running in another session."
+        raise AWLScriptLockedError(f"Skipped: '{prompt}' is already running in another session.")
 
     import time
 
@@ -317,7 +335,8 @@ async def run_awl_script(
                 _awl_path, agent, state_manager, initial_variables=merged, authorize_commands=authorize_commands
             )
             runner.load()
-            await runner.run_cycle()
+            result = await runner.run_cycle()
+            _check_workflow_result(result)
 
             lines = [f"Goal '{runner.goal_id}' cycle completed."]
             state = state_manager.load(runner.goal_id)
@@ -335,13 +354,8 @@ async def run_awl_script(
             result = await runtime.execute(workflow, variables=merged)
         except AWLRuntimeError as e:
             logger.exception("AWL workflow aborted")
-            raise RuntimeError(f"AWL workflow aborted: {e}") from e
-        if not result.success:
-            # the task that failed, not the last one to run: a later task succeeding
-            # made a failed workflow read as a success
-            failed = next((o for o in result.task_outcomes if o.status != "success"), None)
-            reason = f"task '{failed.task_id}': {failed.summary}" if failed else "unknown error"
-            raise RuntimeError(f"AWL workflow failed: {reason}")
+            raise AWLExecutionError(f"AWL workflow aborted: {e}") from e
+        _check_workflow_result(result)
         value = result.return_value
         if not value:
             return "Workflow completed successfully."
