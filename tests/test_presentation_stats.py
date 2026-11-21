@@ -25,7 +25,7 @@ def claimed(pattern: str) -> list[int]:
 
 def tracked(*patterns: str) -> list[Path]:
     out = subprocess.run(["git", "ls-files", *patterns], cwd=ROOT, capture_output=True, text=True, check=True)
-    return [ROOT / f for f in out.stdout.split()]
+    return [ROOT / f for f in out.stdout.split() if (ROOT / f).is_file()]
 
 
 def check(name: str, claim: int, actual: int) -> None:
