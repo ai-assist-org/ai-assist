@@ -624,6 +624,13 @@ See [docs/MULTI_INSTANCE.md](docs/MULTI_INSTANCE.md#systemd-services) for detail
 
 #### Sandbox Instances (Container Isolation)
 
+Inject any existing host directory read-only with
+`ai-assist /sandbox mount add <instance> <host-directory> <container-path>`.
+`/sandbox mount list <instance>` shows bindings, and
+`/sandbox mount remove <instance> <container-path>` removes one without touching its contents. Git,
+content updates, and workflow coordination belong to the orchestration layer.
+See [read-only directory mounts](sandbox/README.md#read-only-directory-mounts).
+
 Run ai-assist in isolated podman-compose stacks with per-service credential isolation.
 Each MCP server runs in its own container and only sees its own secrets:
 

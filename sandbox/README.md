@@ -88,6 +88,39 @@ instance-dir/
 Credentials reach each container exclusively via compose environment injection.
 The ai-assist container never sees MCP server credentials.
 
+### Read-only directory mounts
+
+Inject an existing host directory containing reference code, workflows, skills,
+documentation, configuration, or data:
+
+```bash
+ai-assist /sandbox mount add my-agent /srv/reference-data /data/reference
+ai-assist /sandbox mount list my-agent
+ai-assist /sandbox mount remove my-agent /data/reference
+```
+
+The CLI registers a read-only bind mount in `compose.yaml` and updates the agent's
+allowed paths. Adding or removing a mount does not change a running container;
+recreate the containers when your orchestration layer decides it is appropriate.
+Mount removal leaves the host directory and all its contents untouched.
+
+The sandbox does not copy or update content, manage Git repositories, pass
+credentials for updates, or take workflow locks. The orchestration/update layer
+owns the directory lifecycle and coordinates updates with running agents.
+Changes to files within the host directory are visible through the mount;
+replacing the host directory itself requires container recreation.
+
+Source paths must be existing directories (symlinks are resolved), outside any
+directory already mounted writable into the agent. Targets must be normalized
+absolute paths outside `/proc`, `/sys`, and `/dev`, and cannot replace or shadow
+existing mounts. A read-only child mount inside the writable `/workspace` is
+supported when its source has no writable alias. For example, authoritative
+workflows can live outside `sandbox/` on the host and be mounted at
+`/workspace/workflows`; a formatter cannot modify that directory inside the agent.
+
+Directory mounting is host-driven and is not exposed as an agent write tool.
+The kernel enforces read-only access for shell commands and file tools alike.
+
 ## Image Profiles
 
 The base image (`ai-assist-sandbox`) contains only runtime essentials. Custom profiles

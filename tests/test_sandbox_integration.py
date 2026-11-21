@@ -16,6 +16,7 @@ from ai_assist.sandbox import (
     _get_mcp_services,
     sandbox_init,
 )
+from ai_assist.sandbox_mounts import add_readonly_mount
 
 pytestmark = pytest.mark.integration
 
@@ -51,6 +52,58 @@ skip_no_dev_image = pytest.mark.skipif(
     not _has_image("ai-assist-dev:latest"),
     reason="ai-assist-dev image not built (run: make sandbox-build-dev)",
 )
+
+
+@skip_no_podman
+@skip_no_base_image
+def test_readonly_directory_mount_blocks_agent_writes_and_allows_host_updates(sandbox_instance_no_dci, tmp_path):
+    """Exercise directory injection without Git, helpers or workflow coordination."""
+    instance = sandbox_instance_no_dci
+    source = tmp_path / "reference-data"
+    source.mkdir()
+    (source / "reference.txt").write_text("original")
+    add_readonly_mount(instance, source, "/data/reference")
+    probe = """
+import sys
+from pathlib import Path
+p = Path('/data/reference/reference.txt')
+assert p.read_text() == sys.argv[1]
+for operation in [lambda: p.write_text('bad'), lambda: p.unlink(),
+                  lambda: p.rename(p.with_name('renamed')),
+                  lambda: Path('/data/reference/new').touch(),
+                  lambda: p.parent.rename('/data/renamed')]:
+    try:
+        operation()
+    except OSError:
+        pass
+    else:
+        raise AssertionError('Agent could mutate the read-only directory')
+print('READ_ONLY_OK')
+"""
+    for expected in ["original", "updated by host"]:
+        (source / "reference.txt").write_text(expected)
+        result = subprocess.run(
+            [
+                *_compose_cmd(instance),
+                "run",
+                "--rm",
+                "-T",
+                "--no-deps",
+                "--entrypoint",
+                "python3.14",
+                "ai-assist",
+                "-c",
+                probe,
+                expected,
+            ],
+            cwd=instance,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr + result.stdout
+        assert "READ_ONLY_OK" in result.stdout
+        assert (source / "reference.txt").read_text() == expected
 
 
 @pytest.fixture

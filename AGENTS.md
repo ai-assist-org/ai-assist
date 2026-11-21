@@ -191,6 +191,13 @@ Isolated ai-assist instances via podman-compose with per-service credential isol
 - **No pods**: uses `--in-pod=false` so each container has its own user namespace. The ai-assist container uses `userns_mode: keep-id`, MCP server containers run as their default user.
 
 Files: `sandbox.py`, `sandbox_templates/`, `config.py` (`MCPServerConfig.url` field)
+Read-only directory injection: `sandbox_mounts.py` implements
+`/sandbox mount add|remove|list`. It binds existing host directories read-only
+and updates allowed paths; sources with writable aliases are refused. The
+sandbox does not manage Git, credentials, content updates, or workflow locks:
+those belong to the orchestration/update layer. Changing mount configuration
+requires container recreation; the CLI does not restart an active instance.
+
 Container images: `sandbox/ai-assist/Dockerfile`, profiles in `sandbox/profiles/`
 DCI MCP server image: built from upstream `Containerfile.sse`
 
