@@ -1119,12 +1119,13 @@ ai-assist/
 ├── VERTEX_AI_SETUP.md     # Vertex AI troubleshooting
 ├── SECURITY.md            # Security model
 ├── CONTRIBUTING.md        # Development setup
-└── AGENTS.md              # Development philosophy
+└── AGENTS.md              # Agent instructions (invariants, where to look)
 ```
 
 ## Documentation
 
 - **[docs/AWL_SPECIFICATIONS.md](docs/AWL_SPECIFICATIONS.md)** - AWL (Agent Workflow Language) specification
+- **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** - Architecture: query loop, subsystem internals, code map
 - **[docs/PERSONAL_SKILLS.md](docs/PERSONAL_SKILLS.md)** - Creating and managing personal Agent Skills
 - **[docs/PLUGINS.md](docs/PLUGINS.md)** - Installing Claude Code plugins (skills + MCP + marketplace)
 - **[docs/PERMISSION_MODES.md](docs/PERMISSION_MODES.md)** - Command approval and autonomous sandbox modes
@@ -1137,7 +1138,7 @@ ai-assist/
 - **[litellm-proxy/README.md](litellm-proxy/README.md)** - Reach Gemini/GPT-5 via a containerized LiteLLM proxy
 - **[SECURITY.md](SECURITY.md)** - Security model for skill script execution
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** - Development setup with pre-commit hooks
-- **[AGENTS.md](AGENTS.md)** - Development philosophy (TDD/DRY/Tracer Bullet)
+- **[AGENTS.md](AGENTS.md)** - Agent instructions: invariants and where to look
 - **[presentation/](presentation/)** - Project presentation slides (LaTeX/Beamer)
 
 ## Documentation Site

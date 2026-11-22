@@ -1,1102 +1,176 @@
-# AGENTS.md - Development Guide for AI Agents and Developers
-
-This document provides guidance for AI agents and developers working on the ai-assist project. It outlines the project architecture, development principles, and best practices.
-
-## Project Overview
-
-**ai-assist** (AI Assistant for Knowledge Workers) is an intelligent assistant that integrates with Claude, MCP (Model Context Protocol) servers, Agent Skills, and a temporal knowledge graph to provide intelligent monitoring, querying, and workflow automation.
-
-### Core Architecture
-
-```
-┌─────────────────────────────────────────────────────────┐
-│                    ai-assist CLI Interface                    │
-│         (Interactive / Monitor / Query modes)            │
-└───────────────────────┬─────────────────────────────────┘
-                        │
-┌───────────────────────▼─────────────────────────────────┐
-│                    AiAssistAgent                             │
-│  - Manages conversation with Claude                      │
-│  - Routes tool calls to MCP servers                      │
-│  - Handles multi-turn interactions                       │
-└───────────────────────┬─────────────────────────────────┘
-                        │
-        ┌───────────────┼───────────────┐
-        │               │               │
-┌───────▼────────┐ ┌───▼────────┐ ┌───▼────────────┐
-│ dci-mcp-server │ │   Future   │ │    Future      │
-│                │ │   MCP      │ │     MCP        │
-│ - DCI Tools    │ │  Servers   │ │   Servers      │
-│ - Jira Tools   │ │            │ │                │
-│ - Google Docs  │ │            │ │                │
-└────────────────┘ └────────────┘ └────────────────┘
-```
-
-The system has five major subsystems:
-
-1. **MCP Integration** (`agent.py`): Connects to MCP servers (DCI, Jira, etc.) and routes tool calls using the format `server_name__tool_name`
-2. **AWL Runtime** (`awl_parser.py`, `awl_runtime.py`, `awl_ast.py`, `awl_expressions.py`): Agent Workflow Language interpreter for multi-step workflows
-3. **Knowledge Graph** (`knowledge_graph.py`): Temporal SQLite database with vector embeddings for entity tracking, change detection, and conversation memory
-4. **Agent Skills** (`skills_loader.py`, `skills_manager.py`): Loads agentskills.io-compliant skills with optional sandboxed script execution
-5. **Event Sources** (`event_sources.py`, `event_source_mqtt.py`, `event_source_dbus.py`, `event_source_file.py`): Pluggable event system for reactive task triggering via MQTT, D-Bus, filesystem changes, etc.
-
-Key interaction modes:
-- **Interactive** (`tui_interactive.py`): Rich TUI with streaming responses, history, tab completion
-- **Plan Mode** (`plan_mode.py`): `/plan <task>` in interactive mode — agent explores with read-only tools, proposes a plan, user approves/rejects/revises, then agent executes with full tools
-- **Monitor** (`monitors.py`, `task_runner.py`): Periodic scheduled tasks with hot-reload
-- **Query** (`main.py`): One-off queries
-- **AWL** (`awl_runtime.py`): Multi-step workflow execution with conditionals and loops
-
-### MCP Agent Flow
-```
-User → CLI (main.py) → AiAssistAgent (agent.py) → Claude API
-                                ↓
-                        MCP Server Sessions
-                        (DCI, Jira, GitHub, etc.)
-                                ↓
-                        Tool Results → Response
-```
-
-Both interactive and collected responses use the streaming agent loop in `agent.py`.
-`query()` collects the final answer from `query_streaming()`; keep execution logic in
-the shared streaming path. Both entry points default to a 600-second time budget
-(`AI_ASSIST_QUERY_TIMEOUT`); `max_time_seconds=NO_TIME_LIMIT` (AWL tasks without `max_time=`,
-scheduled actions) removes it. Time spent waiting on an approval prompt (`pause_timeout()`)
-doesn't count. Work limits wind a query down instead of cutting it off: the turn budget is
-soft (at `max_turns` the model is told to wrap up and gets up to 50% more turns), and when
-that runs out or the time budget passes (checked between turns) the model gets one final
-turn, offered only `internal__finish_task` in an AWL task and no tools otherwise. The hard
-time cut-off is a backstop at 1.5x the budget (`_HARD_TIME_LIMIT_FACTOR`). A model API failure comes back from `query()` as error text unless the caller passes `raise_on_api_error=True` (AWL tasks and scheduled actions do, also via `execute_mcp_prompt`), which raises `QueryAPIError` instead. Similarly `raise_on_incomplete=True` (AWL tasks) raises `QueryIncompleteError` when the query stops without a final answer (tool loop, no progress, refusal, an AWL task that still doesn't report after its final turn); both live in `query_errors.py`. A model turn whose stream drops mid-reply (transport/SSL/connection-reset error) is retried up to twice (`_STREAM_RETRY_BACKOFF_SECONDS`) without consuming the turn budget, but only if the turn hasn't added to the conversation yet. When the messages exceed `AI_ASSIST_TOTAL_MESSAGES_PCT` of the context window, `_trim_oldest_messages` drops whole oldest exchanges (the list keeps starting on a user text turn) and never the current query's question or its turns; each drop is logged. An AWL script run from a tool call doesn't count against the enclosing
-query either (`exempt_enclosing_queries_from_timeout()`): the script bounds itself per
-task, and its tasks keep their own budgets.
-
-### AWL (Agent Workflow Language)
-
-AWL scripts define intent-driven workflows where the agent autonomously selects tools to achieve goals. Key constructs:
-
-- `@task <name> [@hints] [max_tool_calls=N] [max_time=N] [model=<level>] [effort=<level>]`: Defines a goal for the agent to achieve, exposing variables. `model=` selects an abstract capability level for this task — `low`, `medium`, `high`, or `default` (e.g., `low` for cheap data gathering, `high` for deep analysis); validated at load time. Each level maps to a concrete model via `AI_ASSIST_MODEL_LOW`/`_MEDIUM`/`_HIGH`, falling back to `default` (the session model, `AI_ASSIST_MODEL`) when unset. `default` and `high` fall back to each other, so setting only one is enough. Omitting `model=` uses `default`. `effort=` overrides the reasoning effort for this task (`low`/`medium`/`high`/`xhigh`/`max`, or `no` to send none).
-
-**Effort configuration**: Each `AI_ASSIST_MODEL*` variable accepts an optional `:effort` suffix — the session model, the AWL tiers (`AI_ASSIST_MODEL_LOW`/`_MEDIUM`/`_HIGH`), and the per-role overrides (`AI_ASSIST_SYNTHESIS_MODEL`, `AI_ASSIST_COMPACTION_MODEL`) — as does `AI_ASSIST_EFFORT` for the session default. Values are `low`/`medium`/`high`/`xhigh`/`max`, or `no` (send no effort — for models that reject the parameter). Resolution is `effort=` override (AWL only) → the model var's own suffix → the session effort; a model var with no suffix inherits the session effort, and `no` opts it out. AWL tiers resolve via `resolve_tier` (`awl_runtime.py`); the synthesis/compaction roles via `AiAssistAgent._model_for` / `_effort_for`. Effort is omitted from the request when unset or `no`. Run `ai-assist /doctor` to check every configured model+effort with a cheap live query (resolved exactly as the runtime resolves it), plus the jev goal-success service when configured.
-- **Task outcome**: while a task runs, the agent gets `internal__finish_task` (`task_result_tool.py`, offered by `_build_api_tools` only when active). It reports `status="success"` with the exposed `values`, or `status="failed"` with a reason, which fails the task through the normal failure path. A turn that ends without calling it gets one nudge to continue or report (`_finish_nudge_fired`); after that, values are extracted from the reply, and missing ones stay `None` (the expose nudge must not guess). Limitation: a nested non-AWL query made during a task also sees the tool.
-- `@if <condition>`: Conditional execution with Python-like expressions
-- `@loop <var> as <item> limit=N collect=<var>`: Iteration with map-reduce pattern
-- `${var}`: Variable interpolation in goals and text
-- `@no-kg`, `@no-history`, `@continue-on-failure`: Hints to suppress knowledge graph context, conversation history, or fail-fast behavior
-
-Files: `awl_parser.py` (parser), `awl_runtime.py` (executor), `awl_ast.py` (AST nodes), `awl_expressions.py` (variable interpolation and expression evaluation)
-
-Commands written in backticks are auto-authorized only for scripts the user started: `/run`, an action whose prompt is the script, or (`is_trusted_by_action` in `awl_executor.py`) a script named by the confirmed prompt of the running action. When such a named script fails or cannot acquire its execution lock, the action is reported as failed even if the agent carries on. Both `@start` and `@goal` execution check `WorkflowResult.success`; a failed cycle cannot complete a goal. The audit log attributes each tool call to its script and task (`AuditLogger.task_context`, entered by `AWLRuntime`).
-
-Each `_execute_tool` call runs inside `audited_call()` (`audit.py`, a `ContextVar`, so concurrent calls stay separate): it gives the call its `correlation_id`, collects the authorization events (`record_authorization_event` — prompts via `FilesystemTools._record_confirmation`, policy refusals of paths, commands and protected configs, plan mode) and lets one record through per call. New refusal paths must record an event, or the call is logged as `autonomous`. See SECURITY.md §6 for the record format, rotation and `AI_ASSIST_AUDIT_SINK`.
-
-See `docs/AWL_SPECIFICATIONS.md` for complete syntax.
-
-### Knowledge Graph
-
-Bi-temporal database tracking:
-- Entities (DCI jobs, Jira tickets, conversations, knowledge)
-- Relationships between entities
-- Valid time (when facts are true in reality) and transaction time (when the agent learned about them)
-- Vector embeddings for semantic search (`embedding.py`, `context.py`)
-
-**Temporal Tools**: Point-in-time snapshots (`kg_snapshot`), time-filtered search (`search_knowledge` with `since`), and knowledge expiry (`expire_knowledge`) let the agent query and manage knowledge across time.
-
-**KG Synthesis**: Nightly task that snapshots new/changed reports and discovers connections between KG entities. It does *not* extract knowledge from conversations — that is handled by compaction-time extraction (below). Recalled knowledge is injected into future queries via semantic similarity.
-
-**Compaction-time extraction**: In interactive mode, durable facts the user stated are extracted into the KG when the conversation is compacted, cleared (`/clear`), or the session exits (synchronous on exit so short sessions still contribute), as a background task, so they survive a growing context window. Extraction reuses an existing `project_context` key when a new fact is a near-duplicate (semantic similarity ≥ `AiAssistAgent.DEDUP_SIM_THRESHOLD`), letting the KG's last-write-wins upsert supersede it instead of accreting parallel entries. The threshold is deliberately conservative — a false merge overwrites a distinct fact irrecoverably.
-
-**Auto Context Injection**: Semantically relevant entities are automatically surfaced in the per-query context sent with the user's turn, based on query similarity. Bookkeeping types in `KnowledgeGraph.NON_EMBEDDED_TYPES` (`tool_result`, `skill_performance`) are never embedded, so they stay out of semantic recall and context injection.
-
-Files: `knowledge_graph.py`, `kg_queries.py`, `kg_query_tools.py`, `knowledge_tools.py`, `embedding.py`, `context.py`
-
-### Agent Skills
-
-Skills follow the [agentskills.io](https://agentskills.io) specification:
-- SKILL.md with YAML frontmatter (name, description, allowed-tools)
-- Optional scripts/ directory for sandboxed execution
-- Loaded into system prompt automatically (model-invoked)
-- User-invocable as `/<skill-name> [args]` in interactive mode; the SKILL.md
-  body is run as a query with `$ARGUMENTS`/`$1` substitution (quoted segments
-  stay grouped). Opt out with `user-invocable: false`. Built-in commands take
-  precedence over same-named skills. Handled by `handle_skill_invocation`
-  (`tui_interactive.py`).
-
-**Usage tracking**: Each skill invocation — model-invoked (via `introspection__get_skill_help`) and manual (`/<skill-name>`) — is counted in the KG as a `skill_performance` entity (invocation count + last used). View with `/skill/stats`. Recording is best-effort and never blocks the skill run. This is invocation-only (no outcome/confidence) by design; `skill_performance.py` carries the confidence-update machinery for a future outcome-scoring step.
-
-**Script Execution Security** (disabled by default):
-- Requires `AI_ASSIST_ALLOW_SCRIPT_EXECUTION=true`
-- Sandboxed environment (no API keys, 30s timeout, 20KB output limit)
-- Per-skill env var allowlist via `/skill/add_env` (persisted in `~/.ai-assist/skill_env.json`)
-
-Files: `skills_loader.py`, `skills_manager.py`, `script_execution_tools.py`, `security.py`, `skill_performance.py`
-
-### Claude Code Plugins
-
-Loads a subset of the [Claude Code plugin](https://docs.claude.com/en/docs/claude-code/plugins)
-bundle format (`.claude-plugin/plugin.json` + `skills/*/SKILL.md` + legacy
-`commands/*.md` + `.mcp.json`):
-- Plugin skills/commands are registered into the shared
-  `skills_manager.loaded_skills` dict under **namespaced keys** (`plugin:skill`),
-  so every skill consumer (system prompt, completion, `/help`, invocation) works
-  unchanged. Namespacing lives at the registry-key layer only, never in
-  `SkillMetadata.name`.
-- Bundled MCP servers (`.mcp.json`) are namespaced (`plugin__server`) and merged
-  into `config.mcp_servers`; kept in `plugins_manager.plugin_mcp_servers` and
-  re-merged after any `reload_mcp_servers()` / skills reload so they survive.
-- `agents/` (subagents) and `hooks/` are **not** supported — skipped with a notice.
-- Commands: `/plugin/install|uninstall|update|list|search`,
-  `/plugin/marketplace add [nickname]|update [name]|list`. Install by git/local
-  source or by name via a registered marketplace (`.claude-plugin/marketplace.json`).
-  `update` reinstalls from the recorded source (with rollback on failure);
-  marketplace `add` refuses to mask a different registration and accepts a
-  nickname; marketplace `update` refreshes the cached repo. A plugin name
-  offered by several marketplaces is ambiguous: install errors with the
-  candidates, disambiguate with `<name>@<marketplace>`. Installing bundled
-  MCP servers prompts for confirmation before connecting.
-- Skills have the same lifecycle: `/skill/install|uninstall|update|list|search`
-  (`update` reinstalls, rolling back on failure; ClawHub skills re-pull latest).
-- The agent gets **read-only** introspection over installed skills/plugins via
-  `introspection__list_skills` / `introspection__list_plugins`; install/update/
-  uninstall stay human-driven slash commands (no agent write tools).
-- User docs in `docs/PLUGINS.md`.
-
-Files: `plugins_loader.py`, `plugins_manager.py`, `skills_manager.py`
-
-### Service Management
-
-Cross-platform background service installation for persistent monitoring:
-- **Linux**: systemd user services with `journalctl` logging
-- **macOS**: launchd user agents with file-based logging (`~/Library/Logs/`)
-- Abstract `ServiceBackend` pattern for platform extensibility
-- Preserves user environment (PATH, env vars) in service context
-- Multiple instance support via config directory naming
-
-Files: `service.py`
-
-### Sandbox Instances (Container Isolation)
-
-Isolated ai-assist instances via podman-compose with per-service credential isolation. Each MCP server runs in its own container and only receives its own secrets via compose environment injection. The ai-assist container never sees MCP server credentials.
-
-- **SSE transport**: MCP servers connect via SSE (`MCPServerConfig.url`) instead of stdio
-- **`_transport()` method** in `agent.py`: selects SSE or stdio based on config
-- **Instance directory**: `$AI_ASSIST_INSTANCES_DIR/<name>/` with host-only `compose.yaml`/`.env` and bind-mounted `sandbox/` directory
-- **Readiness check**: `_wait_for_mcp_servers()` polls TCP ports before launching ai-assist
-- **CLI**: `ai-assist /sandbox init|run|stop|list|delete|service`
-- **Features**: `--features=ssh,gpg,git,gh,dci,dbus,litellm,web` (default: `git,dci,vertex`; `web` enables `internal__web_search`/`web_fetch`, off otherwise so an autonomous agent cannot send private work to search providers). Vertex AI (gcloud) always included. Features control which host configs are mounted, which commands are allowed, and which MCP server containers are started.
-- **`litellm` feature**: adds a `litellm` sidecar (same isolation model as `dci`) that fronts non-Anthropic models (Gemini, OpenAI) behind the Anthropic Messages dialect ai-assist speaks. Auto-wires the ai-assist container's `ANTHROPIC_BASE_URL`/`AI_ASSIST_API_KEY` to the sidecar — the ai-assist container never sees real provider keys, only `LITELLM_MASTER_KEY`. Model aliases live in `sandbox/.ai-assist/litellm_config.yaml` (copied from `sandbox_templates/litellm_config.yaml`); see `litellm-proxy/README.md` at the repo root for the verified, non-sandboxed version of this same setup and known gotchas (e.g. reasoning models need generous `max_tokens`).
-- **`dci` feature downloads**: the rca prompt makes the agent read files the DCI MCP server downloads, so both containers mount `sandbox/dci-files` at `/tmp/dci`, the server's user (1001) is mapped to the host user (`userns_mode: keep-id:uid=1001,gid=1001`, like the ai-assist container's `keep-id`), `/tmp/dci` is an allowed path, and `DCI_DOWNLOAD_DIR_SHARED=true` lets the server pre-download at render time in SSE mode.
-- **Timezone**: `--timezone=` sets `TZ` on every container (default: the host's, from `/etc/localtime`; `--timezone=` keeps the image's UTC). It decides when scheduled actions fire — the scheduler compares against a naive `datetime.now()` and ignores a trigger's own `timezone` field — and keeps one clock across the files the containers share (`/tmp/dci`) and their logs. MCP tools that must answer in UTC (the dci `now`/`today` tools) do so explicitly, whatever `TZ` says.
-- **Image profiles**: `--image=ai-assist-dev` for workload-specific images. Profile Dockerfiles in `sandbox/profiles/` extend the base image. Must not set `USER` (breaks `userns_mode: keep-id`).
-- **Service mode**: `ai-assist /sandbox service <name> install|remove|start|stop|status|logs` wraps the compose stack as a systemd user service running `/monitor`. Requires `loginctl enable-linger $USER` for boot startup.
-- **No pods**: uses `--in-pod=false` so each container has its own user namespace. The ai-assist container uses `userns_mode: keep-id`, MCP server containers run as their default user.
-
-Files: `sandbox.py`, `sandbox_templates/`, `config.py` (`MCPServerConfig.url` field)
-Read-only directory injection: `sandbox_mounts.py` implements
-`/sandbox mount add|remove|list`. It binds existing host directories read-only
-and updates allowed paths; sources with writable aliases are refused. The
-sandbox does not manage Git, credentials, content updates, or workflow locks:
-those belong to the orchestration/update layer. Changing mount configuration
-requires container recreation; the CLI does not restart an active instance.
-
-Container images: `sandbox/ai-assist/Dockerfile`, profiles in `sandbox/profiles/`
-DCI MCP server image: built from upstream `Containerfile.sse`
-
-#### Sandbox Testing
-
-- **Unit tests** (`tests/test_sandbox.py`): mock subprocess, verify compose generation, features, CLI parsing. Run by default.
-- **Integration tests** (`tests/test_sandbox_integration.py`): start real containers, verify UID mapping, DNS resolution, MCP connectivity, volume mounts. Excluded from default `pytest` and pre-commit.
-- Run integration tests before merging sandbox changes: `make test-integration`
-- Requires: podman, built images (`make sandbox-build`), optionally dev image (`make sandbox-build-dev`)
-
-### Event-Driven Actions
-
-Unified action system where everything is a **trigger + prompt**. Actions are stored in `~/.ai-assist/event-schedules.json` and managed via agent tools. Trigger types include time-based (interval, schedule, once) and event-based (MQTT, D-Bus, file).
-
-- **ActionDefinition** (`action_model.py`): unified model replacing `TaskDefinition` + `ScheduledAction`
-- **TriggerMatcher** (`action_model.py`): matches incoming events against event-based trigger configs
-- **ActionEngine** (`action_engine.py`): executes actions (natural language, MCP prompts, AWL, builtins) with event context
-- **ActionScheduler** (`action_scheduler.py`): unified scheduler for timer and event actions. Edits to event-schedules.json hot-reload it: `FileWatchdog` collapses a burst of writes into one callback (debounce state lives on the loop thread; a running callback is never cancelled), and `reload()` is serialized by a lock, since overlapping reloads would leave untracked duplicate timers.
-- **ActionLoader** (`action_loader.py`): load/save `event-schedules.json`, auto-migration from old format
-- **ActionTools** (`action_tools.py`): agent CRUD tools for actions
-- **EventSource** ABC (`event_sources.py`): pluggable event sources (MQTT, D-Bus, file)
-- **MQTT** (`event_source_mqtt.py`): optional dep `aiomqtt` — `pip install ai-assist[mqtt]`
-- **D-Bus** (`event_source_dbus.py`): optional dep `dbus-next` — `pip install ai-assist[dbus]`
-- **File** (`event_source_file.py`): watches files, directories, or glob patterns for changes (no extra deps)
-
-Configuration in `event-schedules.json`:
-```json
-{
-  "event_sources": {"mqtt": {"broker": "localhost", "port": 1883}},
-  "actions": [
-    {"name": "DCI Check", "trigger": {"type": "interval", "every": "5m"}, "prompt": "Check DCI failures"},
-    {"name": "Alert Handler", "trigger": {"type": "mqtt", "topic": "alerts/#"}, "prompt": "Analyze this alert."}
-  ]
-}
-```
-
-**Example: USB device monitoring via D-Bus**
-
-React to USB filesystem mount/unmount events on Linux:
-```json
-{
-  "event_sources": {
-    "dbus": { "bus": "system" }
-  },
-  "actions": [
-    {
-      "name": "USB Filesystem Mounted",
-      "trigger": {
-        "type": "dbus",
-        "interface": "org.freedesktop.DBus.Properties",
-        "signal": "PropertiesChanged",
-        "payload_contains": "MountPoints"
-      },
-      "prompt": "A USB filesystem was just mounted. Describe the mount point and device.",
-      "notify": true,
-      "notification_channels": ["desktop", "console", "file"]
-    },
-    {
-      "name": "USB Device Removed",
-      "trigger": {
-        "type": "dbus",
-        "interface": "org.freedesktop.DBus.ObjectManager",
-        "signal": "InterfacesRemoved",
-        "path": "/org/freedesktop/UDisks2",
-        "payload_contains": "Filesystem"
-      },
-      "prompt": "A USB filesystem was just removed. Describe what happened.",
-      "notify": true,
-      "notification_channels": ["desktop", "console", "file"]
-    }
-  ]
-}
-```
-
-**Example: "Welcome back" briefing on screen unlock (GNOME)**
-```json
-{
-  "actions": [
-    {
-      "name": "Screen Locked",
-      "trigger": {"type": "dbus", "interface": "org.gnome.ScreenSaver", "signal": "ActiveChanged", "bus": "session", "payload_contains": "True"},
-      "prompt": "Save the current timestamp to the report screen-lock-time."
-    },
-    {
-      "name": "Welcome Back Briefing",
-      "trigger": {"type": "dbus", "interface": "org.gnome.ScreenSaver", "signal": "ActiveChanged", "bus": "session", "payload_contains": "False"},
-      "prompt": "The user unlocked their screen. Read screen-lock-time, check recent notifications, summarize what happened.",
-      "notify": true, "notification_channels": ["desktop", "console", "file"]
-    }
-  ]
-}
-```
-
-**Example: Watch a directory for new files**
-```json
-{
-  "event_sources": { "file": {} },
-  "actions": [
-    {
-      "name": "New PDF downloaded",
-      "trigger": { "type": "file", "path": "~/Downloads/*.pdf" },
-      "prompt": "A PDF was just downloaded. Summarize it.",
-      "notify": true, "notification_channels": ["desktop", "console"]
-    }
-  ]
-}
-```
-
-File triggers support exact paths (`/etc/app/config.json`), directories (`~/Downloads` — any file change), and glob patterns (`~/Downloads/*.pdf` — matching files only). The `payload_contains` and `payload_regex` filters work on file events too.
-
-D-Bus triggers support per-trigger `bus` field (`system` or `session`) — one D-Bus source connects to both buses as needed. Event-based actions support debouncing (3s window) to collapse burst signals. The `payload_contains` and `payload_regex` fields filter events by their content before execution.
-
-**Context injection**: recent notifications from `/monitor` (last 15 minutes) are automatically added to the per-query context of the interactive agent's user turn, so the user can ask follow-up questions about events.
-
-Files: `action_model.py`, `action_engine.py`, `action_scheduler.py`, `action_loader.py`, `action_tools.py`, `event_sources.py`, `event_source_mqtt.py`, `event_source_dbus.py`, `event_source_file.py`
-
-### Background Tasks (Interactive Mode)
-
-The interactive agent can spawn long-running queries as background `asyncio` tasks within the same event loop. The user continues chatting while background tasks run. A finished task's result is handed back to the agent once (`BackgroundTaskManager.take_finished_note()`): an idle, empty prompt is ended so the agent reports at once (`wake_idle_prompt` in `tui_interactive.py`), otherwise the result goes with the next message. The `NotificationWatcher` still shows the completion to the user.
-
-- **BackgroundTaskManager** (`background_tasks.py`): spawns, tracks, and cancels background tasks. In-memory tracking only.
-- **BackgroundTaskTools** (`background_task_tools.py`): agent tools for spawning (`internal__run_background`), listing (`internal__list_background_tasks`), inspecting (`internal__get_background_task`), and cancelling (`internal__cancel_background_task`) tasks.
-- **Context isolation**: Background prompts are prefixed with `@no-kg @no-history` and with a note telling the background agent it is the task, that its answer goes back to the main conversation and that nobody can answer its questions. Shared MCP sessions are reused. A background task cannot start another one.
-- **Security**: `in_background_task()` (a `ContextVar` set in the task's own asyncio task) auto-denies the confirmation prompts of background tasks only; foreground prompts are still asked.
-- **Not handed back**: tasks the agent cancelled, and tasks spawned with `notify_agent=False` (MCP channel replies, which answer through their own tool).
-
-Files: `background_tasks.py`, `background_task_tools.py`
-
-### Configuration & State
-
-**Configuration sources** (precedence order):
-1. Environment variables (`.env` file)
-2. `~/.ai-assist/mcp_servers.yaml` (MCP server definitions)
-3. `~/.ai-assist/identity.yaml` (personalization)
-4. `~/.ai-assist/variables.yaml` (AWL local variables — auto-injected into all AWL scripts)
-5. `~/.ai-assist/event-schedules.json` (actions/triggers)
-
-**Hot-reload** (`config_watcher.py`, `file_watchdog.py`):
-- Changes to config files trigger automatic reload without restart
-- Monitor mode restarts actions when `event-schedules.json` changes
-
-**State persistence** (`~/.ai-assist/`):
-- `knowledge_graph.db` - Temporal database
-- `state/` - Monitor states and cache
-- `allowed_commands.json` - User-approved shell commands
-- `skill_env.json` - Per-skill env var allowlists
-- `audit/tool_calls.jsonl` - Append-only tool-call audit trail, rotated at 10 MB, rotated files kept 7 days
-- `traces/query_traces.jsonl` - Per-query traces with token usage and cost (100-day retention)
-- `traces/requests/` - Each model request as sent and its response, one JSON file per turn, only with `AI_ASSIST_CAPTURE_MODEL_REQUESTS=true` (debugging; mode 0600, not pruned)
-- `events.jsonl` - Event bridge (monitor→interactive IPC)
-- `interactive_history.txt` - Command history
-
-**Cost tracking** (`pricing.py`, `eval.py`):
-- Token costs are computed locally using hardcoded per-model pricing in `MODEL_PRICING` (`pricing.py`).
-  Prices are **not** available from the Anthropic API; update `MODEL_PRICING` when Anthropic publishes new rates
-  (see https://docs.anthropic.com/en/docs/about-claude/models).
-- Costs are recorded per-turn in `_track_token_usage()` and aggregated per-query in `QueryTrace.total_cost_usd`.
-- The API's `input_tokens` excludes cached tokens: `compute_turn_cost` bills uncached input, cache writes, cache reads and output separately, and anything that measures how full the context is (observation masking, the context-budget warning, `get_context_usage`) uses `prompt_tokens()`, the sum of the three input counts.
-- Prompt caching (`AI_ASSIST_ENABLE_CACHE`, on by default) marks the static system block and the last two user messages of each request (`_with_message_cache_breakpoints` in `agent.py`), so a multi-turn tool loop reads earlier turns from the cache instead of resending them at full price. The markers go on a copy; the conversation itself is never modified. The system prompt must stay byte-identical across queries: the clock, recent notifications and KG learnings/auto-context are appended to the current user turn as a separate block (`_build_query_context`, `_with_query_context`), and the breakpoint goes on the user's own text before it, so the next query, whose history holds the plain text, hits the cache at the same position. Each turn's token-usage entry records `prefix_sha` (tools + system); `workflows/self-improvement/lib/audit-cache.py` reports cache misses from the query traces.
-- Commands: `/cost [period]` for cost summary (uncached input, cache write and cache read tokens shown separately), `/eval-stats` for aggregate metrics including cost. Both recompute each query's cost from its per-turn token counts (`QueryTrace.cost_usd()`), so traces stored with older pricing are reported correctly; the stored `total_cost_usd` is only used when per-turn counts are missing or the model has no pricing entry.
-
-**MLflow tracing** (`mlflow_tracing.py`): optional GenAI observability — optional dep `mlflow-skinny` + `sqlalchemy` (`pip install ai-assist[mlflow]`), enabled with `AI_ASSIST_ENABLE_MLFLOW=true`. Backend via `MLFLOW_TRACKING_URI`; unset => local SQLite store at `<config dir>/mlflow.db` (SQL backend needed for the Traces UI metrics). Emits a `query → tool` span tree (autolog for LLM spans + manual spans in `agent.py`), mirroring `QueryTrace` metrics onto the root span. No-op when disabled/uninstalled; the JSONL cost tracking above is unaffected.
-
-Files: `config.py`, `state.py`, `config_watcher.py`, `file_watchdog.py`
-
-### Tools Architecture
-
-**Built-in tools** are organized by domain:
-- `report_tools.py` - Markdown report management (`~/ai-reports/`)
-- `action_tools.py` - Create/update/delete actions (event-schedules.json)
-- `schedule_action_tools.py` - `internal__schedule_action`: one-time actions from a natural time spec ("in 2 hours"), created in event-schedules.json via `ActionTools`
-- `knowledge_tools.py` - KG synthesis and learning
-- `kg_query_tools.py` - KG querying (stats, changes, historical state)
-- `filesystem_tools.py` - File operations (read, write, edit, search, execute). `execute_command` runs a command with a pipe under bash with a fixed trailer reporting each stage's exit status (`PIPESTATUS`), so a failure hidden by the last command's exit code is reported (SIGPIPE, 141, is not a failure); its output limits save the full output in the session tmpdir (`get_session_tmpdir()`) and allow reading it
-- `think_tool.py` - Planning/reasoning scratchpad
-- `json_tools.py` - JSON querying via jq (requires jq installed)
-- `transform_tools.py` - `internal__transform`: a short Python payload over one file, run by `transform_harness.py` in a child process: RestrictedPython guard (`import` limited to the preloaded modules, no `_` names, modules as public-name namespaces), then kernel confinement applied by the child itself after reading its input (Landlock + seccomp on Linux, Seatbelt via `sandbox_init()` on macOS); without it the tool runs anyway and says so (`confinement_status()`, shown by `/doctor`)
-- `introspection_tools.py` - Context awareness (current date/time, working directory, user info)
-
-**MCP tools** from configured servers are dynamically loaded and prefixed with server name.
-
-**Progressive disclosure of tools** (`tool_disclosure.py`, `AI_ASSIST_DEFER_TOOLS`, on by default): only `CORE_TOOLS` are sent in full; every other tool, MCP or internal, is listed in the description of `introspection__call_tool`, read with `introspection__get_tool_help` and called through that proxy. `_execute_tools_concurrently` unwraps proxied calls first, so caching, write and loop detection, plan mode, the audit trail and `last_tool_calls` see the real tool, and validates them against the tool's schema (`check_arguments`, strict): an invalid call is not run and the error carries the tool's documentation. The tool list never changes, so the prompt cache and thinking-block signatures stay valid. Choose `CORE_TOOLS` from the audit trails, not by guess. Skills work the same way: only their front matter is in the system prompt.
-
-**Startup log**: `setup_logging()` logs the source commit of the ai-assist checkout (with "(uncommitted changes)" when tracked files changed), or nothing when it does not run from its own git checkout (`get_source_commit()` in `config.py`).
-
-**`AiAssistAgent` collaborators**: to keep `agent.py` focused, three cohesive responsibilities live in their own modules, constructed in `AiAssistAgent.__init__` and reached via `self.<name>`:
-- `tool_result_router.py` (`ToolResultRouter`) - parses/handles the `__save_to_file`/`__write_to_report`/`__append_to_report`/`__jq_filter`/`__collect_to_report` result-redirection and pagination parameters.
-- `synthesis_engine.py` (`SynthesisEngine`) - conversation synthesis, `_save_insights`, and scheduled KG connection discovery.
-- `system_prompt_builder.py` (`SystemPromptBuilder`) - assembles the cached system prompt and the per-query context (clock, notifications, KG learnings/auto-context) sent with the user turn.
-
-Each holds an agent back-reference so it reads collaborators (`sessions`, `report_tools`, `knowledge_graph`, …) live. `AiAssistAgent` keeps thin delegating wrappers for the method names referenced by tests and other modules.
-
-**Large tool results**: All tools support `__save_to_file`, `__write_to_report`, `__append_to_report`, `__collect_to_report`, and `__jq_filter` parameters. Add to any tool call to redirect raw results to a file or report. Agent receives a summary. `__jq_filter` applies a jq filter inline before returning or saving — composes with the other parameters (filter runs first). `__collect_to_report` auto-paginates and collects all results in one call (requires server pagination config in `mcp_servers.yaml`).
-
-**Dedup & loop detection** (`_execute_tools_concurrently` in `agent.py`): within a query, identical tool calls (name + args) are served from a result cache, and a call repeated with the same signature ≥3× in the last 5 triggers loop detection (first offense nudges, a second aborts). **Poll-safe tools** — async status checks like `apify__get-actor-run`, expected to be called repeatedly until they finish — are exempt from both: list fnmatch patterns in `AI_ASSIST_REPEATABLE_TOOLS` (whitespace- or comma-separated; `config.repeatable_tools`), matched by `AiAssistAgent._is_repeatable_tool`. A repeatable tool bypasses the cache (each call re-executes for a fresh result) and is never loop-flagged.
+# AGENTS.md — Working in ai-assist
+
+Instructions for agents and developers changing this repository. Subsystem
+internals live in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md); user
+documentation in [README.md](README.md). Keep this file short: invariants and
+pointers, not prose.
+
+## Commands
+
+| Task | Command |
+|---|---|
+| All tests (no integration) | `make test` |
+| Fast tests (skip slow) | `make test-fast` |
+| Coverage (≥71% required) | `make test-cov` |
+| One file / one test | `pytest tests/test_x.py::test_y` |
+| Integration (podman + images) | `make test-integration` |
+| Eval, check judges | `make test-eval` |
+| Eval, LLM judges | `make test-eval-full` |
+| Eval replay (offline, no key) | `make test-eval-replay` |
+| Record eval cassettes | `make eval-record` |
+| All hooks | `pre-commit run -a` |
+| Sandbox images | `make sandbox-build` / `make sandbox-build-dev` |
+| Slides | `make -C presentation` |
+
+## Where to look
+
+| Change | Start in |
+|---|---|
+| Query loop, tool dispatch, caching | `ai_assist/agent.py` |
+| Tool result redirection / pagination | `ai_assist/tool_result_router.py` |
+| System prompt and per-query context | `ai_assist/system_prompt_builder.py` |
+| Tool visibility | `ai_assist/tool_disclosure.py` |
+| AWL | `ai_assist/awl_*.py`, `ai_assist/awl_executor.py` |
+| Knowledge graph | `ai_assist/knowledge_graph.py`, `kg_*.py`, `embedding.py` |
+| Actions / triggers | `ai_assist/action_*.py`, `event_source*.py` |
+| Sandbox | `ai_assist/sandbox.py`, `sandbox/` |
+| Skills, plugins | `ai_assist/skills_*.py`, `plugins_*.py` |
+| Services | `ai_assist/service.py` |
+| CLI / TUI | `ai_assist/main.py`, `ai_assist/tui*.py` |
+
+The full tree is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#code-map).
+
+## Invariants
+
+### Code
+
+- All tests are green before your change. If they fail afterwards, your change
+  broke them.
+- Write the test first (TDD); see
+  [CONTRIBUTING.md](CONTRIBUTING.md#development-philosophy).
+- `logger.exception()` in every `except` block — never `logger.debug/warning`
+  with the exception, which loses the traceback.
+- Expand `~` on every externally supplied path: `Path(p).expanduser()`.
+- Type hints everywhere; prefer builtins and `X | None`.
+- Configuration is Pydantic in `config.py`; read the environment there, not
+  ad hoc.
+- No implementation docs or comments unless something is unusual — the code
+  should explain itself.
+
+### Prompt cache and cost
+
+- The system prompt must be byte-identical across queries. The clock, recent
+  notifications and KG context go on the **current user turn**; breakpoints go
+  on a copy (`_with_message_cache_breakpoints`), never on the conversation.
+- Context fullness uses `prompt_tokens()` (uncached input + cache write + cache
+  read), not the API's `input_tokens`.
+- `MODEL_PRICING` in `pricing.py` is manual: update it when prices change.
+- Work limits wind a query down, never cut it off: soft turn budget, one final
+  turn, hard cutoff at 1.5× the time budget. Context trimming never drops the
+  current query's question. A retried stream does not spend turn budget.
+
+### Tools
+
+- MCP tools are named `server_name__tool_name`.
+- A proxied `introspection__call_tool` call must be unwrapped before caching,
+  loop detection, plan mode and audit — they must see the real tool.
+- Every refusal path records an authorization event, or the call is logged as
+  `autonomous` (`SECURITY.md` §6).
+- Poll-safe tools go in `AI_ASSIST_REPEATABLE_TOOLS` (e.g.
+  `apify__get-actor-run`): they bypass the result cache and are never
+  loop-flagged.
+
+### Portability and pinning
+
+- CI actions and pre-commit hooks are pinned to a commit SHA with a `# vX.Y.Z`
+  comment; container images to a digest. Enforced by
+  `scripts/check_action_pins.py`.
+- Shell and awk must work on macOS: bash 3.2 (no `mapfile`, associative arrays,
+  `${var,,}`), POSIX awk (no `mktime`, `strftime`, `gensub`), BSD userland (no
+  `sed -i`, `date -I`, `stat -c`, `grep -P`), and `sha1sum` only with a
+  `shasum -a 1` fallback. Enforced by `scripts/check_portability.py`.
+- Sandbox profile Dockerfiles must not set `USER` (it breaks
+  `userns_mode: keep-id`).
+
+### Security
+
+- Skill script execution is off by default (needs
+  `AI_ASSIST_ALLOW_SCRIPT_EXECUTION=true`); per-skill env vars need an
+  allowlist.
+- Background tasks cannot start other background tasks, and their confirmation
+  prompts are auto-denied.
+- The sandbox ai-assist container never sees MCP server credentials.
+
+## Subsystems
+
+| Subsystem | One line | Reference |
+|---|---|---|
+| MCP agent | One streaming loop for `query()` and interactive use; MCP servers via stdio or SSE | [ARCHITECTURE](docs/ARCHITECTURE.md#mcp-agent-flow) |
+| AWL | Intent-driven tasks; `finish_task` reports values, `model=`/`effort=` pick tiers | [AWL spec](docs/AWL_SPECIFICATIONS.md) |
+| Knowledge graph | Bi-temporal SQLite; synthesis, compaction-time extraction, semantic recall | [KG guide](docs/KNOWLEDGE_MANAGEMENT.md) |
+| Skills | agentskills.io; model-invoked and slash commands; sandboxed scripts | [Skills](docs/PERSONAL_SKILLS.md) |
+| Plugins | Claude Code bundle subset; namespaced skills and MCP servers | [Plugins](docs/PLUGINS.md) |
+| Sandbox | podman-compose instance per service, one credential each | [ARCHITECTURE](docs/ARCHITECTURE.md#sandbox-instances) |
+| Actions | trigger + prompt; interval, schedule, once, MQTT, D-Bus, file | [Scheduled actions](docs/SCHEDULED_ACTIONS.md) |
+| Background tasks | Long queries in the same event loop; result handed back once | [ARCHITECTURE](docs/ARCHITECTURE.md#background-tasks-interactive-mode) |
+| Services | systemd (Linux) / launchd (macOS) for `/monitor` | [ARCHITECTURE](docs/ARCHITECTURE.md#service-management) |
+| Tools | Built-ins, MCP tools, progressive disclosure, audit | [ARCHITECTURE](docs/ARCHITECTURE.md#tools-architecture) |
+
+## Adding things
+
+### A feature
+
+1. Write the failing test that defines the behaviour.
+2. Implement the smallest end-to-end path, then iterate.
+3. Update `README.md` and `AGENTS.md` when user-visible.
+4. Update `presentation/ai-assist-presentation.tex`: `\date{...}` to the current
+   month and year (`check-presentation-date` enforces it), and the Quick Start
+   "Project Stats" box (lines in `ai_assist/`, tests and test files, core
+   dependencies, hooks; `tests/test_presentation_stats.py` fails if a figure
+   overstates or falls more than 20% behind). Build with `make -C presentation`
+   without overfull warnings.
+5. `pre-commit run -a`.
+
+### A tool
+
+1. Tool class in the matching `ai_assist/*_tools.py` (`think_tool.py` is the
+   pattern).
+2. Register in `agent.py`: import, init, tool registration, dispatch chain.
+3. Tests in `tests/test_*_tools.py`.
+4. Document it in `README.md` if user-facing.
+
+### An MCP server
+
+1. Add it to `~/.ai-assist/mcp_servers.yaml`.
+2. Test the connection interactively.
+3. Document its tools in `README.md`.
+
+### An AWL feature
+
+1. AST nodes (`awl_ast.py`) → parser (`awl_parser.py`) → runtime
+   (`awl_runtime.py`).
+2. Tests in `tests/test_awl_*.py`.
+3. `docs/AWL_SPECIFICATIONS.md`.
 
 ## Documentation
 
-Only create the minimum document for the end user.
-
-No need for implementation docs and comments. The code should be self explanatory.
-
-Use comments only to document something unusual.
-
-## Development Principles
-
-### 1. TDD - Test-Driven Development
-
-**Philosophy**: Write tests before implementation to ensure correctness and maintainability.
-
-#### Testing Strategy for ai-assist
-
-```python
-# Example test structure (to be implemented)
-
-# tests/test_agent.py
-async def test_agent_connects_to_mcp_servers():
-    """Test that agent successfully connects to configured MCP servers"""
-    config = AiAssistConfig(
-        anthropic_api_key="test-key",
-        mcp_servers={"test": MCPServerConfig(command="echo", args=["test"])}
-    )
-    agent = AiAssistAgent(config)
-    await agent.connect_to_servers()
-    assert "test" in agent.sessions
-
-async def test_agent_executes_tool_call():
-    """Test that agent can execute a tool call and return results"""
-    # Mock MCP server response
-    # Execute tool
-    # Assert correct result format
-
-# tests/test_monitors.py
-async def test_jira_monitor_queries_projects():
-    """Test that JiraMonitor queries configured projects"""
-    # Mock agent
-    # Create monitor with test projects
-    # Run check
-    # Assert correct projects were queried
-
-async def test_dci_monitor_reports_failures():
-    """Test that DCIMonitor identifies and reports failures"""
-    # Mock agent with failing jobs
-    # Run check
-    # Assert failures are reported
-```
-
-#### TDD Workflow
-
-1. **Red**: Write a failing test that defines desired behavior
-2. **Green**: Write minimal code to make the test pass
-3. **Refactor**: Clean up code while keeping tests green
-
-#### Baseline Assumption
-
-All tests are green before any change. If tests fail, your change broke them — fix it.
-
-#### Testing Guidelines
-
-- **Unit Tests**: Test individual functions and classes in isolation
-- **Integration Tests**: Test MCP server connections and tool execution
-- **End-to-End Tests**: Test complete workflows (query → response)
-- **Mock External Services**: Use pytest-asyncio and mock for external APIs
-- **Test Error Handling**: Ensure graceful degradation when services fail
-
-```bash
-# Unit tests (excludes integration tests by default)
-make test                    # All non-integration tests (parallel)
-make test-fast               # Skip slow + integration tests
-make test-cov                # With coverage report (≥71% required)
-pytest tests/test_agent.py   # Specific test file
-
-# Integration tests (require podman + built container images)
-make test-integration        # Builds images then runs sandbox tests
-
-# Eval tests (agent behavior validation, requires API key)
-make test-eval               # Eval suite with check judges only
-make test-eval-full          # Eval suite with LLM judges (slower, requires claude CLI)
-uv run --extra eval python eval/run_eval.py --config eval/eval.yaml --model claude-sonnet-4-6 --cases case-name  # Single case
-
-# Eval snapshot replay (offline, deterministic — no API key)
-make test-eval-replay        # Replay recorded cassettes (fails cases lacking a cassette.json)
-make eval-record             # Record cassettes from real API runs (requires API key)
-
-# Pre-commit (runs all hooks: black, ruff, mypy, bandit, pylint, pytest)
-pre-commit run --all-files
-```
-
-##### Snapshot/replay testing (`ai_assist/testing/`)
-
-The agent loop can be driven offline and deterministically by swapping the single
-LLM seam (`AiAssistAgent.anthropic`) for a **cassette-driven fake client**. A
-cassette is a JSON file listing the assistant turns for one query; the Nth
-`messages.create`/`messages.stream` call returns the Nth recorded turn
-(turn-index matching, so it is robust to prompt/token drift). Only the LLM is
-faked; how tools behave depends on the caller (see below).
-
-- **Unit / loop tests**: use the `make_replay_agent` fixture (`tests/conftest.py`):
-  ```python
-  async def test_something(make_replay_agent):
-      agent = await make_replay_agent([
-          {"content": [{"type": "tool_use", "id": "t1", "name": "internal__think",
-                        "input": {"thought": "plan"}}], "stop_reason": "tool_use"},
-          {"content": [{"type": "text", "text": "Done"}], "stop_reason": "end_turn"},
-      ])
-      assert await agent.query(prompt="do it") == "Done"
-  ```
-  Examples in `tests/test_snapshot_replay.py`; hand-written cassettes in `tests/snapshots/`.
-  Here internal tools run for real against an isolated temp KG (cassettes are
-  trusted, in-repo, and only call safe tools).
-- **Eval cassettes**: `AI_ASSIST_EVAL_MODE=record` wraps the real client and writes
-  `eval/dataset/cases/<case>/cassette.json`; `AI_ASSIST_EVAL_MODE=replay` runs each
-  case offline against its cassette. `eval/eval_wrapper.py` handles the swap.
-  Because these cassettes are committed data editable in any PR, eval replay does
-  **not** execute tools — it records the tool *selection* the judges check but
-  skips every side effect (no `execute_command`, no file writes, no network).
-
-### 2. DRY - Don't Repeat Yourself
-
-**Philosophy**: Avoid code duplication by creating reusable abstractions.
-
-#### DRY Patterns in ai-assist
-
-**✓ Good: Reusable Configuration**
-```python
-# ai_assist/config.py - Single source of truth for configuration
-class AiAssistConfig(BaseModel):
-    @classmethod
-    def from_env(cls) -> "AiAssistConfig":
-        """Load configuration from environment"""
-        # Configuration logic in one place
-```
-
-**✗ Bad: Repeated Configuration Loading**
-```python
-# Don't do this in multiple files
-api_key = os.getenv("ANTHROPIC_API_KEY")
-dci_client = os.getenv("DCI_CLIENT_ID")
-```
-
-**✓ Good: Centralized Tool Execution**
-```python
-# ai_assist/agent.py - Single method for all tool execution
-async def _execute_tool(self, tool_name: str, arguments: dict) -> str:
-    """Execute any tool on any MCP server"""
-    # Parse server and tool
-    # Route to correct server
-    # Return formatted result
-```
-
-**✗ Bad: Repeated Tool Execution Logic**
-```python
-# Don't implement tool execution separately for each server
-async def execute_dci_tool(...):
-async def execute_jira_tool(...):
-```
-
-#### DRY Checklist
-
-- [ ] Is this logic used in multiple places? → Extract to a function
-- [ ] Are these patterns similar? → Create a base class or utility
-- [ ] Is this configuration repeated? → Centralize in config.py
-- [ ] Are these error messages duplicated? → Use constants or templates
-- [ ] Is this query pattern repeated? → Create a query builder
-
-### 3. Tracer Bullet Development
-
-**Philosophy**: Build end-to-end functionality early, then enhance iteratively.
-
-#### Tracer Bullet Approach
-
-A "tracer bullet" is a minimal end-to-end implementation that proves the architecture works. Like tracer ammunition that shows the bullet's path, this approach shows that data flows correctly through the system.
-
-#### ai-assist Tracer Bullets
-
-**Tracer Bullet 1: Basic Query Flow** ✓ Implemented
-```
-User Input → CLI → Agent → Claude → MCP Tool → Result → User
-```
-
-**Tracer Bullet 2: Monitoring Loop** ✓ Implemented
-```
-Scheduler → Monitor → Agent → Tool Call → Report → Console
-```
-
-**Tracer Bullet 3: Multi-Server Integration** (Future)
-```
-Agent → Server A → Tool 1 → Result
-     → Server B → Tool 2 → Result
-     → Combine → Response
-```
-
-#### Implementing New Features with Tracer Bullets
-
-Example: Adding Slack Notifications
-
-**Phase 1: Tracer Bullet (Minimal End-to-End)**
-```python
-# ai_assist/notifications.py
-class SlackNotifier:
-    async def send(self, message: str):
-        print(f"[Slack] {message}")  # Console output first
-
-# ai_assist/monitors.py
-def _report_results(self, monitor_name: str, results: list[dict]):
-    notifier = SlackNotifier()
-    await notifier.send(f"{monitor_name}: {len(results)} updates")
-```
-
-**Phase 2: Enhancement**
-```python
-class SlackNotifier:
-    def __init__(self, webhook_url: str):
-        self.webhook_url = webhook_url
-
-    async def send(self, message: str):
-        async with httpx.AsyncClient() as client:
-            await client.post(self.webhook_url, json={"text": message})
-```
-
-**Phase 3: Polish**
-```python
-class SlackNotifier:
-    async def send(self, message: str, attachments: list[dict] = None):
-        # Rich formatting
-        # Error handling
-        # Retry logic
-        # Rate limiting
-```
-
-#### Tracer Bullet Benefits
-
-1. **Early Validation**: Proves architecture works before investing in details
-2. **Continuous Integration**: Always have a working system
-3. **Risk Reduction**: Identifies integration issues early
-4. **Stakeholder Feedback**: Get feedback on working features, not mockups
-5. **Momentum**: Visible progress maintains motivation
-
-### 4. Additional Best Practices
-
-#### Minimize Code Branches
-
-**Philosophy**: Keep code paths simple. Avoid fallbacks and conditional branches unless absolutely necessary.
-
-**Why:**
-- Fewer branches = fewer bugs
-- Easier to test (no need to test multiple paths)
-- Clearer code flow
-- Faster debugging
-
-**✓ Good: Fail fast with clear error**
-```python
-from google.cloud import aiplatform
-
-def discover_models():
-    # Initialize Vertex AI
-    aiplatform.init(project=project_id, location=region)
-
-    # Query for models
-    models = aiplatform.Model.list(filter='...')
-
-    return models
-```
-
-**✗ Bad: Fallback branches**
-```python
-def discover_models():
-    try:
-        from google.cloud import aiplatform
-        # Try API approach
-        models = aiplatform.Model.list(...)
-        return models
-    except ImportError:
-        # Fallback to hardcoded list
-        return test_known_models()
-    except Exception:
-        # Another fallback
-        return default_models()
-```
-
-**When to have branches:**
-- User-facing choices (interactive prompts, command flags)
-- Data-driven logic (different entity types, different formats)
-- NOT for: missing dependencies, API failures, "just in case" scenarios
-
-**Handle missing dependencies at install time:**
-```python
-# In pyproject.toml
-dependencies = [
-    "anthropic",
-    "google-cloud-aiplatform",  # Required, not optional
-]
-```
-
-**Handle errors clearly:**
-```python
-try:
-    models = aiplatform.Model.list(...)
-except Exception as e:
-    print(f"Error: Failed to discover models: {e}")
-    print("Make sure google-cloud-aiplatform is installed:")
-    print("  pip install google-cloud-aiplatform")
-    sys.exit(1)
-```
-
-#### Dependency Pinning — Use SHA/Digest, Not Tags
-
-All external dependencies in CI, pre-commit hooks, and container images must be pinned by immutable SHA or digest rather than mutable tags. Tags can be reassigned to different commits (supply-chain attack vector).
-
-**GitHub Actions** — pin to commit SHA with a `# vX.Y.Z` comment (enforced by the `check-action-pins` pre-commit hook, `scripts/check_action_pins.py`):
-```yaml
-- uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
-```
-
-**Pre-commit hooks** — pin to commit SHA with a `# vX.Y.Z` comment:
-```yaml
-- repo: https://github.com/psf/black
-  rev: 87928e6d6761a4a6d22250e1fee5601b3998086e  # 26.5.1
-```
-
-**Container images** — pin to image digest:
-```dockerfile
-FROM fedora:44@sha256:6c75d5bf57cb0fa5aa4b92c6a83c86c791644496d9ac230de7711f5b8ec3b898
-```
-
-When updating versions, always look up the new commit SHA or image digest and update both the hash and the comment together.
-
-#### Path Handling — Always Expand `~`
-
-Any string that could contain a `~` (user input, config files, CLI arguments, tool parameters) **must** have `.expanduser()` called when wrapping it in `Path()`. Without this, `~` is treated as a literal directory name.
-
-```python
-# Good
-path = Path(user_path).expanduser()
-
-# Bad — ~/foo becomes a literal child directory named "~"
-path = Path(user_path)
-```
-
-This applies to all code that receives paths from outside the program (config files, tool arguments, CLI args). Internal paths constructed from `Path(__file__)`, `Path.cwd()`, or `get_config_dir()` don't need it.
-
-#### Portability — Linux and macOS
-
-ai-assist runs on Linux and macOS. Shell scripts it ships (e.g. `workflows/*/lib/*.sh`), the
-shell code it runs itself, and the commands it tells a model to run must work on both:
-
-- **bash 3.2** (macOS `/bin/bash`): no `mapfile`/`readarray`, associative arrays, `coproc`
-  or `${var,,}`/`${var^^}`; read lines with `while IFS= read -r line; do ...; done`.
-- **POSIX awk** (BSD awk on macOS, mawk on Debian/Ubuntu): no gawk-only features such as
-  `mktime()`, `strftime()`, `gensub()`, `> "/dev/stdout"` (a real file outside gawk), or
-  backslashes in a `gsub()` replacement (read differently by each awk; split and join instead).
-- **BSD userland**: no `date -I`, `stat -c`, `sed -i`, `readlink -f`, `grep -P` or
-  `find -printf`; `sha1sum` only with a `shasum -a 1` fallback. When a model must run such a
-  command, give both forms (`stat -c '%y %n'` on Linux, `stat -f '%Sm %N'` on macOS).
-- Python: no concern, uv installs the required version.
-
-The `check-portability` pre-commit hook (`scripts/check_portability.py`) checks every shell
-and awk file for these rules; `tests/test_check_portability.py` also runs it on all tracked
-scripts. ShellCheck does not cover them (it has no bash 3.2 or BSD-tools target), and
-`gawk --lint` only reports some gawk extensions. The self-improvement helper tests also run
-every helper again under `gawk --posix` (the `awk_dir` fixture in
-`tests/test_self_improvement_workflow.py`): reuse it for new awk-based scripts.
-
-#### Error Handling
-
-**Graceful Degradation**
-```python
-async def connect_to_servers(self):
-    """Connect to all configured MCP servers"""
-    for server_name, server_config in self.config.mcp_servers.items():
-        try:
-            await self._connect_server(server_name, server_config)
-            print(f"✓ Connected to {server_name} MCP server")
-        except Exception as e:
-            # Don't fail completely - log and continue
-            print(f"✗ Failed to connect to {server_name}: {e}")
-```
-
-**Informative Error Messages**
-```python
-if not config.anthropic_api_key:
-    print("Error: ANTHROPIC_API_KEY not set in environment")
-    print("Please add it to your .env file or export it:")
-    print("  export ANTHROPIC_API_KEY='your-key-here'")
-    sys.exit(1)
-```
-
-**Logging Exceptions**
-
-Always use `logger.exception()` in `except` blocks — never `logger.debug()` or
-`logger.warning()` with `%s, e`. `logger.exception()` captures the full
-traceback, which is essential for debugging.
-
-```python
-# Good
-except Exception:
-    logger.exception("AWL @notify dispatch failed")
-
-# Bad — loses the traceback
-except Exception as e:
-    logger.debug("AWL @notify dispatch failed: %s", e)
-```
-
-#### Async/Await Patterns
-
-```python
-# Use asyncio.gather() for parallel operations
-async def check_all_projects(self):
-    tasks = [self.check_project(p) for p in self.projects]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-
-# Use async context managers for resources
-async def _connect_server(self, name: str, config: MCPServerConfig):
-    async with stdio_client(server_params) as (stdio, write):
-        session = ClientSession(stdio, write)
-        await session.initialize()
-```
-
-#### Type Hints
-
-```python
-# Always use type hints for better IDE support and documentation.
-# Prefer builtin generics (list, dict) and `X | None` over typing.Optional/List/Dict.
-
-async def query(self, prompt: str, max_turns: int = 10) -> str:
-    messages: list[dict[str, str]] = [{"role": "user", "content": prompt}]
-    tool_results: list[dict] = []
-```
-
-#### Configuration Validation
-
-Use Pydantic models (`config.py`) for validation and environment loading with `Field(default_factory=lambda: os.getenv(...))`.
-
-```python
-class MyConfig(BaseModel):
-    setting: str = Field(default_factory=lambda: os.getenv("MY_SETTING", "default"))
-    number: int = Field(default=42, ge=0, le=100)
-
-    @field_validator("setting")
-    @classmethod
-    def validate_setting(cls, v):
-        if not v:
-            raise ValueError("Setting cannot be empty")
-        return v
-```
-
-## Important Patterns
-
-### Tool Execution
-
-All MCP tools use the format `server_name__tool_name`. The agent parses this and routes to the correct session.
-
-### Monitor Pattern
-
-Monitors (`monitors.py`) run periodic checks, cache results, and track seen items to avoid duplicate notifications. They support:
-- Interval schedules (e.g., "5m", "1h", "9:00 on weekdays")
-- Knowledge graph auto-save
-- Notification channels (desktop, file, console)
-- MCP prompts (e.g., `mcp://server/prompt`)
-
-```python
-async def check(self) -> list[dict]:
-    """Standard monitor check pattern"""
-    results = []
-
-    for query_item in self.query_items:
-        prompt = self._build_prompt(query_item)
-
-        try:
-            result = await self.agent.query(prompt)
-            results.append({
-                "item": query_item,
-                "summary": result,
-                "timestamp": datetime.now().isoformat(),
-            })
-        except Exception:
-            logger.exception(f"Error checking {query_item}")
-
-    self.last_check = datetime.now()
-    return results
-```
-
-### Scheduled Actions
-
-One-time future actions are `once` actions in `event-schedules.json`, created with `internal__schedule_action` (or `internal__create_action`) and run by the `/monitor` process's `ActionScheduler`. A simple reminder is stored with `"reminder": true`: `ActionEngine` notifies with the prompt text and makes no model call. Otherwise the prompt runs through the agent like any action. A one-time action that has run is moved (matched by name and time) to `event-schedules-archive.jsonl` with its `completed`/`failed` status; each (re)load also archives finished ones and those past due beyond the 24 h catch-up window (`expired`). See `ActionLoader.archive_actions`.
-
-## Code Organization
-
-```
-ai_assist/
-├── main.py                    # CLI entry point
-├── agent.py                   # MCP agent with tool execution
-├── tool_disclosure.py         # Core tools sent, others listed and called through a proxy
-├── tool_result_router.py      # Result redirection/pagination (agent collaborator)
-├── synthesis_engine.py        # Conversation synthesis + KG connections (agent collaborator)
-├── system_prompt_builder.py   # System prompt + KG context assembly (agent collaborator)
-├── config.py                  # Pydantic configuration models
-├── service.py                 # Cross-platform service management (systemd/launchd)
-├── awl_*.py                   # AWL parser, runtime, AST, expressions
-├── knowledge_graph.py         # Temporal KG database
-├── embedding.py, context.py   # Vector embeddings and semantic search
-├── skills_*.py                # Agent Skills loader and manager
-├── plugins_*.py               # Claude Code plugin loader and manager
-├── plan_mode.py               # Plan mode (explore → approve → execute)
-├── tui*.py                    # Terminal UI components
-├── monitors.py, tasks.py      # Monitoring and task execution
-├── action_model.py            # Unified action model (trigger + prompt)
-├── action_engine.py           # Action execution engine
-├── action_scheduler.py        # Unified scheduler (timer + event + one-shot)
-├── action_loader.py           # Load/save event-schedules.json
-├── action_tools.py            # Agent tools for action CRUD
-├── awl_executor.py            # Shared AWL script execution
-├── event_sources.py           # Pluggable event source system (ABC, manager)
-├── event_source_mqtt.py       # MQTT event source (optional: aiomqtt)
-├── event_source_dbus.py       # D-Bus event source (optional: dbus-next)
-├── event_source_file.py       # File/directory event source (watchdog)
-├── background_tasks.py        # Background task manager (interactive mode)
-├── background_task_tools.py   # Agent tools for background tasks
-├── *_tools.py                 # Tool implementations (report, schedule, KG, filesystem, etc.)
-├── transform_harness.py       # Child process of internal__transform (guard + kernel confinement)
-├── notification_*.py          # Notification channels and dispatcher
-├── state.py                   # State management and caching
-├── *_watcher.py               # File watching and hot-reload
-└── security.py                # Sandboxed script execution
-
-tests/                         # Test suite (mirrors ai_assist structure)
-docs/                          # Detailed documentation
-workflows/                     # AWL workflows shipped with ai-assist; helpers in <workflow>/lib/
-presentation/                  # LaTeX/Beamer slides (run `make -C presentation`)
-emacs/                         # AWL major mode for Emacs
-```
-
-## Configuration Files
-
-- `.env` - Environment variables (API keys, model, feature flags)
-- `~/.ai-assist/mcp_servers.yaml` - MCP server definitions
-- `~/.ai-assist/identity.yaml` - User/assistant personalization
-- `~/.ai-assist/event-schedules.json` - Actions (trigger + prompt)
-- `.pre-commit-config.yaml` - Git hooks configuration
-- `pyproject.toml` - Python package config, tool settings, linting rules
-
-## Documentation
-
-Detailed documentation in `docs/`:
-- `AWL_SPECIFICATIONS.md` - Complete AWL syntax and semantics
-- `PERSONAL_SKILLS.md` - Creating custom Agent Skills
-- `PLUGINS.md` - Installing Claude Code plugins (skills + MCP + marketplace)
-- `IDENTITY.md` - identity.yaml configuration guide
-- `MULTI_INSTANCE.md` - Running multiple ai-assist instances
-- `KNOWLEDGE_MANAGEMENT.md` - Knowledge graph usage and synthesis
-- `SCHEDULED_ACTIONS.md` - One-time future actions
-- `SELF_IMPROVEMENT.md` - Self-improvement workflow (proposals from ai-assist's own logs)
-
-Also see:
-- `CONTRIBUTING.md` - Pre-commit setup and workflow
-- `SECURITY.md` - Security model for skill scripts
-- `VERTEX_AI_SETUP.md` - Vertex AI configuration
-
-## Development Workflow
-
-### Adding a New Feature
-
-1. **Define**: Write a clear specification in an issue or comment
-2. **Test First**: Write failing tests that define the behavior (TDD)
-3. **Tracer Bullet**: Implement minimal end-to-end functionality
-4. **Iterate**: Enhance incrementally while keeping tests green
-5. **Refactor**: Apply DRY principle to eliminate duplication
-6. **Document**: Update README.md and AGENTS.md
-7. **Presentation**: Update `presentation/ai-assist-presentation.tex` to reflect the new feature, update `\date{...}` to the current month and year (the `check-presentation-date` hook enforces it when the file changes), refresh the "Project Stats" box of the Quick Start slide (lines in `ai_assist/`, number of tests and test files, core dependencies, pre-commit hooks; `tests/test_presentation_stats.py` fails when a figure overstates or falls more than 20% behind), and verify it builds with `make -C presentation` without overfull warnings
-8. **Verify**: Run `pre-commit run -a` and ensure all checks pass before declaring the feature complete
-
-### Adding a New Tool
-
-1. Create tool class in appropriate `*_tools.py` file (follow `think_tool.py` pattern)
-2. Register in `agent.py`: import, init, tool registration, dispatch chain
-3. Write tests in `tests/test_*_tools.py`
-4. Update README.md if user-facing
-5. Update presentation if appropriate (update `\date{...}` to the current month and year, rebuild with `make -C presentation`)
-
-### Adding a New MCP Server
-
-1. Add server config to `~/.ai-assist/mcp_servers.yaml`
-2. Test connection in interactive mode
-3. Document available tools in README.md
-
-```python
-# Example: Adding GitHub MCP Server
-# 1. Add to config
-mcp_servers={
-    "dci": MCPServerConfig(...),
-    "github": MCPServerConfig(
-        command="npx",
-        args=["-y", "@modelcontextprotocol/server-github"],
-        env={"GITHUB_TOKEN": os.getenv("GITHUB_TOKEN", "")}
-    ),
-}
-```
-
-### Adding a New AWL Feature
-
-1. Update AST nodes in `awl_ast.py` if needed
-2. Update parser in `awl_parser.py`
-3. Update runtime in `awl_runtime.py`
-4. Add tests in `tests/test_awl_*.py`
-5. Update `docs/AWL_SPECIFICATIONS.md`
-
-### Adding Platform Support for Service Management
-
-1. Create new class inheriting from `ServiceBackend` in `service.py`
-2. Implement all abstract methods: `service_file_path`, `service_content`, `install`, `remove`, `action`, `status`, `logs`
-3. Add platform detection in `_get_backend()` factory function
-4. Write tests in `tests/test_service.py`
-5. Document platform-specific requirements in README.md
-
-## State Management Pattern
-
-ai-assist uses persistent state to avoid redundant queries and maintain context:
-
-```python
-# Check cache before querying
-cache_key = f"query_{unique_identifier}"
-cached = state_manager.get_cached_query(cache_key)
-
-if cached:
-    return cached
-
-# Perform query
-result = await agent.query(prompt)
-
-# Cache the result with TTL
-state_manager.cache_query_result(cache_key, result, ttl_seconds=300)
-
-# Track seen items
-state_manager.update_monitor(
-    monitor_name,
-    results,
-    seen_items=set(item_ids)
-)
-
-# Append to history
-state_manager.append_history(monitor_name, result)
-```
-
-## Future Enhancements
-
-### Potential Features (Apply Tracer Bullet Approach)
-
-1. **Multi-Channel Notifications**
-   - Tracer: Console output
-   - Enhance: Email support
-   - Polish: Slack, Teams, webhooks
-
-2. **Report Generation**
-   - Tracer: Print to console
-   - Enhance: Save to markdown file
-   - Polish: Generate Google Docs, PDFs
-
-3. **Intelligent Alerting**
-   - Tracer: Alert on any failure
-   - Enhance: Alert on patterns (3+ failures)
-   - Polish: ML-based anomaly detection
-
-4. **Dashboard**
-   - Tracer: CLI status command
-   - Enhance: Static HTML page
-   - Polish: Live web dashboard
-
-## Resources
-
-- **MCP Documentation**: https://modelcontextprotocol.io/
-- **mcp-agent**: https://github.com/anthropics/mcp-agent-python
-- **Anthropic API**: https://docs.anthropic.com/
-- **DCI Documentation**: https://docs.distributed-ci.io/
-
-## Contributing
-
-When contributing to ai-assist:
-
-1. Follow TDD: Write tests first
-2. Apply DRY: Avoid duplication
-3. Use Tracer Bullets: Start simple, enhance iteratively
-4. Document: Update AGENTS.md and README.md
-5. Type Hints: Always use type annotations
-6. Error Handling: Graceful degradation, informative messages
-
-## Questions for AI Agents
-
-When working on ai-assist, ask yourself:
-
-- [ ] Does this change have tests? (TDD)
-- [ ] Am I repeating existing code? (DRY)
-- [ ] Can I implement this in phases? (Tracer Bullet)
-- [ ] Is the error handling graceful?
-- [ ] Are types properly annotated?
-- [ ] Is the configuration centralized?
-- [ ] Does it follow existing patterns?
-- [ ] Is it documented?
-- [ ] Have I run `pre-commit run -a` and fixed all issues?
-
----
-
-**Remember**: The goal is to build a reliable, maintainable AI assistant. Take the time to do it right, and the system will be easier to enhance and debug over time.
+Keep documentation for the end user only. Implementation notes belong in
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md); do not create new implementation
+docs. The code should explain itself — comment only what is unusual.
+
+Index: [README § Documentation](README.md#documentation) ·
+[ARCHITECTURE](docs/ARCHITECTURE.md) · [CONTRIBUTING](CONTRIBUTING.md) ·
+[SECURITY](SECURITY.md) · [AWL](docs/AWL_SPECIFICATIONS.md) ·
+[Plugins](docs/PLUGINS.md) · [Skills](docs/PERSONAL_SKILLS.md) ·
+[Knowledge](docs/KNOWLEDGE_MANAGEMENT.md) ·
+[Actions](docs/SCHEDULED_ACTIONS.md) · [Identity](docs/IDENTITY.md) ·
+[Instances](docs/MULTI_INSTANCE.md) · [Permissions](docs/PERMISSION_MODES.md)
+
+## Before you declare it done
+
+- [ ] The change has tests, and `make test` passes.
+- [ ] No duplicated logic (DRY); existing patterns reused.
+- [ ] Error handling is graceful and informative; types are annotated.
+- [ ] Configuration is centralized.
+- [ ] Docs updated where user-visible.
+- [ ] `pre-commit run -a` passes.
