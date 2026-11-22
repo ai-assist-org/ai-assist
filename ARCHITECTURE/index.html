@@ -1,0 +1,1904 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="AI assistant with MCP integration, agent skills, knowledge graph, and automated monitoring">
+      
+      
+      
+        <link rel="canonical" href="https://ai-assist-org.github.io/ai-assist/ARCHITECTURE/">
+      
+      
+        <link rel="prev" href="../recipes/TELEGRAM/">
+      
+      
+        <link rel="next" href="../AWL_SPECIFICATIONS/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/logo-badge.svg">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
+    
+    
+      
+        <title>Architecture - ai-assist</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.57a0d79d.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.fb2fffe2.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Red+Hat+Text:300,300i,400,400i,700,700i%7CRed+Hat+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Red Hat Text";--md-code-font:"Red Hat Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#architecture" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="ai-assist" class="md-header__button md-logo" aria-label="ai-assist" data-md-component="logo">
+      
+  <img src="../assets/logo.svg" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            ai-assist
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Architecture
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/ai-assist-org/ai-assist" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    ai-assist-org/ai-assist
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href=".." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../getting-started/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Getting Started
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../KNOWLEDGE_QUICK_START/" class="md-tabs__link">
+          
+  
+  
+  Guides
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../recipes/AGENTMAIL/" class="md-tabs__link">
+          
+  
+  
+  Recipes
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="./" class="md-tabs__link">
+          
+  
+  
+  Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="ai-assist" class="md-nav__button md-logo" aria-label="ai-assist" data-md-component="logo">
+      
+  <img src="../assets/logo.svg" alt="logo">
+
+    </a>
+    ai-assist
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/ai-assist-org/ai-assist" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    ai-assist-org/ai-assist
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guides
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Guides
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../KNOWLEDGE_QUICK_START/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Knowledge Quick Start
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../KNOWLEDGE_MANAGEMENT/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Knowledge Management
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../INSPECTING_KNOWLEDGE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Inspecting Knowledge
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../SCHEDULED_ACTIONS/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Scheduled Actions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../SELF_IMPROVEMENT/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Self-Improvement
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../PERSONAL_SKILLS/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Personal Skills
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../PLUGINS/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Plugins
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../PERMISSION_MODES/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Permission Modes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../QUERY_DIAGNOSTICS/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Query Diagnostics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../MULTI_INSTANCE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Multi-Instance
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../IDENTITY/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Identity
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../LOGGING/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Logging
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Recipes
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Recipes
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../recipes/AGENTMAIL/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AgentMail
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../recipes/TELEGRAM/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Telegram
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#components" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Components
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mcp-agent-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        MCP agent flow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#awl" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AWL
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#knowledge-graph" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Knowledge graph
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#agent-skills-and-plugins" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Agent Skills and plugins
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#service-management" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Service management
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sandbox-instances" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sandbox instances
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#event-driven-actions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Event-driven actions
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#background-tasks-interactive-mode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Background tasks (interactive mode)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuration-state-and-cost" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuration, state and cost
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tools-architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tools architecture
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#code-map" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Code map
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../AWL_SPECIFICATIONS/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AWL Specifications
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#components" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Components
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mcp-agent-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        MCP agent flow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#awl" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AWL
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#knowledge-graph" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Knowledge graph
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#agent-skills-and-plugins" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Agent Skills and plugins
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#service-management" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Service management
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sandbox-instances" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sandbox instances
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#event-driven-actions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Event-driven actions
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#background-tasks-interactive-mode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Background tasks (interactive mode)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuration-state-and-cost" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuration, state and cost
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tools-architecture" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tools architecture
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#code-map" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Code map
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="architecture">Architecture<a class="headerlink" href="#architecture" title="Permanent link">&para;</a></h1>
+<p>How ai-assist is put together: the query loop, each subsystem's implementation
+notes, and where things live. User-facing behaviour is documented in
+<a href="https://github.com/ai-assist-org/ai-assist/blob/main/README.md">README</a> and the guides in this directory; this page is the map
+for people (and agents) changing the code.</p>
+<h2 id="components">Components<a class="headerlink" href="#components" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>┌─────────────────────────────────────────────────────────┐
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>│                    ai-assist CLI                        │
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>│         (interactive / monitor / query modes)           │
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>└───────────────────────┬─────────────────────────────────┘
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>                        │
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>┌───────────────────────▼─────────────────────────────────┐
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>│                    AiAssistAgent                        │
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>│  - conversation with the model                          │
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>│  - routes tool calls to MCP servers                     │
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>│  - multi-turn interactions                              │
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>└───────────────────────┬─────────────────────────────────┘
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>                        │
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>        ┌───────────────┼───────────────┐
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>        │               │               │
+<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>┌───────▼────────┐ ┌────▼───────┐ ┌─────▼──────────┐
+<a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>│ MCP servers    │ │  internal  │ │   future MCP   │
+<a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>│ (dci, jira, …) │ │   tools    │ │    servers     │
+<a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>└────────────────┘ └────────────┘ └────────────────┘
+</code></pre></div>
+<p>Five subsystems:</p>
+<ol>
+<li><strong>MCP integration</strong> (<code>agent.py</code>) — connects to MCP servers and routes tool
+   calls named <code>server_name__tool_name</code>.</li>
+<li><strong>AWL runtime</strong> (<code>awl_parser.py</code>, <code>awl_runtime.py</code>, <code>awl_ast.py</code>,
+   <code>awl_expressions.py</code>) — the Agent Workflow Language interpreter.</li>
+<li><strong>Knowledge graph</strong> (<code>knowledge_graph.py</code>) — temporal SQLite database with
+   vector embeddings for entities, change detection and memory.</li>
+<li><strong>Agent Skills</strong> (<code>skills_loader.py</code>, <code>skills_manager.py</code>) — agentskills.io
+   skills with optional sandboxed scripts.</li>
+<li><strong>Event sources</strong> (<code>event_sources.py</code>, <code>event_source_mqtt.py</code>,
+   <code>event_source_dbus.py</code>, <code>event_source_file.py</code>) — reactive task triggering.</li>
+</ol>
+<p>Interaction modes: <strong>interactive</strong> (<code>tui_interactive.py</code>), <strong>plan mode</strong>
+(<code>plan_mode.py</code>, <code>/plan</code>), <strong>monitor</strong> (<code>monitors.py</code>, <code>task_runner.py</code>),
+<strong>one-off query</strong> (<code>main.py</code>), <strong>AWL</strong> (<code>awl_runtime.py</code>).</p>
+<h2 id="mcp-agent-flow">MCP agent flow<a class="headerlink" href="#mcp-agent-flow" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>User → CLI (main.py) → AiAssistAgent (agent.py) → model API
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>                                ↓
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>                        MCP server sessions
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>                        (dci, jira, github, …)
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>                                ↓
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>                        tool results → response
+</code></pre></div>
+<p>Both entry points use the streaming agent loop; <code>query()</code> collects the final
+answer from <code>query_streaming()</code>, so execution logic lives in the shared
+streaming path.</p>
+<ul>
+<li><strong>Time budget</strong>: both entry points default to 600 s
+  (<code>AI_ASSIST_QUERY_TIMEOUT</code>); <code>max_time_seconds=NO_TIME_LIMIT</code> (AWL tasks
+  without <code>max_time=</code>, scheduled actions) removes it. Time spent waiting on an
+  approval prompt (<code>pause_timeout()</code>) does not count.</li>
+<li><strong>Turn budget</strong>: soft. At <code>max_turns</code> the model is told to wrap up and gets up
+  to 50% more turns. When that is exhausted, or the time budget passes (checked
+  between turns), the model gets one final turn, offered only
+  <code>internal__finish_task</code> in an AWL task and no tools otherwise.</li>
+<li><strong>Hard cutoff</strong>: a backstop at 1.5× the time budget
+  (<code>_HARD_TIME_LIMIT_FACTOR</code>).</li>
+<li><strong>Model API failures</strong>: <code>query()</code> returns error text unless the caller passes
+  <code>raise_on_api_error=True</code> (AWL tasks and scheduled actions do, also via
+  <code>execute_mcp_prompt</code>), which raises <code>QueryAPIError</code>. <code>raise_on_incomplete=True</code>
+  (AWL tasks) raises <code>QueryIncompleteError</code> when a query stops without a final
+  answer. Both live in <code>query_errors.py</code>.</li>
+<li><strong>Stream retry</strong>: a turn whose stream drops mid-reply (transport/SSL/
+  connection-reset) is retried up to twice (<code>_STREAM_RETRY_BACKOFF_SECONDS</code>)
+  without consuming the turn budget, but only if the turn hasn't added to the
+  conversation yet.</li>
+<li><strong>Context trimming</strong>: when messages exceed <code>AI_ASSIST_TOTAL_MESSAGES_PCT</code> of
+  the context window, <code>_trim_oldest_messages</code> drops whole oldest exchanges (the
+  list keeps starting on a user text turn) and never the current query's
+  question or its turns. Each drop is logged.</li>
+<li><strong>Enclosing queries</strong>: an AWL script run from a tool call does not count
+  against the enclosing query (<code>exempt_enclosing_queries_from_timeout()</code>); the
+  script bounds itself per task, and its tasks keep their own budgets.</li>
+</ul>
+<h2 id="awl">AWL<a class="headerlink" href="#awl" title="Permanent link">&para;</a></h2>
+<p><code>docs/AWL_SPECIFICATIONS.md</code> is the language reference. Implementation notes
+that are not in the spec:</p>
+<ul>
+<li><strong>Task outcome</strong>: while a task runs, <code>_build_api_tools</code> offers the agent
+  <code>internal__finish_task</code> (<code>task_result_tool.py</code>). It reports
+  <code>status="success"</code> with the exposed <code>values</code>, or <code>status="failed"</code> with a
+  reason, which fails the task through the normal failure path. A turn that ends
+  without calling it gets one nudge (<code>_finish_nudge_fired</code>); after that, values
+  are extracted from the reply and missing ones stay <code>None</code> — the expose nudge
+  must not guess. Limitation: a nested non-AWL query made during a task also
+  sees the tool.</li>
+<li><strong>Model tiers</strong>: <code>model=low|medium|high|default</code> resolves via
+  <code>resolve_tier</code> (<code>awl_runtime.py</code>) using <code>AI_ASSIST_MODEL_LOW</code>/<code>_MEDIUM</code>/<code>_HIGH</code>,
+  falling back to the session model. <code>default</code> and <code>high</code> fall back to each
+  other. Effort resolves through <code>AiAssistAgent._model_for</code> / <code>_effort_for</code> as
+  <code>effort=</code> override → the model var's <code>:effort</code> suffix → session effort;
+  <code>no</code> sends none.</li>
+<li><strong>Auto-authorized commands</strong>: commands written in backticks are authorized
+  without a prompt only for scripts the user started: <code>/run</code>, an action whose
+  prompt is the script, or — via <code>is_trusted_by_action</code> (<code>awl_executor.py</code>) — a
+  script named by the confirmed prompt of the running action. When such a named
+  script fails or cannot acquire its execution lock, the action is reported as
+  failed even if the agent carries on.</li>
+<li><strong>Failure propagation</strong>: both <code>@start</code> and <code>@goal</code> execution check
+  <code>WorkflowResult.success</code>; a failed cycle cannot complete a goal.</li>
+<li><strong>Audit attribution</strong>: the audit log attributes each tool call to its script
+  and task (<code>AuditLogger.task_context</code>, entered by <code>AWLRuntime</code>).</li>
+</ul>
+<h2 id="knowledge-graph">Knowledge graph<a class="headerlink" href="#knowledge-graph" title="Permanent link">&para;</a></h2>
+<p>Bi-temporal SQLite database tracking entities (DCI jobs, Jira tickets,
+conversations, knowledge), relationships, valid time (when a fact is true in
+reality), transaction time (when the agent learned it), and vector embeddings
+for semantic search (<code>embedding.py</code>, <code>context.py</code>).</p>
+<ul>
+<li><strong>Temporal tools</strong>: <code>kg_snapshot</code> (point-in-time), <code>search_knowledge</code> with
+  <code>since</code>, <code>expire_knowledge</code>.</li>
+<li><strong>KG synthesis</strong>: a nightly task snapshots new/changed reports and discovers
+  connections between entities. It does not extract knowledge from
+  conversations — compaction-time extraction does (below).</li>
+<li><strong>Compaction-time extraction</strong>: in interactive mode, durable facts the user
+  stated are extracted when the conversation is compacted, cleared (<code>/clear</code>),
+  or the session exits (synchronously on exit), as a background task.
+  Extraction reuses an existing <code>project_context</code> key when a new fact is a
+  near-duplicate (semantic similarity ≥ <code>AiAssistAgent.DEDUP_SIM_THRESHOLD</code>), so
+  the KG's last-write-wins upsert supersedes it instead of accreting parallel
+  entries. The threshold is deliberately conservative: a false merge overwrites
+  a distinct fact irrecoverably.</li>
+<li><strong>Auto context injection</strong>: semantically relevant entities are surfaced in
+  the per-query context based on query similarity. Bookkeeping types in
+  <code>KnowledgeGraph.NON_EMBEDDED_TYPES</code> (<code>tool_result</code>, <code>skill_performance</code>) are
+  never embedded, so they stay out of recall.</li>
+<li><strong>Skill usage</strong>: every skill invocation (model-invoked via
+  <code>introspection__get_skill_help</code>, or manual <code>/&lt;skill-name&gt;</code>) is counted as a
+  <code>skill_performance</code> entity (invocation count + last used); <code>/skill/stats</code>
+  shows it. Recording is best-effort and never blocks the run. It is
+  invocation-only (no outcome/confidence) by design; <code>skill_performance.py</code>
+  keeps the confidence machinery for a future outcome-scoring step.</li>
+</ul>
+<p>Files: <code>knowledge_graph.py</code>, <code>kg_queries.py</code>, <code>kg_query_tools.py</code>,
+<code>knowledge_tools.py</code>, <code>embedding.py</code>, <code>context.py</code>.</p>
+<h2 id="agent-skills-and-plugins">Agent Skills and plugins<a class="headerlink" href="#agent-skills-and-plugins" title="Permanent link">&para;</a></h2>
+<p><strong>Skills</strong> follow the agentskills.io spec. Loaded into the system prompt
+(model-invoked) and user-invocable as <code>/&lt;skill-name&gt; [args]</code>; the SKILL.md body
+runs as a query with <code>$ARGUMENTS</code>/<code>$1</code> substitution (quoted segments stay
+grouped). Opt out with <code>user-invocable: false</code>. Built-in commands take
+precedence over same-named skills. Implementation: <code>handle_skill_invocation</code>
+(<code>tui_interactive.py</code>).</p>
+<p>Script execution is disabled by default: it requires
+<code>AI_ASSIST_ALLOW_SCRIPT_EXECUTION=true</code>, runs sandboxed (no API keys, 30 s
+timeout, 20 KB output limit), and per-skill env vars need an allowlist via
+<code>/skill/add_env</code> (persisted in <code>~/.ai-assist/skill_env.json</code>). Files:
+<code>skills_loader.py</code>, <code>skills_manager.py</code>, <code>script_execution_tools.py</code>,
+<code>security.py</code>, <code>skill_performance.py</code>.</p>
+<p><strong>Plugins</strong> load <code>.claude-plugin/plugin.json</code> + <code>skills/*/SKILL.md</code> + legacy
+<code>commands/*.md</code> + <code>.mcp.json</code>.</p>
+<ul>
+<li>Plugin skills/commands are registered in the shared
+  <code>skills_manager.loaded_skills</code> dict under <strong>namespaced keys</strong> (<code>plugin:skill</code>),
+  so every consumer (system prompt, completion, <code>/help</code>, invocation) works
+  unchanged. Namespacing lives at the registry-key layer only, never in
+  <code>SkillMetadata.name</code>.</li>
+<li>Bundled MCP servers are namespaced (<code>plugin__server</code>) and merged into
+  <code>config.mcp_servers</code>; kept in <code>plugins_manager.plugin_mcp_servers</code> and
+  re-merged after any <code>reload_mcp_servers()</code> / skills reload.</li>
+<li><code>agents/</code> (subagents) and <code>hooks/</code> are not supported — skipped with a notice.</li>
+<li>Commands: <code>/plugin/install|uninstall|update|list|search</code>,
+  <code>/plugin/marketplace add [nickname]|update [name]|list</code>. <code>update</code> reinstalls
+  from the recorded source (rollback on failure); marketplace <code>add</code> refuses to
+  mask a different registration and accepts a nickname. A plugin offered by
+  several marketplaces is ambiguous: install errors with the candidates;
+  disambiguate with <code>&lt;name&gt;@&lt;marketplace&gt;</code>. Installing bundled MCP servers
+  prompts before connecting.</li>
+<li>The agent gets read-only introspection (<code>introspection__list_skills</code> /
+  <code>list_plugins</code>); install/update/uninstall stay human-driven slash commands.</li>
+</ul>
+<p>Files: <code>plugins_loader.py</code>, <code>plugins_manager.py</code>, <code>skills_manager.py</code>.
+User docs: <code>docs/PLUGINS.md</code>.</p>
+<h2 id="service-management">Service management<a class="headerlink" href="#service-management" title="Permanent link">&para;</a></h2>
+<p>Cross-platform background service installation for persistent monitoring:
+systemd user services with <code>journalctl</code> on Linux, launchd user agents with
+file logging (<code>~/Library/Logs/</code>) on macOS. <code>ServiceBackend</code> is the abstract
+platform interface; <code>_get_backend()</code> detects the platform. Services preserve the
+user environment (PATH, env vars) and support multiple instances via config
+directory naming. File: <code>service.py</code>.</p>
+<p>Adding a backend: subclass <code>ServiceBackend</code> in <code>service.py</code>, implement
+<code>service_file_path</code>, <code>service_content</code>, <code>install</code>, <code>remove</code>, <code>action</code>, <code>status</code>
+and <code>logs</code>, add platform detection in <code>_get_backend()</code>, and cover it in
+<code>tests/test_service.py</code>.</p>
+<h2 id="sandbox-instances">Sandbox instances<a class="headerlink" href="#sandbox-instances" title="Permanent link">&para;</a></h2>
+<p>Isolated instances via podman-compose with per-service credential isolation:
+each MCP server runs in its own container and only receives its own secrets.
+The ai-assist container never sees MCP server credentials.</p>
+<ul>
+<li><strong>SSE transport</strong>: MCP servers connect via SSE (<code>MCPServerConfig.url</code>)
+  instead of stdio; <code>_transport()</code> in <code>agent.py</code> selects it.</li>
+<li><strong>Instance directory</strong>: <code>$AI_ASSIST_INSTANCES_DIR/&lt;name&gt;/</code> with host-only
+  <code>compose.yaml</code>/<code>.env</code> and a bind-mounted <code>sandbox/</code> directory.</li>
+<li><strong>Readiness</strong>: <code>_wait_for_mcp_servers()</code> polls TCP ports before launching.</li>
+<li><strong>CLI</strong>: <code>ai-assist /sandbox init|run|stop|list|delete|service</code>.</li>
+<li><strong>Features</strong>: <code>--features=ssh,gpg,git,gh,dci,dbus,litellm,web</code> (default
+  <code>git,dci,vertex</code>; <code>web</code> enables <code>internal__web_search</code>/<code>web_fetch</code>, off
+  otherwise so an autonomous agent cannot send private work to search
+  providers). Vertex AI (gcloud) is always included.</li>
+<li><strong><code>litellm</code> feature</strong>: a sidecar fronting non-Anthropic models (Gemini,
+  OpenAI) behind the Anthropic Messages dialect; auto-wires
+  <code>ANTHROPIC_BASE_URL</code>/<code>AI_ASSIST_API_KEY</code> so the container only sees
+  <code>LITELLM_MASTER_KEY</code>. Aliases live in
+  <code>sandbox/.ai-assist/litellm_config.yaml</code> (copied from
+  <code>sandbox_templates/litellm_config.yaml</code>); see <code>litellm-proxy/README.md</code>.</li>
+<li><strong><code>dci</code> feature downloads</strong>: both containers mount <code>sandbox/dci-files</code> at
+  <code>/tmp/dci</code>, the server's user (1001) is mapped to the host user
+  (<code>userns_mode: keep-id:uid=1001,gid=1001</code>), <code>/tmp/dci</code> is an allowed path,
+  and <code>DCI_DOWNLOAD_DIR_SHARED=true</code> lets the server pre-download at render
+  time in SSE mode.</li>
+<li><strong>Timezone</strong>: <code>--timezone=</code> sets <code>TZ</code> on every container (default: the host's;
+  <code>--timezone=</code> keeps the image's UTC). It decides when scheduled actions fire
+  (the scheduler compares against a naive <code>datetime.now()</code> and ignores a
+  trigger's own <code>timezone</code>) and keeps one clock across shared files and logs.</li>
+<li><strong>Image profiles</strong>: <code>--image=ai-assist-dev</code>; profile Dockerfiles in
+  <code>sandbox/profiles/</code> extend the base image and must not set <code>USER</code> (it breaks
+  <code>userns_mode: keep-id</code>).</li>
+<li><strong>Service mode</strong>: <code>ai-assist /sandbox service &lt;name&gt; install|remove|start|stop|status|logs</code>
+  wraps the compose stack as a systemd user service running <code>/monitor</code>; boot
+  startup needs <code>loginctl enable-linger $USER</code>.</li>
+<li><strong>No pods</strong>: <code>--in-pod=false</code>, so each container has its own user namespace.
+  The ai-assist container uses <code>userns_mode: keep-id</code>; MCP server containers
+  run as their default user.</li>
+<li><strong>Read-only mounts</strong>: <code>sandbox_mounts.py</code> implements
+  <code>/sandbox mount add|remove|list</code>, binding existing host directories read-only
+  and updating allowed paths. Sources with writable aliases are refused. Git,
+  credentials, content updates and workflow locks belong to the orchestration
+  layer. Changing mounts requires container recreation.</li>
+</ul>
+<p>The DCI MCP server image is built from upstream <code>Containerfile.sse</code>; the
+ai-assist image from <code>sandbox/ai-assist/Dockerfile</code>. The <code>--timezone</code> default
+comes from the host's <code>/etc/localtime</code>.</p>
+<p>Testing: <code>tests/test_sandbox.py</code> mocks subprocess (default suite).
+<code>tests/test_sandbox_integration.py</code> starts real containers and is run with
+<code>make test-integration</code> before merging sandbox changes.</p>
+<p>Files: <code>sandbox.py</code>, <code>sandbox_templates/</code>, <code>config.py</code> (<code>MCPServerConfig.url</code>).</p>
+<h2 id="event-driven-actions">Event-driven actions<a class="headerlink" href="#event-driven-actions" title="Permanent link">&para;</a></h2>
+<p>Everything is a <strong>trigger + prompt</strong> stored in
+<code>~/.ai-assist/event-schedules.json</code> and managed via agent tools.</p>
+<ul>
+<li><strong>ActionDefinition</strong> (<code>action_model.py</code>) — unified model replacing
+  <code>TaskDefinition</code> + <code>ScheduledAction</code>.</li>
+<li><strong>TriggerMatcher</strong> (<code>action_model.py</code>) — matches incoming events.</li>
+<li><strong>ActionEngine</strong> (<code>action_engine.py</code>) — executes actions (natural language,
+  MCP prompts, AWL, builtins) with event context.</li>
+<li><strong>ActionScheduler</strong> (<code>action_scheduler.py</code>) — unified scheduler for timer,
+  event and one-shot actions. Edits hot-reload it: <code>FileWatchdog</code> collapses a
+  burst of writes into one callback (debounce state on the loop thread; a
+  running callback is never cancelled), and <code>reload()</code> is serialized by a lock,
+  since overlapping reloads would leave untracked duplicate timers.</li>
+<li><strong>ActionLoader</strong> (<code>action_loader.py</code>) — load/save, auto-migration.</li>
+<li><strong>ActionTools</strong> (<code>action_tools.py</code>) — agent CRUD tools.</li>
+<li><strong>EventSource</strong> ABC (<code>event_sources.py</code>) — MQTT (<code>ai-assist[mqtt]</code>), D-Bus
+  (<code>ai-assist[dbus]</code>), file/glob (<code>watchdog</code>, no extra deps). MQTT pulls in
+  <code>aiomqtt</code>, D-Bus in <code>dbus-next</code>.</li>
+</ul>
+<p>Configuration shape and examples are in
+<a href="https://github.com/ai-assist-org/ai-assist/blob/main/README.md#event-driven-actions">README § Event-Driven Actions</a> and
+<a href="../SCHEDULED_ACTIONS/">docs/SCHEDULED_ACTIONS.md</a>. Notes for implementers:</p>
+<ul>
+<li>One-time actions created with <code>internal__schedule_action</code> (or
+  <code>internal__create_action</code>) run once, then move to
+  <code>event-schedules-archive.jsonl</code> with <code>completed</code>/<code>failed</code> status, matched by
+  name and time. Each (re)load also archives finished ones and those past due
+  beyond the 24 h catch-up window (<code>expired</code>) — see
+  <code>ActionLoader.archive_actions</code>.</li>
+<li>A <code>"reminder": true</code> action notifies with the prompt text and makes no model
+  call.</li>
+<li>Event-based actions debounce bursts (3 s); <code>payload_contains</code> /
+  <code>payload_regex</code> filter before execution.</li>
+<li>Recent notifications from <code>/monitor</code> (last 15 min) are added to the
+  interactive agent's per-query context, so follow-up questions work.</li>
+</ul>
+<h2 id="background-tasks-interactive-mode">Background tasks (interactive mode)<a class="headerlink" href="#background-tasks-interactive-mode" title="Permanent link">&para;</a></h2>
+<p>Long-running queries run as background <code>asyncio</code> tasks in the same event loop;
+the user keeps chatting. A finished task's result is handed back once
+(<code>BackgroundTaskManager.take_finished_note()</code>): an idle, empty prompt is ended
+so the agent reports at once (<code>wake_idle_prompt</code> in <code>tui_interactive.py</code>),
+otherwise the result goes out with the next message. <code>NotificationWatcher</code> still
+shows completion to the user.</p>
+<ul>
+<li><code>background_tasks.py</code> — spawn/track/cancel, in-memory only.</li>
+<li><code>background_task_tools.py</code> — <code>internal__run_background</code>,
+  <code>internal__list_background_tasks</code>, <code>internal__get_background_task</code>,
+  <code>internal__cancel_background_task</code>.</li>
+<li><strong>Isolation</strong>: prompts are prefixed <code>@no-kg @no-history</code> plus a note that the
+  answer goes back to the main conversation and nobody can answer questions.
+  Shared MCP sessions are reused. A background task cannot start another.</li>
+<li><strong>Security</strong>: <code>in_background_task()</code> (a <code>ContextVar</code> set in the task's own
+  asyncio task) auto-denies the confirmation prompts of background tasks only;
+  foreground prompts are still asked.</li>
+<li><strong>Not handed back</strong>: cancelled tasks, and tasks spawned with
+  <code>notify_agent=False</code> (MCP channel replies, which answer through their own
+  tool).</li>
+</ul>
+<h2 id="configuration-state-and-cost">Configuration, state and cost<a class="headerlink" href="#configuration-state-and-cost" title="Permanent link">&para;</a></h2>
+<p>Configuration precedence: environment (<code>.env</code>) → <code>~/.ai-assist/mcp_servers.yaml</code>
+→ <code>identity.yaml</code> → <code>variables.yaml</code> (AWL locals, auto-injected) →
+<code>event-schedules.json</code>.</p>
+<p>Hot-reload (<code>config_watcher.py</code>, <code>file_watchdog.py</code>): config changes reload
+without restart; monitor mode restarts actions when <code>event-schedules.json</code>
+changes.</p>
+<p><code>setup_logging()</code> logs the source commit of the ai-assist checkout (with
+"(uncommitted changes)" when tracked files changed), or nothing when it does not
+run from its own git checkout (<code>get_source_commit()</code> in <code>config.py</code>).</p>
+<p>State in <code>~/.ai-assist/</code>: <code>knowledge_graph.db</code>, <code>state/</code>,
+<code>allowed_commands.json</code>, <code>skill_env.json</code>, <code>audit/tool_calls.jsonl</code>,
+<code>traces/query_traces.jsonl</code>, <code>traces/requests/</code>, <code>events.jsonl</code>,
+<code>interactive_history.txt</code>. The audit trail is append-only, rotates at 10 MB, and
+keeps rotated files 7 days; query traces are kept 100 days; captured requests
+only exist with <code>AI_ASSIST_CAPTURE_MODEL_REQUESTS=true</code> (mode 0600, never
+pruned).</p>
+<p><strong>Cost tracking</strong> (<code>pricing.py</code>, <code>eval.py</code>):</p>
+<ul>
+<li>Prices are not available from the API. <code>MODEL_PRICING</code> is hardcoded and must
+  be updated when rates change
+  (https://docs.anthropic.com/en/docs/about-claude/models).</li>
+<li><code>_track_token_usage()</code> records cost per turn; <code>QueryTrace.total_cost_usd</code>
+  aggregates per query. <code>/cost [period]</code> and <code>/eval-stats</code> recompute each
+  query's cost from per-turn counts (<code>QueryTrace.cost_usd()</code>), so old traces are
+  reported correctly; the stored <code>total_cost_usd</code> is used only when per-turn
+  counts are missing or the model has no price.</li>
+<li>The API's <code>input_tokens</code> excludes cached tokens: <code>compute_turn_cost</code> bills
+  uncached input, cache writes, cache reads and output separately. Anything
+  measuring context fullness (observation masking, the budget warning,
+  <code>get_context_usage</code>) uses <code>prompt_tokens()</code>, the sum of the three input
+  counts.</li>
+</ul>
+<p><strong>Prompt caching</strong> (<code>AI_ASSIST_ENABLE_CACHE</code>, on by default): the static system
+block and the last two user messages of each request are marked
+(<code>_with_message_cache_breakpoints</code> in <code>agent.py</code>); the markers go on a copy, the
+conversation is never modified. The system prompt must stay byte-identical
+across queries: the clock, recent notifications and KG learnings/auto-context
+are appended to the current user turn as a separate block
+(<code>_build_query_context</code>, <code>_with_query_context</code>), and the breakpoint goes on the
+user's own text before it, so the next query hits the cache at the same
+position. Each turn's token entry records <code>prefix_sha</code> (tools + system);
+<code>workflows/self-improvement/lib/audit-cache.py</code> reports misses.</p>
+<p><strong>MLflow</strong> (<code>mlflow_tracing.py</code>): optional (<code>pip install ai-assist[mlflow]</code>,
+<code>mlflow-skinny</code> + <code>sqlalchemy</code>), enabled with <code>AI_ASSIST_ENABLE_MLFLOW=true</code>.
+<code>MLFLOW_TRACKING_URI</code> selects the backend; unset means a local SQLite store at
+<code>&lt;config dir&gt;/mlflow.db</code>. Emits a <code>query → tool</code> span tree and mirrors
+<code>QueryTrace</code> metrics. No-op when disabled. The JSONL cost tracking is
+unaffected.</p>
+<h2 id="tools-architecture">Tools architecture<a class="headerlink" href="#tools-architecture" title="Permanent link">&para;</a></h2>
+<p><strong>Built-in tools</strong> by domain: <code>report_tools.py</code>, <code>action_tools.py</code>,
+<code>schedule_action_tools.py</code>, <code>knowledge_tools.py</code>, <code>kg_query_tools.py</code>,
+<code>filesystem_tools.py</code> (<code>execute_command</code> reports per-stage <code>PIPESTATUS</code> and saves
+oversized output in the session tmpdir), <code>think_tool.py</code>, <code>json_tools.py</code>,
+<code>transform_tools.py</code>, <code>introspection_tools.py</code>. MCP tools are prefixed with the
+server name.</p>
+<p><strong>Progressive disclosure</strong> (<code>tool_disclosure.py</code>, <code>AI_ASSIST_DEFER_TOOLS</code>, on by
+default): only <code>CORE_TOOLS</code> are sent in full; every other tool, MCP or internal,
+is listed in the description of <code>introspection__call_tool</code>, read with
+<code>introspection__get_tool_help</code> and called through that proxy. The tool list
+never changes, so the prompt cache and thinking signatures stay valid. Choose
+<code>CORE_TOOLS</code> from audit trails, not by guess. Skills work the same way: only
+their front matter is in the system prompt. A proxied call is validated against
+the tool's schema (<code>check_arguments</code>, strict) before it runs; an invalid call is
+not executed and the error carries the tool's documentation. <code>last_tool_calls</code>
+records what ran this query.</p>
+<p><strong>Agent collaborators</strong>: <code>tool_result_router.py</code> (<code>ToolResultRouter</code>, result
+redirection and pagination), <code>synthesis_engine.py</code> (<code>SynthesisEngine</code>,
+synthesis, <code>_save_insights</code>, KG connection discovery),
+<code>system_prompt_builder.py</code> (<code>SystemPromptBuilder</code>, system prompt and per-query
+context). Each holds an agent back-reference and reads collaborators live;
+<code>AiAssistAgent</code> keeps thin delegating wrappers for the names tests and other
+modules use.</p>
+<p><strong>Result redirection</strong>: every tool accepts <code>__save_to_file</code>,
+<code>__write_to_report</code>, <code>__append_to_report</code>, <code>__collect_to_report</code> (auto-paginate
+and collect, needs server pagination config) and <code>__jq_filter</code> (runs first).</p>
+<p><strong>Dedup and loop detection</strong> (<code>_execute_tools_concurrently</code> in <code>agent.py</code>):
+identical calls (name + args) within a query are served from a result cache; a
+signature repeated ≥3× in the last 5 triggers loop detection (first offense
+nudges, a second aborts). <strong>Poll-safe tools</strong> — async status checks expected to
+be called repeatedly — are exempt: list fnmatch patterns in
+<code>AI_ASSIST_REPEATABLE_TOOLS</code> (whitespace/comma separated,
+<code>config.repeatable_tools</code>), matched by <code>AiAssistAgent._is_repeatable_tool</code>. A
+repeatable tool bypasses the cache and is never loop-flagged.</p>
+<p><strong>Audit</strong>: each <code>_execute_tool</code> call runs inside <code>audited_call()</code> (<code>audit.py</code>, a
+<code>ContextVar</code>, so concurrent calls stay separate), which assigns the
+<code>correlation_id</code> and collects authorization events (<code>record_authorization_event</code>
+— approval prompts via <code>FilesystemTools._record_confirmation</code>, policy refusals
+of paths, commands and protected configs, plan mode) and lets one record through
+per call. See <code>SECURITY.md</code> §6 for the record format, rotation and
+<code>AI_ASSIST_AUDIT_SINK</code>.</p>
+<h2 id="code-map">Code map<a class="headerlink" href="#code-map" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>ai_assist/
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>├── main.py                    # CLI entry point
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>├── agent.py                   # MCP agent with tool execution
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>├── tool_disclosure.py         # Core tools sent, others proxied
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>├── tool_result_router.py      # Result redirection/pagination
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>├── synthesis_engine.py        # Conversation synthesis + KG connections
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>├── system_prompt_builder.py   # System prompt + KG context assembly
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>├── config.py                  # Pydantic configuration models
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>├── service.py                 # systemd/launchd service management
+<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a>├── awl_*.py                   # AWL parser, runtime, AST, expressions
+<a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>├── knowledge_graph.py         # Temporal KG database
+<a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a>├── embedding.py, context.py   # Vector embeddings and semantic search
+<a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a>├── skills_*.py                # Agent Skills loader and manager
+<a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a>├── plugins_*.py               # Claude Code plugin loader and manager
+<a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a>├── plan_mode.py               # Plan mode (explore → approve → execute)
+<a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a>├── tui*.py                    # Terminal UI components
+<a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a>├── monitors.py, tasks.py      # Monitoring and task execution
+<a id="__codelineno-2-18" name="__codelineno-2-18" href="#__codelineno-2-18"></a>├── action_*.py                # Action model, engine, scheduler, loader, tools
+<a id="__codelineno-2-19" name="__codelineno-2-19" href="#__codelineno-2-19"></a>├── awl_executor.py            # Shared AWL script execution
+<a id="__codelineno-2-20" name="__codelineno-2-20" href="#__codelineno-2-20"></a>├── event_sources.py           # Pluggable event source system
+<a id="__codelineno-2-21" name="__codelineno-2-21" href="#__codelineno-2-21"></a>├── event_source_*.py          # MQTT, D-Bus, file sources
+<a id="__codelineno-2-22" name="__codelineno-2-22" href="#__codelineno-2-22"></a>├── background_tasks.py        # Background task manager
+<a id="__codelineno-2-23" name="__codelineno-2-23" href="#__codelineno-2-23"></a>├── background_task_tools.py   # Background task tools
+<a id="__codelineno-2-24" name="__codelineno-2-24" href="#__codelineno-2-24"></a>├── *_tools.py                 # Tool implementations
+<a id="__codelineno-2-25" name="__codelineno-2-25" href="#__codelineno-2-25"></a>├── transform_harness.py       # Child process of internal__transform
+<a id="__codelineno-2-26" name="__codelineno-2-26" href="#__codelineno-2-26"></a>├── notification_*.py          # Notification channels and dispatcher
+<a id="__codelineno-2-27" name="__codelineno-2-27" href="#__codelineno-2-27"></a>├── state.py                   # State management and caching
+<a id="__codelineno-2-28" name="__codelineno-2-28" href="#__codelineno-2-28"></a>├── *_watcher.py               # File watching and hot-reload
+<a id="__codelineno-2-29" name="__codelineno-2-29" href="#__codelineno-2-29"></a>└── security.py                # Sandboxed script execution
+<a id="__codelineno-2-30" name="__codelineno-2-30" href="#__codelineno-2-30"></a>
+<a id="__codelineno-2-31" name="__codelineno-2-31" href="#__codelineno-2-31"></a>tests/                         # Test suite (mirrors ai_assist structure)
+<a id="__codelineno-2-32" name="__codelineno-2-32" href="#__codelineno-2-32"></a>docs/                          # Detailed documentation
+<a id="__codelineno-2-33" name="__codelineno-2-33" href="#__codelineno-2-33"></a>workflows/                     # Shipped AWL workflows; helpers in &lt;workflow&gt;/lib/
+<a id="__codelineno-2-34" name="__codelineno-2-34" href="#__codelineno-2-34"></a>presentation/                  # LaTeX/Beamer slides (make -C presentation)
+<a id="__codelineno-2-35" name="__codelineno-2-35" href="#__codelineno-2-35"></a>emacs/                         # AWL major mode for Emacs
+</code></pre></div>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Licensed under the Apache License 2.0
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "navigation.instant", "search.suggest", "search.highlight", "content.code.copy", "content.tabs.link", "toc.follow"], "search": "../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.a5f9d56c.min.js"></script>
+      
+    
+  </body>
+</html>

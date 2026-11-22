@@ -308,7 +308,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../AWL_SPECIFICATIONS/" class="md-tabs__link">
+        <a href="../ARCHITECTURE/" class="md-tabs__link">
           
   
   
@@ -740,6 +740,17 @@
     <span class="md-ellipsis">
       
         Agent Tools (Internal)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#implementation-notes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Implementation notes
       
     </span>
   </a>
@@ -1216,6 +1227,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../ARCHITECTURE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../AWL_SPECIFICATIONS/" class="md-nav__link">
         
   
@@ -1447,6 +1486,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#implementation-notes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Implementation notes
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1613,6 +1663,11 @@
 - <code>introspection__search_knowledge_graph</code>: Search for entities (DCI jobs, Jira tickets)
 - <code>introspection__get_kg_entity</code>: Get specific entity details</p>
 <p>These work automatically during conversations.</p>
+<h2 id="implementation-notes">Implementation notes<a class="headerlink" href="#implementation-notes" title="Permanent link">&para;</a></h2>
+<p>Embedding exclusions (<code>KnowledgeGraph.NON_EMBEDDED_TYPES</code>), the dedup threshold
+used by compaction-time extraction (<code>AiAssistAgent.DEDUP_SIM_THRESHOLD</code>) and
+<code>skill_performance</code> bookkeeping are described in
+<a href="../ARCHITECTURE/#knowledge-graph">ARCHITECTURE § Knowledge graph</a>.</p>
 
 
 
