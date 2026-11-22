@@ -663,5 +663,6 @@ EOF
 ## Related Documentation
 
 - **[README.md](../README.md)** - Main documentation
+- **[ARCHITECTURE.md](ARCHITECTURE.md#agent-skills-and-plugins)** - Implementation notes (namespacing, usage tracking)
 - **[SECURITY.md](../SECURITY.md)** - Script execution security
 - **[agentskills.io](https://agentskills.io)** - Official specification

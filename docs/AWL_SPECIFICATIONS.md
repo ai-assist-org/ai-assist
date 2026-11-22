@@ -977,3 +977,9 @@ Key properties:
 - task hints controlling context
 - deterministic execution
 - extensible architecture
+
+## Implementation notes
+
+Task completion (`internal__finish_task`), model-tier and effort resolution, the
+auto-authorization rules for backticked commands, and audit attribution are
+described in [ARCHITECTURE § AWL](ARCHITECTURE.md#awl).

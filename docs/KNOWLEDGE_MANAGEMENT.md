@@ -198,3 +198,10 @@ The agent has these internal tools (automatically used, not directly callable):
 - `introspection__get_kg_entity`: Get specific entity details
 
 These work automatically during conversations.
+
+## Implementation notes
+
+Embedding exclusions (`KnowledgeGraph.NON_EMBEDDED_TYPES`), the dedup threshold
+used by compaction-time extraction (`AiAssistAgent.DEDUP_SIM_THRESHOLD`) and
+`skill_performance` bookkeeping are described in
+[ARCHITECTURE § Knowledge graph](ARCHITECTURE.md#knowledge-graph).

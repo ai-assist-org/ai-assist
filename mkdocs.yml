@@ -84,4 +84,5 @@ nav:
       - AgentMail: recipes/AGENTMAIL.md
       - Telegram: recipes/TELEGRAM.md
   - Reference:
+      - Architecture: ARCHITECTURE.md
       - AWL Specifications: AWL_SPECIFICATIONS.md

@@ -211,6 +211,84 @@ When adding new functionality, add corresponding tests:
        assert result == "expected"
    ```
 
+## Development Philosophy
+
+### TDD — test first
+
+1. **Red**: write a failing test that defines the behaviour.
+2. **Green**: write the minimum code that makes it pass.
+3. **Refactor**: clean up while keeping the suite green.
+
+Baseline assumption: all tests are green before your change. If they fail
+afterwards, your change broke them — fix it.
+
+- Unit tests: a single function or class in isolation.
+- Integration tests: MCP connections and tool execution.
+- End-to-end tests: query → response, monitor cycles, AWL runs.
+- Mock external services; cover error handling and graceful degradation.
+
+### Snapshot / replay testing
+
+The agent loop can be driven offline and deterministically by swapping the single
+model seam (`AiAssistAgent.anthropic`) for a cassette-driven fake client
+(`ai_assist/testing/`). A cassette is a JSON file listing the assistant turns
+for one query; the Nth `messages.create`/`messages.stream` call returns the Nth
+recorded turn (turn-index matching, robust to prompt drift). Only the LLM is
+faked.
+
+Unit and loop tests use the `make_replay_agent` fixture (`tests/conftest.py`):
+
+```python
+async def test_something(make_replay_agent):
+    agent = await make_replay_agent([
+        {"content": [{"type": "tool_use", "id": "t1", "name": "internal__think",
+                      "input": {"thought": "plan"}}], "stop_reason": "tool_use"},
+        {"content": [{"type": "text", "text": "Done"}], "stop_reason": "end_turn"},
+    ])
+    assert await agent.query(prompt="do it") == "Done"
+```
+
+Internal tools run for real here against an isolated temp KG, so only call safe
+tools in hand-written cassettes. Examples: `tests/test_snapshot_replay.py`.
+
+Eval cases use the same mechanism: `AI_ASSIST_EVAL_MODE=record` writes
+`eval/dataset/cases/<case>/cassette.json`; `AI_ASSIST_EVAL_MODE=replay` runs
+offline against it (`eval/eval_wrapper.py`). Eval replay does **not** execute
+tools — it records tool selection for the judges and skips side effects.
+
+### DRY
+
+Extract logic used in more than one place. Config loading lives in
+`config.py`; tool execution goes through `_execute_tool` in `agent.py`; query
+patterns belong in a shared helper. If two features need the same code, move it
+to one place instead of copying.
+
+### Tracer bullets
+
+Build end-to-end first, then enhance. Add the smallest path that proves the
+architecture works (console output before a notifier, a static page before a
+dashboard), keep the suite green, and iterate. Prefer three small working steps
+over one large unfinished feature.
+
+### Minimize branches
+
+Fewer code paths, fewer bugs. Fail fast with a clear error instead of adding
+fallbacks for missing dependencies or "just in case" failures. Handle missing
+dependencies at install time (`pyproject.toml`). Branches are for user-facing
+choices and data-driven cases.
+
+### Portability (Linux and macOS)
+
+Shipped shell scripts, the shell code ai-assist runs, and commands it tells a
+model to run must work on both platforms: bash 3.2 (no `mapfile`, associative
+arrays, `coproc`, `${var,,}`/`${var^^}`), POSIX awk (no `mktime`, `strftime`,
+`gensub`, `> "/dev/stdout"`, backslashes in `gsub()` replacements), BSD userland
+(no `sed -i`, `date -I`, `stat -c`, `readlink -f`, `grep -P`, `find -printf`),
+and `sha1sum` only with a `shasum -a 1` fallback. `scripts/check_portability.py`
+runs in pre-commit; `tests/test_check_portability.py` runs it over every tracked
+script. New awk helpers are also exercised under `gawk --posix` by the `awk_dir`
+fixture in `tests/test_self_improvement_workflow.py`.
+
 ## Continuous Integration
 
 Pre-commit hooks run the same checks that will run in CI/CD, so:
