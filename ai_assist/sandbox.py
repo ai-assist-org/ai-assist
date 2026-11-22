@@ -690,6 +690,8 @@ async def handle_sandbox_command(args: list[str]) -> None:
                 timezone = arg.split("=", 1)[1]
         features = _parse_features(feature_str)
         sandbox_init(name, features, image=image, timezone=timezone)
+    elif subcmd == "mount":
+        _handle_mount_command(args[1:])
     elif subcmd == "run":
         if len(args) < 3:
             console_print("Usage: ai-assist /sandbox run <name> /mode [args...]")
@@ -722,6 +724,49 @@ async def handle_sandbox_command(args: list[str]) -> None:
         sys.exit(1)
 
 
+def _handle_mount_command(args: list[str]) -> None:
+    """Configure directory bindings; content lifecycle belongs to the host."""
+    from .sandbox_mounts import add_readonly_mount, list_readonly_mounts, remove_readonly_mount
+
+    usage = (
+        "Usage: /sandbox mount add <instance> <host-directory> <container-path>\n"
+        "       /sandbox mount remove <instance> <container-path>\n"
+        "       /sandbox mount list <instance>"
+    )
+    try:
+        if len(args) < 2 or args[0] not in {"add", "remove", "list"}:
+            raise ValueError(usage)
+        action, instance_name = args[:2]
+        if not instance_name or instance_name in {".", ".."} or any(c in instance_name for c in "/\\"):
+            raise ValueError("Invalid sandbox instance name")
+        instance = _instance_dir(instance_name)
+        if not (instance / "compose.yaml").exists():
+            raise ValueError(f"Sandbox instance not found: {instance_name}")
+        if action == "add":
+            if len(args) != 4:
+                raise ValueError(usage)
+            add_readonly_mount(instance, Path(args[2]), args[3])
+            console_print(f"Added read-only directory mount at {args[3]}")
+        elif action == "remove":
+            if len(args) != 3:
+                raise ValueError(usage)
+            remove_readonly_mount(instance, args[2])
+            console_print(f"Removed directory mount at {args[2]}; host contents unchanged")
+        else:
+            if len(args) != 2:
+                raise ValueError(usage)
+            mounts = list_readonly_mounts(instance)
+            for mount in mounts:
+                console_print(f"{mount['source']} -> {mount['target']} (read-only)")
+            if not mounts:
+                console_print("No custom read-only directory mounts.")
+        if action != "list":
+            console_print("Recreate the sandbox containers to apply mount changes; active containers are unchanged.")
+    except (ValueError, OSError) as exc:
+        console_print(f"Error: {exc}")
+        sys.exit(1)
+
+
 def _print_init_usage():
     console_print("Usage: ai-assist /sandbox init <name> [--features=git,dci,vertex,...] [--image=NAME]")
     console_print()
@@ -747,5 +792,6 @@ def _print_usage():
     console_print("  stop <name>                                   Stop a running sandbox")
     console_print("  list                                          List sandbox instances")
     console_print("  delete <name>                                 Delete a sandbox instance")
+    console_print("  mount add|remove|list <name> ...              Inject read-only host directories")
     console_print("  service <name> <action>                       Manage as systemd service")
     console_print(f"    Actions: {', '.join(sorted(SERVICE_SUBCOMMANDS))}")
