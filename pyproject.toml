@@ -32,7 +32,7 @@ eval = [
     "agent-eval-harness @ git+https://github.com/opendatahub-io/agent-eval-harness.git",
 ]
 docs = [
-    "mkdocs-material>=9.8.1",
+    "mkdocs-material>=9.8.2",
     "pymdown-extensions>=13.1",
 ]
 dev = [
