@@ -673,7 +673,9 @@ request path, query, regular HTTP headers, and body. It passes the values of
 File-backed GitHub comments and API requests are checked as they leave the
 sandbox. Outside an inspected sandbox, this feature provides no content check.
 Unsupported inspected encodings, HTTP trailers, and unresolved
-Git delta objects and multipart uploads are refused. The policy and CA key stay outside the
+Git delta objects and multipart uploads are refused. For an uninspectable thin
+pack, retry with `git push --no-thin` and the same remote and ref. The proxy
+checks each complete outgoing object, including protected text inherited from its base. The policy and CA key stay outside the
 workspace. Run `ai-assist /sandbox status <name>` for the policy location;
 request decisions are in the instance's `audit/egress.jsonl`. Recreate
 the instance if upstream addresses change. Existing relay instances retain

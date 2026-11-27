@@ -206,7 +206,12 @@ def git_rejection(rule: str, body: bytes) -> bytes | None:
     def packet(data: bytes) -> bytes:
         return f"{len(data) + 4:04x}".encode() + data
 
-    message = f"Egress policy {rule}: remove the restricted content and amend the commit before pushing.\n".encode()
+    advice = (
+        "send a self-contained pack with git push --no-thin so the proxy can inspect it"
+        if rule == "not-inspected"
+        else "remove the restricted content and amend the commit before pushing"
+    )
+    message = f"Egress policy {rule}: {advice}.\n".encode()
     status = packet(b"unpack " + message) + b"0000"
     if any(cap.startswith(b"side-band") for cap in capabilities.split()):
         return packet(b"\x02" + message) + packet(b"\x01" + status) + b"0000"

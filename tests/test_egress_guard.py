@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from ai_assist.config import AiAssistConfig
-from ai_assist.egress_guard import inspect_body
+from ai_assist.egress_guard import git_rejection, inspect_body
 from ai_assist.filesystem_tools import FilesystemTools
 
 
@@ -31,6 +31,15 @@ def test_inspection_profiles(profile: str, body: bytes, rule: str | None) -> Non
 
 def test_invalid_encoding_refused() -> None:
     assert inspect_body("full_dlp", b"invalid", "gzip") == "not-inspected"
+
+
+def test_uninspectable_git_push_explains_how_to_submit_a_complete_pack() -> None:
+    command = b"refs/heads/main\0report-status side-band-64k\n"
+    body = f"{len(command) + 4:04x}".encode() + command + b"0000"
+    rejection = git_rejection("not-inspected", body)
+    assert rejection and b"--no-thin" in rejection
+    content_rejection = git_rejection("internal-ticket", body)
+    assert content_rejection and b"--no-thin" not in content_rejection
 
 
 def test_pack_scans_reconstructed_delta() -> None:
