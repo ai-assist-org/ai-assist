@@ -642,6 +642,12 @@ Git over HTTPS uses `github.com`; GitHub API requests use `api.github.com`.
 Both receive outbound content inspection. Add the `gh` feature if the agent
 also needs GitHub CLI credentials. Explicit host options define the entire
 allowlist. You can instead select the shipped policy with `--egress-policy=default`.
+The [coding-agent deployment policy](examples/coding-agent-egress.json) is an
+opt-in example. Select it with `--egress-policy=examples/coding-agent-egress.json`
+from the checkout and enable `dci,egress-proxy`. It gives the DCI sidecar
+exclusive access to Red Hat Jira, disables that sidecar's GitHub tools, and
+refuses Jira links and configured internal ticket keys in GitHub publications.
+Set `JIRA_EMAIL` and `JIRA_API_TOKEN` in the instance's `.env` for Jira reads.
 An operator-provided JSON file in the same format is also accepted. With
 neither option the allowlist is empty. Init resolves configured hosts to public IPv4 addresses and prepares
 the embedding cache before starting the isolated stack. Rootless network

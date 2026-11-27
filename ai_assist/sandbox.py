@@ -417,6 +417,15 @@ def sandbox_init(
     elif egress_policy:
         raise ValueError("--egress-policy requires egress-proxy")
     compose = _build_compose(features, image=image, timezone=timezone, egress_hosts=egress_hosts)
+    dci_github_tools = rules.get("dci_github_tools", True)
+    if not isinstance(dci_github_tools, bool):
+        raise ValueError("dci_github_tools must be a boolean")
+    if "dci" in features and not dci_github_tools:
+        # The DCI server registers its GitHub tools only when this token is set.
+        compose["services"]["dci-mcp-server"]["environment"]["GITHUB_TOKEN"] = ""
+    guidance = rules.get("agent_guidance", "")
+    if not isinstance(guidance, str):
+        raise ValueError("agent_guidance must be a string")
     if egress_subnet is not None:
         configure_egress_subnet(compose, egress_subnet, name)
     relay = _relay_config(egress_hosts) if egress_hosts else None
@@ -441,6 +450,13 @@ def sandbox_init(
         src = TEMPLATES_DIR / template_name
         dst = sandbox / dest_rel
         shutil.copy2(src, dst)
+
+    if guidance:
+        path = sandbox / ".ai-assist/identity.yaml"
+        identity = yaml.safe_load(path.read_text())
+        personality = identity["assistant"]["personality"].rstrip()
+        identity["assistant"]["personality"] = f"{personality}\n{guidance}"
+        path.write_text(yaml.safe_dump(identity, sort_keys=False))
 
     with open(instance / "compose.yaml", "w") as f:
         yaml.dump(compose, f, default_flow_style=False, sort_keys=False)

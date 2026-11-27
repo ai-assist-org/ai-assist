@@ -16,6 +16,10 @@ from ai_assist.filesystem_tools import FilesystemTools
     [
         ("full_dlp", b"CONFIDENTIAL_INTERNAL_PROJECT", "internal-marker"),
         ("full_dlp", b"CILAB-123", "internal-ticket"),
+        ("full_dlp", b"See [details](https://redhat.atlassian.net/browse/EXAMPLE-1)", None),
+        ("full_dlp", b"https://REDHAT.ATLASSIAN.NET/", None),
+        ("full_dlp", b"https://other.atlassian.net/", None),
+        ("secrets_only", b"https://redhat.atlassian.net/", None),
         ("secrets_only", b"CILAB-123", None),
         ("secrets_only", b"AKIA" + b"A" * 16, "aws-key"),
         ("none", b"AKIA" + b"A" * 16, None),

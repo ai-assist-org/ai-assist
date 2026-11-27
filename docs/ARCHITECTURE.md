@@ -218,6 +218,12 @@ Content rules run in the proxy after the client constructs the HTTP request.
 For inspected profiles it scans the method, percent-decoded path and query,
 header names, header values except for Authorization and X-API-Key, and the body.
 Requests with trailers or unavailable bodies are refused for those profiles.
+Deployment policies can restrict a destination to a sidecar using
+`required_sources` (hostname to service name). Both proxy listeners check
+the transport peer address against the service address. An optional
+`dci_github_tools: false` clears only the DCI container's GitHub token during
+provisioning, disabling upstream tool registration. Optional `agent_guidance`
+is appended to the instance identity at init.
 Allowlists, CA private keys and egress audit records live outside the workspace.
 Each workload joins the namespace of a separate rootless network guard.
 Only that guard has NET_ADMIN there. Its nftables queues inspect outbound

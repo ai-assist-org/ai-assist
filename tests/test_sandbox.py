@@ -93,6 +93,30 @@ class TestGetInstancesDir:
 
 
 class TestBuildCompose:
+    def test_coding_agent_policy_is_opt_in(self, tmp_path, monkeypatch):
+        features = {"egress-proxy", "dci", "gh"}
+        ordinary = _build_compose(features)["services"]
+        assert ordinary["dci-mcp-server"]["environment"]["GITHUB_TOKEN"] == "${GITHUB_TOKEN:-}"
+        monkeypatch.setenv("AI_ASSIST_INSTANCES_DIR", str(tmp_path))
+        policy = Path(__file__).resolve().parents[1] / "examples/coding-agent-egress.json"
+        with (
+            patch("socket.gethostbyname_ex", return_value=("host", [], ["8.8.8.8"])),
+            patch("fastembed.TextEmbedding", side_effect=lambda model, cache_dir, threads: Path(cache_dir).mkdir()),
+        ):
+            sandbox_init("coding", features, egress_policy=str(policy))
+        path = tmp_path / "coding"
+        services = yaml.safe_load((path / "compose.yaml").read_text())["services"]
+        assert services["ai-assist"]["environment"]["GITHUB_TOKEN"] == "${GITHUB_TOKEN:-}"
+        assert services["dci-mcp-server"]["environment"]["GITHUB_TOKEN"] == ""
+        assert services["dci-mcp-server"]["environment"]["JIRA_API_TOKEN"] == "${JIRA_API_TOKEN:-}"
+        assert (
+            json.loads(policy.read_text())["agent_guidance"]
+            in yaml.safe_load((path / "sandbox/.ai-assist/identity.yaml").read_text())["assistant"]["personality"]
+        )
+        resolved = json.loads((path / "egress/policy/policy.json").read_text())
+        assert resolved["required_sources"]["redhat.atlassian.net"] == "dci-mcp-server"
+        assert resolved["destinations"]["redhat.atlassian.net"]["profile"] == "none"
+
     @pytest.mark.parametrize("hostname", ["*.example.org", "example.org:443", "127.0.0.1"])
     def test_relay_requires_exact_hostname(self, hostname: str) -> None:
         with pytest.raises(ValueError, match="Invalid egress hostname|Invalid profile"):

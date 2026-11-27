@@ -1,0 +1,35 @@
+{
+  "destinations": {
+    "github.com": "full_dlp",
+    "api.github.com": "full_dlp",
+    "api.enmaas.devshift.net": "secrets_only",
+    "api.distributed-ci.io": "full_dlp",
+    "redhat.atlassian.net": "none"
+  },
+  "required_sources": {
+    "redhat.atlassian.net": "dci-mcp-server"
+  },
+  "profiles": {
+    "full_dlp": [
+      "credentials",
+      "identifiers"
+    ],
+    "secrets_only": [
+      "credentials"
+    ],
+    "none": []
+  },
+  "credentials": {
+    "aws-key": "(?:AKIA|ASIA)[0-9A-Z]{16}",
+    "github-token": "(?:gh[pousr]_[a-zA-Z0-9_]{36,}|github_pat_[a-zA-Z0-9_]{22,})",
+    "api-secret": "sk-[A-Za-z0-9_-]{20,}",
+    "private-key": "-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY"
+  },
+  "identifiers": {
+    "internal-ticket": "\\bCILAB-[0-9]+\\b",
+    "internal-jira": "(?i)\\bredhat\\.atlassian\\.net\\b",
+    "internal-marker": "CONFIDENTIAL_INTERNAL_PROJECT|INTERNAL_CUSTOMER_DUMP"
+  },
+  "dci_github_tools": false,
+  "agent_guidance": "Use internal Jira tickets for research. Describe the technical change in your own words and omit internal ticket keys and links from code, documentation, commits, pull requests, and review comments."
+}

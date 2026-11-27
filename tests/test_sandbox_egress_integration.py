@@ -95,7 +95,15 @@ def test_inspected_egress(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
         for h, p in [("full.test", "full_dlp"), ("model.test", "secrets_only"), ("tracker.test", "none")]
     }
     policy_file = instance / "egress/policy/policy.json"
-    policy_file.write_text(json.dumps({**json.loads(policy_file.read_text()), "destinations": policy}))
+    policy_file.write_text(
+        json.dumps(
+            {
+                **json.loads((Path(__file__).resolve().parents[1] / "examples/coding-agent-egress.json").read_text()),
+                "destinations": policy,
+                "required_sources": {"tracker.test": "litellm"},
+            }
+        )
+    )
     manifest = instance / "compose.yaml"
     stack = yaml.safe_load(manifest.read_text())
     stack["networks"]["upstream"]["internal"] = True
@@ -207,12 +215,21 @@ for sni in (None, 'other.test'):
 import httpx
 secret = b'AKIA' + b'Q'*16
 for host, body, code in [('full.test', b'CILAB-123',403), ('model.test', b'CILAB-123',200),
-                        ('model.test',secret,403), ('tracker.test',secret,200), ('full.test',b'public',200)]:
+                        ('model.test',secret,403), ('full.test',b'https://redhat.atlassian.net/browse/EXAMPLE-1',403),
+                        ('full.test',b'public',200)]:
     r=httpx.post('https://'+host+'/',content=body)
     assert r.status_code == code, r.status_code
     assert r.content == body if code == 200 else body not in r.content
 r=httpx.post('https://full.test/',headers={'Content-Encoding':'gzip'},content=b'broken')
 assert r.status_code == 403 and 'not-inspected' in r.text
+try: httpx.get('https://tracker.test/',timeout=3)
+except httpx.ProxyError as exc: assert '403' in str(exc)
+else: raise AssertionError('agent reached sidecar-only tracker')
+import ssl
+with httpx.Client(trust_env=False,verify=ssl.create_default_context(cafile='/etc/ai-assist-egress-ca.pem')) as direct:
+    try: direct.get('https://tracker.test/',timeout=3)
+    except httpx.TransportError: pass
+    else: raise AssertionError('tracker accepted direct agent TLS')
 with httpx.stream('GET', 'https://model.test/events',timeout=4) as response:
     lines=response.iter_lines()
     assert next(lines)=='data: first'
@@ -285,6 +302,14 @@ for target, headers in [("/api/v3/render/CILAB-123", {}), ("/api/v3/render?q=CIL
         count = run("exec", "-T", "origin", "wc", "-c", "/tmp/render-count")
         assert int(count.stdout.split()[0]) == 2
         run("up", "-d", "--no-deps", "litellm")
+        run(
+            "exec",
+            "-T",
+            "litellm",
+            "python3",
+            "-c",
+            "import httpx; r=httpx.post('https://tracker.test/',content=b'CILAB-123'); assert r.content==b'CILAB-123' and r.status_code==200",
+        )
         client("""
 import httpx, time
 url = "http://litellm:4000"

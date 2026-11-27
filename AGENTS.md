@@ -93,6 +93,8 @@ The full tree is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#code-map).
   Only mitmproxy joins the upstream network. Keep its CA key and policy outside the workspace.
   Apply egress content rules to requests in the proxy. File-backed and inline
   requests use the same rules regardless of the client that sent them.
+  Keep deployment-specific destinations, content rules and tool selection
+  in the selected operator policy. The coding-agent example lives under `examples/`.
   With `--egress-subnet`, provision service names on the network namespace
   owners. Workloads inherit their hosts files on Podman.
 - Sandbox profile Dockerfiles must not set `USER` (it breaks

@@ -18,31 +18,49 @@ from egress_guard import LIMIT, PROFILES, git_rejection, inspect_body, inspect_m
 
 class Guard:
     def __init__(self):
-        self.policy = json.loads(Path("/policy/policy.json").read_text())["destinations"]
+        config = json.loads(Path("/policy/policy.json").read_text())
+        self.policy = config["destinations"]
+        self.required_sources = config.get("required_sources", {})
+        if not isinstance(self.required_sources, dict) or any(
+            source not in ("dci-mcp-server", "litellm") for source in self.required_sources.values()
+        ):
+            raise ValueError("Invalid required sidecar")
         if any(entry["profile"] not in PROFILES or not entry["addresses"] for entry in self.policy.values()):
             raise ValueError("Invalid destination policy")
         self.tunnels = {}
         self.ready = set()
 
+    def source(self, client):
+        for sidecar in ("dci-mcp-server", "litellm"):
+            try:
+                if client.peername[0] in socket.gethostbyname_ex(sidecar)[2]:
+                    return sidecar
+            except socket.gaierror:
+                continue
+        return "ai-assist"
+
+    def allowed(self, client, host):
+        if host not in self.policy:
+            return False
+        return host not in self.required_sources or self.source(client) == self.required_sources[host]
+
     def record(self, client, host, rule):
         entry = self.policy.get(host, {})
         destination = host or "<no-sni>"
-        if host and (not re.fullmatch(r"[a-zA-Z0-9.:-]{1,253}", host) or inspect_body("full_dlp", host.encode())):
+        # A configured sidecar-only hostname may itself be a publication
+        # marker. Retain that known destination for host-side access audits.
+        known_private_host = entry and host in self.required_sources
+        if host and (
+            not re.fullmatch(r"[a-zA-Z0-9.:-]{1,253}", host)
+            or (not known_private_host and inspect_body("full_dlp", host.encode()))
+        ):
             destination = "<redacted>"
-        source = "ai-assist"
-        for sidecar in ("dci-mcp-server", "litellm"):
-            try:
-                if socket.gethostbyname(sidecar) == client.peername[0]:
-                    source = sidecar
-                    break
-            except socket.gaierror:
-                continue
         append_line(
             Path("/audit/egress.jsonl"),
             json.dumps(
                 {
                     "timestamp": datetime.now(timezone.utc).isoformat(),
-                    "source": source,
+                    "source": self.source(client),
                     "source_ip": client.peername[0],
                     "destination": destination,
                     "profile": entry.get("profile"),
@@ -79,14 +97,14 @@ class Guard:
 
     def http_connect(self, flow):
         host = flow.request.host.lower()
-        if host not in self.policy or flow.request.port != 443:
+        if flow.request.port != 443 or not self.allowed(flow.client_conn, host):
             self.refuse(flow, "destination")
         else:
             self.tunnels[flow.client_conn.id] = host
 
     def tls_clienthello(self, data):
         client = data.context.client
-        if client.sockname[1] == 443 and data.client_hello.sni in self.policy:
+        if client.sockname[1] == 443 and self.allowed(client, data.client_hello.sni):
             self.tunnels[client.id] = data.client_hello.sni
             data.context.server.address = (data.client_hello.sni, 443)
         host = self.tunnels.get(client.id)
