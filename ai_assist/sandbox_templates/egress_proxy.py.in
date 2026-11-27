@@ -1,0 +1,190 @@
+"""Entrypoint in the mitmproxy sidecar; startup errors terminate the process."""
+
+import asyncio
+import json
+import os
+import re
+import socket
+from datetime import datetime, timezone
+from pathlib import Path
+
+from mitmproxy import http, options
+from mitmproxy.tools.dump import DumpMaster
+
+from audit_writer import append_line
+from egress_guard import LIMIT, PROFILES, git_rejection, inspect_body
+
+
+class Guard:
+    def __init__(self):
+        self.policy = json.loads(Path("/policy/policy.json").read_text())["destinations"]
+        if any(entry["profile"] not in PROFILES or not entry["addresses"] for entry in self.policy.values()):
+            raise ValueError("Invalid destination policy")
+        self.tunnels = {}
+        self.ready = set()
+
+    def record(self, client, host, rule):
+        entry = self.policy.get(host, {})
+        destination = host or "<no-sni>"
+        if host and (not re.fullmatch(r"[a-zA-Z0-9.:-]{1,253}", host) or inspect_body("full_dlp", host.encode())):
+            destination = "<redacted>"
+        source = "ai-assist"
+        for sidecar in ("dci-mcp-server", "litellm"):
+            try:
+                if socket.gethostbyname(sidecar) == client.peername[0]:
+                    source = sidecar
+                    break
+            except socket.gaierror:
+                continue
+        append_line(
+            Path("/audit/egress.jsonl"),
+            json.dumps(
+                {
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "source": source,
+                    "source_ip": client.peername[0],
+                    "destination": destination,
+                    "profile": entry.get("profile"),
+                    "decision": "refused" if rule else "allowed",
+                    "rule_id": rule,
+                }
+            ),
+        )
+
+    def refuse(self, flow, rule):
+        message = f"Egress policy {rule}: remove restricted content or contact the sandbox operator."
+        flow.metadata["denied"] = True
+        if flow.request.path.endswith("/git-receive-pack"):
+            report = git_rejection(rule, flow.request.raw_content or b"")
+            flow.response = (
+                http.Response.make(200, report, {"Content-Type": "application/x-git-receive-pack-result"})
+                if report
+                else http.Response.make(403, message, {"Content-Type": "text/plain"})
+            )
+        elif (
+            self.policy.get(flow.request.host, {}).get("profile") == "secrets_only"
+            or "json" in flow.request.headers.get("content-type", "")
+            or flow.request.host == "api.github.com"
+        ):
+            body = {
+                "type": "error",
+                "message": message,
+                "error": {"type": "egress_policy_violation", "message": message},
+            }
+            flow.response = http.Response.make(403, json.dumps(body), {"Content-Type": "application/json"})
+        else:
+            flow.response = http.Response.make(403, message, {"Content-Type": "text/plain"})
+        self.record(flow.client_conn, flow.request.host, rule)
+
+    def http_connect(self, flow):
+        host = flow.request.host.lower()
+        if host not in self.policy or flow.request.port != 443:
+            self.refuse(flow, "destination")
+        else:
+            self.tunnels[flow.client_conn.id] = host
+
+    def tls_clienthello(self, data):
+        client = data.context.client
+        if client.sockname[1] == 443 and data.client_hello.sni in self.policy:
+            self.tunnels[client.id] = data.client_hello.sni
+            data.context.server.address = (data.client_hello.sni, 443)
+        host = self.tunnels.get(client.id)
+        if not host or host != data.client_hello.sni or any(t == 0xFE0D for t, _ in data.client_hello.extensions):
+            self.tunnels.pop(client.id, None)
+            data.context.server.error = "destination"
+            self.record(client, data.client_hello.sni, "destination")
+
+    def tls_start_client(self, data):
+        if data.context.client.id not in self.tunnels:
+            data.ssl_conn = None
+
+    def server_connect(self, data):
+        host = self.tunnels.get(data.client.id)
+        if data.client.id not in self.ready or not host or data.server.address != (host, 443):
+            data.server.error = "destination"
+            return
+        data.server.sni = host
+        data.server.address = (self.policy[host]["addresses"][0], 443)
+
+    def requestheaders(self, flow):
+        req = flow.request
+        host = self.tunnels.get(flow.client_conn.id)
+        if flow.client_conn.sockname[1] == 443 and host and req.host_header in (host, host + ":443"):
+            req.host = host
+            req.port = 443
+        if (
+            not host
+            or flow.client_conn.sni != host
+            or req.host.lower() != host
+            or req.port != 443
+            or req.scheme != "https"
+            or req.host_header not in (host, host + ":443")
+            or req.method in ("CONNECT", "TRACE")
+            or "upgrade" in req.headers
+        ):
+            self.refuse(flow, "destination")
+        elif req.headers.get("content-length", "0").isdigit() and int(req.headers.get("content-length", "0")) > LIMIT:
+            self.refuse(flow, "not-inspected")
+
+    def request(self, flow):
+        if flow.metadata.get("denied"):
+            return
+        flow.response = http.Response.make(403, "Request could not be inspected.")
+        req = flow.request
+        try:
+            profile = self.policy[req.host]["profile"]
+            rule = inspect_body(
+                profile,
+                req.raw_content or b"",
+                req.headers.get("content-encoding", ""),
+                req.path.split("?")[0].endswith("/git-receive-pack"),
+                req.headers.get("content-type", "").partition(";")[0].strip().lower(),
+            )
+            if rule:
+                self.refuse(flow, rule)
+            else:
+                self.record(flow.client_conn, req.host, None)
+                flow.metadata["recorded"] = True
+                self.ready.add(flow.client_conn.id)
+                flow.response = None
+        except Exception:
+            self.refuse(flow, "not-inspected")
+
+    def responseheaders(self, flow):
+        if not flow.metadata.get("denied"):
+            flow.response.stream = True
+
+    def client_disconnected(self, client):
+        self.ready.discard(client.id)
+        self.tunnels.pop(client.id, None)
+
+    def error(self, flow):
+        if not flow.metadata.get("recorded") and not flow.metadata.get("denied"):
+            self.record(flow.client_conn, self.tunnels.get(flow.client_conn.id), "not-inspected")
+
+
+async def main():
+    guard = Guard()
+    if not Path("/ca/mitmproxy-ca.pem").is_file():
+        raise RuntimeError("Missing instance CA")
+    master = DumpMaster(
+        options.Options(mode=["regular@8080", "reverse:https://unconfigured.invalid@443"], confdir="/ca"),
+        with_termlog=False,
+        with_dumper=False,
+    )
+    master.options.update(
+        connection_strategy="lazy",
+        upstream_cert=False,
+        rawtcp=False,
+        body_size_limit=str(LIMIT),
+        websocket=False,
+        keep_host_header=True,
+    )
+    if os.environ.get("SSL_CERT_FILE"):
+        master.options.update(ssl_verify_upstream_trusted_ca=os.environ["SSL_CERT_FILE"])
+    master.addons.add(guard)
+    await master.run()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from .audit_writer import append_line as _append_line
 from .config import get_config_dir
 from .redaction import SECRET_PATTERN_SOURCES
 
@@ -184,7 +185,7 @@ class AuditLogger:
             result_summary += f"... [truncated, {len(result)} chars total]"
 
         result_summary = self._sanitize_value(result_summary)
-        sanitized_args = self._sanitize_arguments(arguments)
+        sanitized_args = {} if authorization["rule"] == "egress-policy" else self._sanitize_arguments(arguments)
 
         entry = {
             "correlation_id": correlation_id,
@@ -249,10 +250,3 @@ class AuditLogger:
             except OSError:
                 logger.exception("Could not remove rotated audit log %s", path)
         return removed
-
-
-def _append_line(path: Path, line: str) -> None:
-    """Append one line, creating the file owner-only (0600) if needed."""
-    fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
-    with os.fdopen(fd, "a") as f:
-        f.write(line + "\n")

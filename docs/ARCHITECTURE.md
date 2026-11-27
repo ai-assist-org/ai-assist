@@ -208,6 +208,32 @@ and `logs`, add platform detection in `_get_backend()`, and cover it in
 
 ## Sandbox instances
 
+The experimental `egress-proxy` feature makes the shared Compose bridge
+internal and drops all capabilities from the agent with no-new-privileges.
+The generator adds a mitmproxy service on both the internal bridge and a
+separate upstream network. HTTP clients use CONNECT, with internal MCP and
+LiteLLM service names in the proxy exclusion list. The CONNECT authority,
+SNI and HTTP authority must agree. Workloads receive the public CA only.
+Allowlists, CA private keys and egress audit records live outside the workspace.
+Each workload joins the namespace of a separate rootless network guard.
+Only that guard has NET_ADMIN there. Its nftables queues inspect outbound
+DNS and new connections. Direct packets to unauthorized destinations reach
+a dummy interface route, are audited, and are rejected in the output hook.
+If the queue consumer is unavailable the kernel drops queued packets.
+Internal DNS aliases for allowed hosts point direct HTTPS clients to a
+second mitmproxy listener. Both listeners enforce the same SNI and HTTP policy.
+
+The identifier check was replayed against all 63 public dcibot issue comments
+on redhatci/ansible-collection-redhatci-ocp from 25 November 2026 06:19 UTC
+through 26 November 18:33 UTC. The 26 even-ID comments included the one
+reported incident, detected as `internal-ticket`. The 37 odd-ID holdouts
+produced zero alerts (zero false positives against the incident report).
+Four held-back PR descriptions by the same author (#1143–1146) also passed.
+Run `python tests/replay_egress_corpus.py` with GitHub CLI access to replay
+the labels. The fixture stores comment IDs and hashes, so changed or missing
+published bodies fail the replay.
+Reversed and base64-transformed secrets are outside the detector's coverage.
+
 Isolated instances via podman-compose with per-service credential isolation:
 each MCP server runs in its own container and only receives its own secrets.
 The ai-assist container never sees MCP server credentials.

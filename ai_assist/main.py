@@ -951,6 +951,8 @@ async def main_async():
     # anthropic/mcp import chain and keep the CLI cold-start fast.
     agent = None
     if needs_agent:
+        if os.getenv("AI_ASSIST_SANDBOX", "").lower() != "true":
+            print("Network egress is unmediated by the sandbox proxy.")
         from .agent import AiAssistAgent
 
         agent = AiAssistAgent(

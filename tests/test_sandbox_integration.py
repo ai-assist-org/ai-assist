@@ -56,6 +56,37 @@ skip_no_dev_image = pytest.mark.skipif(
 
 @skip_no_podman
 @skip_no_base_image
+def test_egress_proxy_isolates_agent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AI_ASSIST_INSTANCES_DIR", str(tmp_path))
+    name = "egress-" + tmp_path.parent.name + "-" + str(os.getpid())
+    sandbox_init(name, features={"egress-proxy"})
+    instance = tmp_path / name
+    compose = _compose_cmd(instance)
+    probe = """
+from pathlib import Path
+status = dict(line.split(':', 1) for line in Path('/proc/self/status').read_text().splitlines() if ':' in line)
+assert int(status['NoNewPrivs']) == 1
+assert int(status['CapBnd'], 16) == 0
+routes = Path('/proc/net/route').read_text().splitlines()[1:]
+assert [row.split()[0] for row in routes if row.split()[1] == '00000000'] == ['egress-deny'], routes
+print('ISOLATION_OK')
+"""
+    try:
+        result = subprocess.run(
+            [*compose, "run", "--rm", "-T", "--entrypoint", "python3.14", "ai-assist", "-c", probe],
+            cwd=instance,
+            capture_output=True,
+            text=True,
+            timeout=90,
+            check=False,
+        )
+        assert result.returncode == 0 and "ISOLATION_OK" in result.stdout, result.stderr + result.stdout
+    finally:
+        subprocess.run([*compose, "down"], cwd=instance, capture_output=True, check=True, timeout=60)
+
+
+@skip_no_podman
+@skip_no_base_image
 def test_readonly_directory_mount_blocks_agent_writes_and_allows_host_updates(sandbox_instance_no_dci, tmp_path):
     """Exercise directory injection without Git, helpers or workflow coordination."""
     instance = sandbox_instance_no_dci

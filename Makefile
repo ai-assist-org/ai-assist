@@ -73,7 +73,8 @@ eval-record:  ## Record eval cassettes from real API runs (requires API key)
 	AI_ASSIST_EVAL_MODE=record uv run --extra eval python eval/run_eval.py --config eval/eval.yaml --model claude-sonnet-4-6 --no-llm-judges
 
 test-integration: sandbox-build-dev  ## Run sandbox integration tests (builds images first)
-	pytest tests/test_sandbox_integration.py -v -m integration --override-ini="addopts="
+	podman image exists docker.io/mitmproxy/mitmproxy:12.2.1 || podman pull docker.io/mitmproxy/mitmproxy:12.2.1
+	pytest tests/test_sandbox_integration.py tests/test_sandbox_egress_integration.py -v -rs -m integration --override-ini="addopts="
 
 sandbox-build-dev: sandbox-build  ## Build dev profile image (adds Go, Ansible, Python dev tools)
 	podman build -t ai-assist-dev -f sandbox/profiles/dev/Dockerfile .
