@@ -1,13 +1,17 @@
 """Tests for context engineering improvements"""
 
 import logging
+from copy import deepcopy
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+from anthropic.types import ThinkingBlock
 
 from ai_assist.agent import AiAssistAgent
 from ai_assist.config import AiAssistConfig
 from ai_assist.context import ConversationMemory
+from ai_assist.testing.mock_llm import FakeStream
 
 
 def _mock_stream_message(response):
@@ -369,21 +373,14 @@ class TestObservationMasking:
 
 
 class TestThinkingBlockPrefixStability:
-    """Tests for _has_thinking_block and the prefix-mutation guards it gates.
-
-    Models with mandatory extended thinking (Opus 5.5, Sonnet 5.5) bind a thinking
-    block's signature to the exact conversation prefix it was produced with and
-    reject the next turn with a 400 if that prefix (system prompt or earlier
-    messages) changes. Once a thinking block is present, masking/eviction must not
-    mutate earlier messages.
-    """
+    """Keep requests stable through the latest signed thinking block."""
 
     def test_no_thinking_block(self):
         messages = [
             {"role": "user", "content": "hi"},
             {"role": "assistant", "content": [{"type": "text", "text": "hello"}]},
         ]
-        assert AiAssistAgent._has_thinking_block(messages) is False
+        assert AiAssistAgent._thinking_prefix_length(messages) == 0
 
     def test_thinking_block_detected(self):
         messages = [
@@ -396,16 +393,16 @@ class TestThinkingBlockPrefixStability:
                 ],
             },
         ]
-        assert AiAssistAgent._has_thinking_block(messages) is True
+        assert AiAssistAgent._thinking_prefix_length(messages) == 2
 
     def test_redacted_thinking_block_detected(self):
         messages = [
             {"role": "assistant", "content": [{"type": "redacted_thinking", "data": "..."}]},
         ]
-        assert AiAssistAgent._has_thinking_block(messages) is True
+        assert AiAssistAgent._thinking_prefix_length(messages) == 1
 
     def test_empty_messages(self):
-        assert AiAssistAgent._has_thinking_block([]) is False
+        assert AiAssistAgent._thinking_prefix_length([]) == 0
 
     def test_mask_old_observations_skipped_when_thinking_block_present(self):
         """Masking must not rewrite tool results once a thinking block exists."""
@@ -422,12 +419,63 @@ class TestThinkingBlockPrefixStability:
             {"role": "assistant", "content": [{"type": "tool_use", "id": "2", "name": "t2", "input": {}}]},
             {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "2", "content": "newer result"}]},
         ]
-        assert AiAssistAgent._has_thinking_block(messages) is True
-        # Simulates the turn-loop guard: masking is only invoked when this is False.
-        thinking_block_present = AiAssistAgent._has_thinking_block(messages)
-        if not thinking_block_present:
+        signed_prefix_length = AiAssistAgent._thinking_prefix_length(messages)
+        assert signed_prefix_length == 2
+        if not signed_prefix_length:
             AiAssistAgent._mask_old_observations(messages, keep_recent=0)
         assert messages[2]["content"][0]["content"] == "old result"
+
+    @pytest.mark.parametrize("max_turns", [10, 1], ids=["normal-turn", "final-turn"])
+    async def test_streaming_requests_preserve_signed_prefix(self, make_replay_agent, monkeypatch, max_turns: int):
+        long_text = "x" * 600
+        agent = await make_replay_agent(
+            [
+                {
+                    "content": [
+                        {"type": "text", "text": long_text},
+                        {"type": "tool_use", "id": call_id, "name": "internal__think", "input": {"thought": call_id}},
+                    ],
+                    "stop_reason": "tool_use",
+                }
+                for call_id in ("first", "second")
+            ]
+            + [{"content": [{"type": "text", "text": "done"}]}]
+        )
+        agent.config.enable_prompt_caching = False
+        monkeypatch.setattr(agent, "_build_query_context", lambda: "")
+        monkeypatch.setattr(
+            agent, "get_truncation_limits", lambda: {"max_message_chars": 400, "max_total_chars": 10000}
+        )
+        requests: list[dict] = []
+        real_stream = agent.anthropic.messages.stream
+
+        def stream(**request: Any) -> FakeStream:
+            requests.append(deepcopy(request))
+            response = real_stream(**request)
+            if len(requests) <= 2:
+                response.get_final_message().content.insert(
+                    1, ThinkingBlock(type="thinking", thinking="", signature=f"sig-{len(requests)}")
+                )
+            return response
+
+        monkeypatch.setattr(agent.anthropic.messages, "stream", stream)
+        await agent.query(long_text, max_turns=max_turns, raise_on_api_error=True)
+
+        first, second, third = requests
+        assert "truncated 200 characters" in first["messages"][0]["content"]
+        assert second["messages"][0] == first["messages"][0]
+        assert second["messages"][1]["content"][0]["text"] == long_text
+        assert second["messages"][1]["content"][1]["signature"] == "sig-1"
+        if max_turns == 10:
+            assert third["messages"][: len(second["messages"])] == second["messages"]
+            assert third["messages"][len(second["messages"])]["content"][1]["signature"] == "sig-2"
+            assert third["tools"] == second["tools"]
+        else:
+            assert third["tools"] == []
+            assert AiAssistAgent._thinking_prefix_length(third["messages"]) == 0
+            assert third["messages"][1]["content"] == [
+                block for block in second["messages"][1]["content"] if block["type"] != "thinking"
+            ]
 
     @pytest.mark.asyncio
     async def test_system_prompt_built_once_per_query(self, make_replay_agent):
@@ -518,7 +566,7 @@ class TestThinkingBlockPrefixStability:
         ]
         result = await agent.query(messages=carried_history)
         assert result == "done"
-        assert not AiAssistAgent._has_thinking_block(agent._conversation_messages)
+        assert AiAssistAgent._thinking_prefix_length(agent._conversation_messages) == 0
 
 
 class TestConversationCompaction:

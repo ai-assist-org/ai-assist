@@ -1778,29 +1778,28 @@ class AiAssistAgent:
         return removed
 
     @staticmethod
-    def _has_thinking_block(messages: list) -> bool:
-        """Check whether any assistant message already contains a thinking block.
-
-        Models with mandatory extended thinking (e.g. Opus 5.5, Sonnet 5.5) bind a
-        thinking block's signature to the exact conversation prefix it was produced
-        with and reject the next turn if that prefix changes. Once one is present,
-        skip mutations (masking, eviction) that rewrite earlier message content.
-        """
-        return any(
-            isinstance(block, dict) and block.get("type") in ("thinking", "redacted_thinking")
-            for msg in messages
-            if msg.get("role") == "assistant" and isinstance(msg.get("content"), list)
-            for block in msg["content"]
-        )
+    def _thinking_prefix_length(messages: list[dict]) -> int:
+        """Count messages through the last assistant reply with signed thinking."""
+        for index in range(len(messages) - 1, -1, -1):
+            message = messages[index]
+            content = message.get("content")
+            if (
+                message.get("role") == "assistant"
+                and isinstance(content, list)
+                and any(
+                    isinstance(block, dict) and block.get("type") in ("thinking", "redacted_thinking")
+                    for block in content
+                )
+            ):
+                return index + 1
+        return 0
 
     @staticmethod
     def _strip_stale_thinking_blocks(messages: list) -> list:
         """Drop thinking/redacted_thinking blocks from message history.
 
-        Used on the history a new top-level query is seeded with (see caller):
-        those blocks were bound to a previous query's system prompt, which this
-        query doesn't reproduce, so keeping them only risks a 400 on the next
-        turn. Messages left with no content after stripping are dropped entirely.
+        A new query's system prompt or a change to the tools can invalidate
+        these blocks. Drop messages left with no content after stripping.
         """
         cleaned = []
         for msg in messages:
@@ -2187,12 +2186,7 @@ class AiAssistAgent:
         is_outermost = self._query_depth == 1
         budget_depth = self._query_depth - 1  # depth query_streaming tracks this budget under
         if is_outermost:
-            # Carried-over history (e.g. from a previous completed query, possibly
-            # compacted) may contain thinking blocks bound to a system prompt that
-            # no longer matches this query's freshly-built one. Unlike within this
-            # query's own turn loop (see pause_timeout/_has_thinking_block), there's
-            # no way to keep an old query's exact prefix stable, so strip them —
-            # one of Anthropic's own documented mitigations for a stale binding.
+            # A new query may change the prefix that carried-over thinking was signed for.
             messages = self._strip_stale_thinking_blocks(messages)
         if is_outermost and max_time_seconds:
             self._query_deadline = time.time() + max_time_seconds
@@ -2367,12 +2361,10 @@ class AiAssistAgent:
                 if progress_callback:
                     progress_callback("calling_claude", turn + 1, max_turns, None)
 
-                # Skip prefix-rewriting mutations once a thinking block is present —
-                # see _has_thinking_block.
-                thinking_block_present = self._has_thinking_block(messages)
+                signed_prefix_length = self._thinking_prefix_length(messages)
 
                 # Only mask old tool results when context is getting large
-                if self._should_mask_observations() and not thinking_block_present:
+                if not signed_prefix_length and self._should_mask_observations():
                     self._mask_old_observations(messages)
 
                 # Truncate messages
@@ -2381,7 +2373,7 @@ class AiAssistAgent:
                 MAX_MESSAGE_CHARS = limits["max_message_chars"]
                 MAX_TOTAL_MESSAGE_CHARS = limits["max_total_chars"]
                 total_chars = 0
-                for msg in messages:
+                for msg in messages[signed_prefix_length:]:
                     content = msg.get("content")
                     if isinstance(content, str):
                         if len(content) > MAX_MESSAGE_CHARS:
@@ -2410,7 +2402,7 @@ class AiAssistAgent:
                                 total_chars += (
                                     len(block.get("content", "")) if isinstance(block.get("content"), str) else 0
                                 )
-                if total_chars > MAX_TOTAL_MESSAGE_CHARS and not thinking_block_present:
+                if not signed_prefix_length and total_chars > MAX_TOTAL_MESSAGE_CHARS:
                     query_start -= self._trim_oldest_messages(messages, MAX_TOTAL_MESSAGE_CHARS, query_start)
 
                 # Newer models reject assistant "prefill": the request must end with a
@@ -2433,15 +2425,19 @@ class AiAssistAgent:
                     first_event_timeout = getattr(self.config, "model_stream_first_event_timeout_seconds", 120)
                     idle_timeout = getattr(self.config, "model_stream_idle_timeout_seconds", 120)
 
+                    request_messages = messages
+                    # The tool list is part of the prefix bound to thinking signatures.
+                    if signed_prefix_length and turn_tools != api_tools:
+                        request_messages = self._strip_stale_thinking_blocks(messages)
                     request: dict[str, Any] = {
                         "model": self.config.model,
                         "max_tokens": self.get_max_tokens(),
                         "system": system_prompt,
                         "tools": turn_tools,
                         "messages": (
-                            self._with_message_cache_breakpoints(messages)
+                            self._with_message_cache_breakpoints(request_messages)
                             if self.config.enable_prompt_caching
-                            else messages
+                            else request_messages
                         ),
                         **effort_output_config(getattr(self.config, "effort", None)),
                     }
