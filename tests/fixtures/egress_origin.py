@@ -18,6 +18,15 @@ class Origin(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         path, _, query = self.path.partition("?")
         body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+        if path == "/keepalive":
+            self.protocol_version = "HTTP/1.1"
+            self.close_connection = False
+            body = self.headers["Host"].encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if path.startswith("/api/v3/render"):
             with Path("/tmp/render-count").open("ab") as count:
                 count.write(b".")

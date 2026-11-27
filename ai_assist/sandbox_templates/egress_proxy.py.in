@@ -119,11 +119,10 @@ class Guard:
 
     def server_connect(self, data):
         host = self.tunnels.get(data.client.id)
-        if data.client.id not in self.ready or not host or data.server.address != (host, 443):
+        if data.client.id not in self.ready or not host or data.server.address != (self.policy[host]["addresses"][0], 443):
             data.server.error = "destination"
             return
         data.server.sni = host
-        data.server.address = (self.policy[host]["addresses"][0], 443)
 
     def requestheaders(self, flow):
         req = flow.request
@@ -168,6 +167,11 @@ class Guard:
             else:
                 self.record(flow.client_conn, req.host, None)
                 flow.metadata["recorded"] = True
+                # Pool by the pinned address. Changing it in server_connect
+                # would strand one connection per request until the pool fills.
+                authority = req.host_header
+                req.host = self.policy[req.host]["addresses"][0]
+                req.host_header = authority
                 self.ready.add(flow.client_conn.id)
                 flow.response = None
         except Exception:

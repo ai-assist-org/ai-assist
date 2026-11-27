@@ -213,6 +213,9 @@ for sni in (None, 'other.test'):
         assert accepted() == before
         client("""
 import httpx
+with httpx.Client(timeout=3) as session:
+    for _ in range(8):
+        assert session.get('https://full.test/keepalive').text == 'full.test'
 secret = b'AKIA' + b'Q'*16
 for host, body, code in [('full.test', b'CILAB-123',403), ('model.test', b'CILAB-123',200),
                         ('model.test',secret,403), ('full.test',b'https://redhat.atlassian.net/browse/EXAMPLE-1',403),
