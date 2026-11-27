@@ -635,10 +635,11 @@ neither option the allowlist is empty. Init resolves configured hosts to public 
 the embedding cache before starting the isolated stack. Rootless network
 guards own the workload network namespaces and record refused direct packets
 before the kernel rejects them. SSH-agent and host D-Bus mounts are incompatible
-with this mode. The host kernel must provide `nfnetlink_queue`, and the internal
-Podman network must support DNS aliases. Rootless Podman 4.9 with the RHEL 8
-CNI backend disables DNS on internal networks. Use a DNS-capable backend
-such as Netavark with Aardvark DNS for this feature. Rebuild the base image with `make sandbox-build` to install
+with this mode. The host kernel must provide `nfnetlink_queue`. On an internal
+network without DNS (such as RHEL 8 Podman CNI), pass
+`--egress-subnet=10.89.1.0/24` at init. Choose a private IPv4 subnet unused
+by host routes or other container networks. The sandbox assigns service addresses
+and maps each allowed hostname to the inspector. Rebuild the base image with `make sandbox-build` to install
 the firewall tools. The generated
 mitmproxy sidecar terminates client TLS using a private per-instance CA and
 verifies the upstream certificate. Only this sidecar has an upstream network.

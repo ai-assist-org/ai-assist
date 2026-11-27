@@ -222,6 +222,12 @@ a dummy interface route, are audited, and are rejected in the output hook.
 If the queue consumer is unavailable the kernel drops queued packets.
 Internal DNS aliases for allowed hosts point direct HTTPS clients to a
 second mitmproxy listener. Both listeners enforce the same SNI and HTTP policy.
+For CNI bridges without DNS, `--egress-subnet` pins the internal service
+addresses and installs those aliases in the namespace owners' hosts files.
+The guard then refuses external DNS. On kernels without a dummy interface
+driver it routes refused traffic toward a disconnected veth pair. On runc,
+keep-id workloads join their guard's user namespace to support sysfs and
+container health checks with the original UID mapping.
 
 The identifier check was replayed against all 63 public dcibot issue comments
 on redhatci/ansible-collection-redhatci-ocp from 25 November 2026 06:19 UTC

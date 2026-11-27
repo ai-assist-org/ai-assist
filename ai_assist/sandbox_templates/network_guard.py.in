@@ -129,6 +129,7 @@ def main():
     dns_rules = "\n".join(
         f'{"ip6" if ":" in addr else "ip"} daddr {addr} meta l4proto {{ tcp, udp }} th dport 53 queue num 43'
         for addr in dns
+        if dns_queue.dns_names
     )
     rules = """table inet egress_guard {
         chain inspect { type filter hook output priority 0; policy drop;
@@ -145,7 +146,12 @@ def main():
         rules = "delete table inet egress_guard\n" + rules
     subprocess.run(["nft", "-f", "-"], input=rules.encode(), check=True)
     if subprocess.run(["ip", "link", "show", "egress-deny"], capture_output=True).returncode:
-        subprocess.run(["ip", "link", "add", "egress-deny", "type", "dummy"], check=True)
+        if subprocess.run(["ip", "link", "add", "egress-deny", "type", "dummy"], capture_output=True).returncode:
+            # Bridge networking already needs veth. Its disconnected peer
+            # provides a sink on kernels without the optional dummy driver.
+            subprocess.run(
+                ["ip", "link", "add", "egress-deny", "type", "veth", "peer", "name", "egress-sink"], check=True
+            )
     subprocess.run(["ip", "link", "set", "egress-deny", "up"], check=True)
     subprocess.run(["ip", "route", "replace", "default", "dev", "egress-deny"], check=True)
     if (

@@ -20,12 +20,43 @@ from ai_assist.sandbox import (
     _parse_features,
     _relay_config,
     get_instances_dir,
+    handle_sandbox_command,
     sandbox_init,
     sandbox_list,
     sandbox_run,
     sandbox_service,
 )
-from ai_assist.sandbox_egress import write_proxy
+from ai_assist.sandbox_egress import configure_egress_subnet, write_proxy
+
+
+@pytest.mark.asyncio
+async def test_init_static_egress_from_cli(tmp_path, monkeypatch):
+    monkeypatch.setenv("AI_ASSIST_INSTANCES_DIR", str(tmp_path))
+    await handle_sandbox_command(["init", "static", "--features=egress-proxy", "--egress-subnet=10.89.1.0/24"])
+    compose = yaml.safe_load((tmp_path / "static/compose.yaml").read_text())
+    assert compose["networks"]["mcp-net"]["ipam"]["config"] == [{"subnet": "10.89.1.0/24"}]
+
+
+def test_static_egress_resolves_sandbox_names_without_external_dns():
+    compose = _build_compose({"egress-proxy", "dci", "litellm"}, egress_hosts=["model.example.org"])
+    configure_egress_subnet(compose, "10.89.1.0/28", "test")
+    services = compose["services"]
+    proxy = services["egress-proxy"]
+    proxy_ip = proxy["networks"]["mcp-net"]["ipv4_address"]
+    for name in ("ai-assist", "litellm", "dci-mcp-server"):
+        owner = services[name + "-network"]
+        assert f"model.example.org:{proxy_ip}" in owner["extra_hosts"]
+        assert f"egress-proxy:{proxy_ip}" in owner["extra_hosts"]
+        assert f"{name}:" + owner["networks"]["mcp-net"]["ipv4_address"] in proxy["extra_hosts"]
+        assert "extra_hosts" not in services[name]
+        assert owner["environment"]["DNS_NAMES"] == "[]"
+        if name != "litellm":
+            assert services[name]["userns_mode"] == f"container:{owner['container_name']}"
+            assert owner["userns_mode"].startswith("keep-id")
+            assert services[name]["cap_drop"] == ["ALL"]
+    assert compose["networks"]["mcp-net"]["internal"] is True
+    with pytest.raises(ValueError):
+        configure_egress_subnet(compose, "10.89.1.0/30", "test")
 
 
 def test_proxy_ca_uses_only_instance_extensions(tmp_path, monkeypatch):

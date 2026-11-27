@@ -18,7 +18,7 @@ from dotenv import dotenv_values
 
 from .egress_guard import PROFILES
 from .output import console_print
-from .sandbox_egress import proxy_service, write_proxy
+from .sandbox_egress import configure_egress_subnet, proxy_service, write_proxy
 
 logger = logging.getLogger(__name__)
 
@@ -384,6 +384,8 @@ def sandbox_init(
     timezone: str | None = _UNSET,
     egress_hosts: list[str] | None = None,
     egress_policy: str | None = None,
+    *,
+    egress_subnet: str | None = None,
 ) -> None:
     """Scaffold a new sandbox instance directory."""
     if timezone is _UNSET:
@@ -415,6 +417,8 @@ def sandbox_init(
     elif egress_policy:
         raise ValueError("--egress-policy requires egress-proxy")
     compose = _build_compose(features, image=image, timezone=timezone, egress_hosts=egress_hosts)
+    if egress_subnet is not None:
+        configure_egress_subnet(compose, egress_subnet, name)
     relay = _relay_config(egress_hosts) if egress_hosts else None
     sandbox = instance / "sandbox"
     if relay:
@@ -806,6 +810,7 @@ async def handle_sandbox_command(args: list[str]) -> None:
         timezone: str | None = _UNSET
         egress_hosts = []
         egress_policy = None
+        egress_subnet = None
         for arg in args[2:]:
             if arg.startswith("--features="):
                 feature_str = arg.split("=", 1)[1]
@@ -817,8 +822,10 @@ async def handle_sandbox_command(args: list[str]) -> None:
                 egress_hosts.append(arg.split("=", 1)[1].lower())
             elif arg.startswith("--egress-policy="):
                 egress_policy = arg.split("=", 1)[1]
+            elif arg.startswith("--egress-subnet="):
+                egress_subnet = arg.split("=", 1)[1]
         features = _parse_features(feature_str)
-        if egress_hosts or egress_policy:
+        if egress_hosts or egress_policy or egress_subnet is not None:
             sandbox_init(
                 name,
                 features,
@@ -826,6 +833,7 @@ async def handle_sandbox_command(args: list[str]) -> None:
                 timezone=timezone,
                 egress_hosts=sorted(set(egress_hosts)),
                 egress_policy=egress_policy,
+                egress_subnet=egress_subnet,
             )
         else:
             sandbox_init(name, features, image=image, timezone=timezone)
@@ -928,6 +936,7 @@ def _print_usage():
     console_print(f"    --features=<list>  Features to enable (default: {','.join(sorted(DEFAULT_FEATURES))})")
     console_print("    --egress-host=<hostname>[:profile]  Allow inspected HTTPS (repeatable with egress-proxy)")
     console_print("    --egress-policy=default|PATH         Use the shipped or an operator-defined JSON policy")
+    console_print("    --egress-subnet=CIDR                 Use fixed internal addresses on a bridge without DNS")
     console_print("  status <name>                                 Show the instance inspection policy")
     console_print(
         "    --image=NAME                                 Container image (default: ai-assist-sandbox:latest)"
