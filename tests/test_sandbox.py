@@ -125,6 +125,8 @@ class TestBuildCompose:
             in yaml.safe_load((path / "sandbox/.ai-assist/identity.yaml").read_text())["assistant"]["personality"]
         )
         resolved = json.loads((path / "egress/policy/policy.json").read_text())
+        gateway = "gateway-cloud-softwarefactory.apps.ocp.cloud.ci.centos.org"
+        assert resolved["destinations"][gateway]["profile"] == "full_dlp"
         assert resolved["required_sources"]["redhat.atlassian.net"] == "dci-mcp-server"
         assert resolved["destinations"]["redhat.atlassian.net"]["profile"] == "none"
 

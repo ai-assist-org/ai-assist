@@ -4,6 +4,7 @@
     "api.github.com": "full_dlp",
     "api.enmaas.devshift.net": "secrets_only",
     "api.distributed-ci.io": "full_dlp",
+    "gateway-cloud-softwarefactory.apps.ocp.cloud.ci.centos.org": "full_dlp",
     "redhat.atlassian.net": "none"
   },
   "required_sources": {
