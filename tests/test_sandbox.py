@@ -32,8 +32,19 @@ from ai_assist.sandbox_egress import configure_egress_subnet, write_proxy
 @pytest.mark.asyncio
 async def test_init_static_egress_from_cli(tmp_path, monkeypatch):
     monkeypatch.setenv("AI_ASSIST_INSTANCES_DIR", str(tmp_path))
-    await handle_sandbox_command(["init", "static", "--features=egress-proxy", "--egress-subnet=10.89.1.0/24"])
+    await handle_sandbox_command(
+        [
+            "init",
+            "static",
+            "--features=egress-proxy",
+            "--egress-subnet=10.89.1.0/24",
+            "--egress-upstream-subnet=10.89.5.0/24",
+        ]
+    )
     compose = yaml.safe_load((tmp_path / "static/compose.yaml").read_text())
+    assert compose["networks"]["upstream"]["ipam"]["config"] == [{"subnet": "10.89.5.0/24"}]
+    with pytest.raises(ValueError, match="overlap"):
+        sandbox_init("other", {"egress-proxy"}, egress_subnet="10.89.1.0/24", egress_upstream_subnet="10.89.1.0/25")
     assert compose["networks"]["mcp-net"]["ipam"]["config"] == [{"subnet": "10.89.1.0/24"}]
 
 

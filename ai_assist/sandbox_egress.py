@@ -9,19 +9,24 @@ import tempfile
 from pathlib import Path
 
 
+def private_bridge_subnet(subnet: str, minimum_addresses: int) -> ipaddress.IPv4Network:
+    network = ipaddress.IPv4Network(subnet)
+    private = any(
+        network.subnet_of(ipaddress.IPv4Network(block)) for block in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
+    )
+    if not private or network.num_addresses < minimum_addresses:
+        raise ValueError("Choose an unused private IPv4 subnet with space for the gateway and all sandbox services")
+    return network
+
+
 def configure_egress_subnet(compose: dict, subnet: str, instance_name: str) -> None:
     """Set up internal service discovery on Podman bridges without DNS."""
     services = compose["services"]
     if "egress-proxy" not in services:
         raise ValueError("--egress-subnet requires egress-proxy")
-    network = ipaddress.IPv4Network(subnet)
     owners = {name.removesuffix("-network"): svc for name, svc in services.items() if name.endswith("-network")}
     owners["egress-proxy"] = services["egress-proxy"]
-    private = any(
-        network.subnet_of(ipaddress.IPv4Network(block)) for block in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
-    )
-    if not private or network.num_addresses < len(owners) + 3:
-        raise ValueError("Choose an unused private IPv4 subnet with space for the gateway and all sandbox services")
+    network = private_bridge_subnet(subnet, len(owners) + 3)
     compose["networks"]["mcp-net"]["ipam"] = {"config": [{"subnet": str(network)}]}
     peers = {}
     for index, (name, owner) in enumerate(owners.items(), start=2):

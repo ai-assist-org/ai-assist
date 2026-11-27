@@ -656,7 +656,9 @@ before the kernel rejects them. SSH-agent and host D-Bus mounts are incompatible
 with this mode. The host kernel must provide `nfnetlink_queue`. On an internal
 network without DNS (such as RHEL 8 Podman CNI), pass
 `--egress-subnet=10.89.1.0/24` at init. Choose a private IPv4 subnet unused
-by host routes or other container networks. The sandbox assigns service addresses
+by host routes or other container networks. On hosts that retain old CNI bridges,
+inspect routes with `podman unshare --rootless-netns ip -4 route` and select a
+separate unused upstream range with `--egress-upstream-subnet=CIDR`. The sandbox assigns service addresses
 and maps each allowed hostname to the inspector. Rebuild the base image with `make sandbox-build` to install
 the firewall tools. The generated
 mitmproxy sidecar terminates client TLS using a private per-instance CA and
