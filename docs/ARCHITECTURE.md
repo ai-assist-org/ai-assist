@@ -214,6 +214,10 @@ The generator adds a mitmproxy service on both the internal bridge and a
 separate upstream network. HTTP clients use CONNECT, with internal MCP and
 LiteLLM service names in the proxy exclusion list. The CONNECT authority,
 SNI and HTTP authority must agree. Workloads receive the public CA only.
+Content rules run in the proxy after the client constructs the HTTP request.
+For inspected profiles it scans the method, percent-decoded path and query,
+header names, header values except for Authorization and X-API-Key, and the body.
+Requests with trailers or unavailable bodies are refused for those profiles.
 Allowlists, CA private keys and egress audit records live outside the workspace.
 Each workload joins the namespace of a separate rootless network guard.
 Only that guard has NET_ADMIN there. Its nftables queues inspect outbound

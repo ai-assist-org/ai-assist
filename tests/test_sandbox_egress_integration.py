@@ -259,6 +259,31 @@ with httpx.Client() as session:
             else:
                 requests.append((record["decision"], record["rule_id"]))
         assert requests == [("allowed", None), ("refused", "internal-ticket"), ("refused", "internal-ticket")]
+        client("""
+import json, os, subprocess, tempfile
+from pathlib import Path
+env = dict(os.environ, GH_ENTERPRISE_TOKEN="ghp_" + "X"*36, GH_PROMPT_DISABLED="1")
+with tempfile.TemporaryDirectory() as root:
+    path = Path(root) / "request"
+    for option in ("--input", "-F"):
+        for allowed, text in ((True, "public Markdown"), (False, "CILAB-123")):
+            path.write_text(json.dumps({"text": text}) if option == "--input" else text)
+            args = [option, str(path) if option == "--input" else "text=@" + str(path)]
+            result = subprocess.run(["gh", "api", "--hostname", "full.test", "/render", *args],
+                                    env=env, capture_output=True, text=True, timeout=15)
+            assert (result.returncode == 0) == allowed, (result.stdout, result.stderr)
+            if allowed:
+                assert json.loads(result.stdout)["text"] == text
+            else:
+                assert "internal-ticket" in result.stdout + result.stderr
+import httpx
+for target, headers in [("/api/v3/render/CILAB-123", {}), ("/api/v3/render?q=CILAB%2D123", {}),
+                        ("/api/v3/render", {"X-Review": "CILAB-123"})]:
+    reply = httpx.get("https://full.test" + target, headers=headers)
+    assert reply.status_code == 403 and "internal-ticket" in reply.text
+""")
+        count = run("exec", "-T", "origin", "wc", "-c", "/tmp/render-count")
+        assert int(count.stdout.split()[0]) == 2
         run("up", "-d", "--no-deps", "litellm")
         client("""
 import httpx, time

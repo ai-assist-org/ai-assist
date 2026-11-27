@@ -91,6 +91,8 @@ The full tree is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#code-map).
   `shasum -a 1` fallback. Enforced by `scripts/check_portability.py`.
 - With `egress-proxy`, keep every workload on the internal Compose network.
   Only mitmproxy joins the upstream network. Keep its CA key and policy outside the workspace.
+  Apply egress content rules to requests in the proxy. File-backed and inline
+  requests use the same rules regardless of the client that sent them.
   With `--egress-subnet`, provision service names on the network namespace
   owners. Workloads inherit their hosts files on Podman.
 - Sandbox profile Dockerfiles must not set `USER` (it breaks

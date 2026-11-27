@@ -49,24 +49,18 @@ def test_pack_scans_reconstructed_delta() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("verb", ["api -X POST -f", "pr comment --body"])
-async def test_gh_guard_before_subprocess(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, verb: str) -> None:
-    monkeypatch.setenv("AI_ASSIST_SANDBOX", "false")
+@pytest.mark.parametrize("verb", ["api --input", "pr comment --body-file"])
+async def test_allowed_gh_file_command_reaches_client(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, verb: str
+) -> None:
     monkeypatch.setenv("PATH", str(tmp_path) + os.pathsep + os.environ["PATH"])
     shim = tmp_path / "gh"
-    shim.write_text('#!/bin/sh\nfor arg do :; done\nprintf "%s" "$arg" > received\n')
+    shim.write_text('#!/bin/sh\nfor arg do :; done\ncat "$arg" > received\n')
     shim.chmod(0o755)
+    body = b"public Markdown with `code` and $5"
+    (tmp_path / "body.md").write_bytes(body)
     tools = FilesystemTools(
         AiAssistConfig(allowed_commands=["gh"], allowed_paths=[str(tmp_path)]), load_user_config=False
     )
-
-    async def send(body: str) -> str:
-        return await tools.execute_tool(
-            "execute_command", {"command": f"gh {verb} 'body={body}'", "working_directory": str(tmp_path)}
-        )
-
-    result = await send("CILAB-123")
-    assert "internal-ticket" in result and "CILAB-123" not in result
-    assert not (tmp_path / "received").exists()
-    await send("public text")
-    assert (tmp_path / "received").read_bytes() == b"body=public text"
+    await tools.execute_tool("execute_command", {"command": f"gh {verb} body.md", "working_directory": str(tmp_path)})
+    assert (tmp_path / "received").read_bytes() == body

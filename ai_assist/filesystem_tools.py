@@ -18,7 +18,6 @@ from typing import Any
 
 from .audit import AUDIT_SINK_ENV, record_authorization_event
 from .config import AiAssistConfig, get_config_dir
-from .egress_guard import inspect_gh_args
 from .redaction import REDACT_CONFIG_FILE, filter_sensitive_env
 from .security import MCP_TOOL_DEFINITIONS_FILE
 
@@ -3135,11 +3134,6 @@ class FilesystemTools:
         if not command:
             return "Error: command parameter is required"
 
-        for segment in _effective_segments(command):
-            if Path(segment[0]).name == "gh" and (rule := inspect_gh_args(segment[1:])):
-                refusal = f"Egress policy {rule}: remove restricted content or use a literal inspected body."
-                record_authorization_event("egress-policy", refusal, "refused")
-                return refusal
         error = await self._command_policy_error(command, working_dir)
         if error:
             record_authorization_event("command-policy", error, "refused")

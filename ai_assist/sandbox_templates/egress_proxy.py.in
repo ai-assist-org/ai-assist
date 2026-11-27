@@ -7,12 +7,13 @@ import re
 import socket
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import unquote
 
 from mitmproxy import http, options
 from mitmproxy.tools.dump import DumpMaster
 
 from audit_writer import append_line
-from egress_guard import LIMIT, PROFILES, git_rejection, inspect_body
+from egress_guard import LIMIT, PROFILES, git_rejection, inspect_body, inspect_metadata
 
 
 class Guard:
@@ -133,13 +134,17 @@ class Guard:
         req = flow.request
         try:
             profile = self.policy[req.host]["profile"]
-            rule = inspect_body(
-                profile,
-                req.raw_content or b"",
-                req.headers.get("content-encoding", ""),
-                req.path.split("?")[0].endswith("/git-receive-pack"),
-                req.headers.get("content-type", "").partition(";")[0].strip().lower(),
-            )
+            rule = inspect_metadata(profile, req.method, req.path, req.headers.fields)
+            if (req.trailers or req.raw_content is None) and profile != "none":
+                rule = rule or "not-inspected"
+            if not rule:
+                media_type = req.headers.get("content-type", "").partition(";")[0].strip().lower()
+                git_push = media_type == "application/x-git-receive-pack-request" or unquote(
+                    req.path.partition("?")[0]
+                ).endswith("/git-receive-pack")
+                rule = inspect_body(
+                    profile, req.raw_content or b"", req.headers.get("content-encoding", ""), git_push, media_type
+                )
             if rule:
                 self.refuse(flow, rule)
             else:

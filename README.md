@@ -627,9 +627,21 @@ See [docs/MULTI_INSTANCE.md](docs/MULTI_INSTANCE.md#systemd-services) for detail
 For an instance with an internal network, use
 `ai-assist /sandbox init offline --features=git,dci,vertex,egress-proxy`.
 This experimental feature also drops the agent's Linux capabilities and
-prevents privilege escalation. To reach specific HTTPS endpoints, append
-`--egress-host=api.enmaas.devshift.net --egress-host=api.distributed-ci.io`
-at creation, or select the shipped policy with `--egress-policy=default`.
+prevents privilege escalation. For a coding sandbox with EnMaaS, DCI, and
+GitHub, include all four destinations at creation:
+
+```sh
+ai-assist /sandbox init coding --features=git,dci,egress-proxy \
+  --egress-host=api.enmaas.devshift.net:secrets_only \
+  --egress-host=api.distributed-ci.io:full_dlp \
+  --egress-host=github.com:full_dlp \
+  --egress-host=api.github.com:full_dlp
+```
+
+Git over HTTPS uses `github.com`; GitHub API requests use `api.github.com`.
+Both receive outbound content inspection. Add the `gh` feature if the agent
+also needs GitHub CLI credentials. Explicit host options define the entire
+allowlist. You can instead select the shipped policy with `--egress-policy=default`.
 An operator-provided JSON file in the same format is also accepted. With
 neither option the allowlist is empty. Init resolves configured hosts to public IPv4 addresses and prepares
 the embedding cache before starting the isolated stack. Rootless network
@@ -646,7 +658,12 @@ verifies the upstream certificate. Only this sidecar has an upstream network.
 Append a profile to an allowed host, for example
 `--egress-host=api.github.com:full_dlp`. `full_dlp` scans credentials and
 internal identifiers, `secrets_only` scans credentials, and `none` permits
-the body without inspection. Unsupported inspected encodings and unresolved
+the body without inspection. For inspected destinations the proxy checks the
+request path, query, regular HTTP headers, and body. It passes the values of
+`Authorization` and `X-API-Key` to the approved destination for authentication.
+File-backed GitHub comments and API requests are checked as they leave the
+sandbox. Outside an inspected sandbox, this feature provides no content check.
+Unsupported inspected encodings, HTTP trailers, and unresolved
 Git delta objects and multipart uploads are refused. The policy and CA key stay outside the
 workspace. Run `ai-assist /sandbox status <name>` for the policy location;
 request decisions are in the instance's `audit/egress.jsonl`. Recreate

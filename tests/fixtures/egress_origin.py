@@ -18,6 +18,9 @@ class Origin(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         path, _, query = self.path.partition("?")
         body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+        if path.startswith("/api/v3/render"):
+            with Path("/tmp/render-count").open("ab") as count:
+                count.write(b".")
         if path.startswith("/repo.git/"):
             env = dict(
                 os.environ,
