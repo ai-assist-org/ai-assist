@@ -1,22 +1,30 @@
 """Sandbox management for isolated ai-assist instances via podman-compose"""
 
+import ipaddress
+import json
 import logging
 import os
+import re
 import shutil
+import socket
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
 import yaml
+from dotenv import dotenv_values
 
+from .egress_guard import PROFILES
 from .output import console_print
+from .sandbox_egress import proxy_service, write_proxy
 
 logger = logging.getLogger(__name__)
 
 TEMPLATES_DIR = Path(__file__).parent / "sandbox_templates"
 
-ALL_FEATURES = {"ssh", "gpg", "git", "gh", "dci", "dbus", "litellm", "vertex", "web"}
+ALL_FEATURES = {"ssh", "gpg", "git", "gh", "dci", "dbus", "litellm", "vertex", "web", "egress-proxy"}
 DEFAULT_FEATURES = {"git", "dci", "vertex"}
 # Features that widen what the sandbox can reach, read or do
 HOST_ACCESS_WARNINGS = {
@@ -92,7 +100,9 @@ DCI_DOWNLOADS_PATH = "/tmp/dci"  # nosec B108 - inside the containers, bind-moun
 DCI_DOWNLOADS_VOLUME = f"./sandbox/{DCI_DOWNLOADS_DIR}:{DCI_DOWNLOADS_PATH}:rw,z"
 
 
-def _build_compose(features: set[str], image: str = DEFAULT_IMAGE, timezone: str | None = None) -> dict:
+def _build_compose(
+    features: set[str], image: str = DEFAULT_IMAGE, timezone: str | None = None, egress_hosts: list[str] | None = None
+) -> dict:
     """Build compose dict with only the requested features.
 
     The timezone goes to every container: it decides when the agent's scheduled
@@ -178,9 +188,13 @@ def _build_compose(features: set[str], image: str = DEFAULT_IMAGE, timezone: str
         "networks": ["mcp-net"],
     }
 
+    network: dict = {"driver": "bridge"}
+    if "egress-proxy" in features:
+        network["internal"] = True
+        security_opt.append("no-new-privileges:true")
+        ai_assist_service["cap_drop"] = ["ALL"]
     if security_opt:
         ai_assist_service["security_opt"] = security_opt
-
     services: dict = {"ai-assist": ai_assist_service}
 
     if "dci" in features:
@@ -206,6 +220,7 @@ def _build_compose(features: set[str], image: str = DEFAULT_IMAGE, timezone: str
             },
             "environment": {
                 "MCP_TRANSPORT": "sse",
+                "UV_NO_SYNC": "1",
                 "MCP_HOST": "0.0.0.0",
                 "MCP_PORT": "8000",
                 "DCI_CLIENT_ID": "${DCI_CLIENT_ID:-}",
@@ -257,13 +272,19 @@ def _build_compose(features: set[str], image: str = DEFAULT_IMAGE, timezone: str
             "networks": ["mcp-net"],
         }
 
+    networks = {"mcp-net": network}
+    if egress_hosts and "egress-proxy" not in features:
+        raise ValueError("--egress-host requires the egress-proxy feature")
+    if "egress-proxy" in features:
+        networks["upstream"] = {"driver": "bridge"}
+        services["egress-proxy"] = proxy_service(services, [host.partition(":")[0] for host in egress_hosts or []])
     if timezone:
         for service in services.values():
-            service["environment"]["TZ"] = timezone
+            service.setdefault("environment", {})["TZ"] = timezone
 
     return {
         "services": services,
-        "networks": {"mcp-net": {"driver": "bridge"}},
+        "networks": networks,
     }
 
 
@@ -335,14 +356,42 @@ def _parse_features(feature_str: str | None) -> set[str]:
     return features
 
 
+def _relay_config(hosts: list[str]) -> dict:
+    policy = {}
+    for spec in hosts:
+        host, _, profile = spec.partition(":")
+        if not re.fullmatch(r"(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}", host):
+            raise ValueError(f"Invalid egress hostname: {host!r}")
+        profile = profile or (
+            "secrets_only"
+            if host
+            in {"api.enmaas.devshift.net", "api.anthropic.com", "api.openai.com", "generativelanguage.googleapis.com"}
+            else "full_dlp"
+        )
+        if profile not in PROFILES or host in policy:
+            raise ValueError(f"Invalid profile or duplicate host: {host}")
+        addresses = sorted(set(socket.gethostbyname_ex(host)[2]))
+        if not addresses or not all(ipaddress.ip_address(ip).is_global for ip in addresses):
+            raise ValueError(f"Egress hostname must resolve to public IPv4 addresses: {host}")
+        policy[host] = {"addresses": addresses, "profile": profile}
+    return policy
+
+
 def sandbox_init(
-    name: str, features: set[str] | None = None, image: str = DEFAULT_IMAGE, timezone: str | None = _UNSET
+    name: str,
+    features: set[str] | None = None,
+    image: str = DEFAULT_IMAGE,
+    timezone: str | None = _UNSET,
+    egress_hosts: list[str] | None = None,
+    egress_policy: str | None = None,
 ) -> None:
     """Scaffold a new sandbox instance directory."""
     if timezone is _UNSET:
         timezone = _host_timezone()
     if features is None:
         features = set(DEFAULT_FEATURES)
+    if "egress-proxy" in features and features & {"ssh", "dbus"}:
+        raise ValueError("The inspected sandbox cannot mount host SSH or D-Bus sockets")
     for feature in sorted(features & HOST_ACCESS_WARNINGS.keys()):
         console_print(f"Warning: feature '{feature}': {HOST_ACCESS_WARNINGS[feature]}.")
 
@@ -351,7 +400,36 @@ def sandbox_init(
         console_print(f"Error: Instance '{name}' already exists at {instance}")
         sys.exit(1)
 
+    rules = {}
+    if "egress-proxy" in features:
+        source = (
+            Path(egress_policy).expanduser()
+            if egress_policy and egress_policy != "default"
+            else TEMPLATES_DIR / "egress_rules.json"
+        )
+        rules = json.loads(source.read_text())
+        if egress_policy:
+            if egress_hosts:
+                raise ValueError("Choose --egress-policy or --egress-host")
+            egress_hosts = [f"{host}:{profile}" for host, profile in rules["destinations"].items()]
+    elif egress_policy:
+        raise ValueError("--egress-policy requires egress-proxy")
+    compose = _build_compose(features, image=image, timezone=timezone, egress_hosts=egress_hosts)
+    relay = _relay_config(egress_hosts) if egress_hosts else None
     sandbox = instance / "sandbox"
+    if relay:
+        from fastembed import TextEmbedding
+
+        from .embedding import DEFAULT_EMBEDDING_MODEL
+
+        instance.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=instance.parent) as staging:
+            cache = Path(staging) / "cache"
+            TextEmbedding(DEFAULT_EMBEDDING_MODEL, cache_dir=str(cache), threads=1)
+            (sandbox / ".ai-assist").mkdir(parents=True)
+            cache.rename(sandbox / ".ai-assist/fastembed-cache")
+    if "egress-proxy" in features:
+        write_proxy(instance, relay or {}, rules)
     for subdir in SANDBOX_SUBDIRS:
         (sandbox / subdir).mkdir(parents=True)
 
@@ -360,7 +438,6 @@ def sandbox_init(
         dst = sandbox / dest_rel
         shutil.copy2(src, dst)
 
-    compose = _build_compose(features, image=image, timezone=timezone)
     with open(instance / "compose.yaml", "w") as f:
         yaml.dump(compose, f, default_flow_style=False, sort_keys=False)
 
@@ -430,6 +507,19 @@ def _get_mcp_services(instance: Path) -> list[str]:
     return [name for name in data.get("services", {}) if name != "ai-assist"]
 
 
+def _check_inspection_files(instance: Path, services: dict) -> None:
+    if services.get("egress-proxy", {}).get("entrypoint") != ["python", "-B", "/policy/proxy.py"]:
+        return
+    for filename in (
+        "egress/policy/policy.json",
+        "egress/policy/proxy.py",
+        "egress/ca/mitmproxy-ca.pem",
+        "egress/public.pem",
+    ):
+        if not (instance / filename).is_file():
+            raise SystemExit(f"Sandbox cannot start: missing inspection file {filename}")
+
+
 def sandbox_run(name: str, mode_args: list[str]) -> None:
     """Start the compose stack and run ai-assist with the given mode."""
     instance = _instance_dir(name)
@@ -444,6 +534,16 @@ def sandbox_run(name: str, mode_args: list[str]) -> None:
 
     compose = _compose_cmd(instance)
 
+    # The launcher loads its own .env. Pass the instance's service settings
+    # explicitly so compose cannot substitute the launcher's model or tokens.
+    declared = yaml.safe_load((instance / "compose.yaml").read_text())["services"]
+    _check_inspection_files(instance, declared)
+    service_keys = {key for service in declared.values() for key in service.get("environment", {})}
+    compose_env = os.environ.copy()
+    for key, value in dotenv_values(env_file).items():
+        if key in service_keys and value is not None and key not in {"HOME", "PATH"}:
+            compose_env[key] = value
+
     try:
         subprocess.run(
             [*compose, "down", "--remove-orphans"],
@@ -457,6 +557,7 @@ def sandbox_run(name: str, mode_args: list[str]) -> None:
             subprocess.run(
                 [*compose, "up", "-d", *mcp_services],
                 cwd=instance,
+                env=compose_env,
                 check=True,
             )
             _wait_for_mcp_servers(compose, instance)
@@ -465,7 +566,7 @@ def sandbox_run(name: str, mode_args: list[str]) -> None:
         if sys.stdin.isatty():
             run_flags.append("--service-ports")
         cmd = [*compose, "run", *run_flags, "ai-assist", *mode_args]
-        subprocess.run(cmd, cwd=instance, check=False)
+        subprocess.run(cmd, cwd=instance, env=compose_env, check=False)
     except KeyboardInterrupt:
         console_print("\nInterrupted, stopping stack...")
     finally:
@@ -537,8 +638,14 @@ def _mcp_ready_commands(instance: Path, compose_cmd: str) -> list[str]:
     if not services:
         return []
     podman = shutil.which("podman") or "podman"
-    lines = [f"ExecStartPre={compose_cmd} up -d {' '.join(services)}"]
-    for service in services:
+    owners = [svc for svc in services if svc.endswith("-network") or svc == "egress-proxy"]
+    workloads = [svc for svc in services if svc not in owners]
+    lines = []
+    for service in owners + workloads:
+        if owners and service == owners[0]:
+            lines.append(f"ExecStartPre={compose_cmd} up -d {' '.join(owners)}")
+        if workloads and service == workloads[0]:
+            lines.append(f"ExecStartPre={compose_cmd} up -d {' '.join(workloads)}")
         # $$ is a literal $ for systemd; the container is found by its compose labels
         container = (
             f"$$({podman} ps -q --filter label=io.podman.compose.project={instance.name} "
@@ -599,6 +706,7 @@ def sandbox_service(name: str, action: str, extra_args: list[str] | None = None)
         # Set ai-assist command to /monitor in the compose
         compose_file = instance / "compose.yaml"
         data = yaml.safe_load(compose_file.read_text())
+        _check_inspection_files(instance, data["services"])
         data["services"]["ai-assist"]["command"] = "/monitor"
         data["services"]["ai-assist"].pop("stdin_open", None)
         data["services"]["ai-assist"].pop("tty", None)
@@ -666,6 +774,21 @@ def sandbox_delete(name: str) -> None:
     console_print(f"Instance '{name}' deleted.")
 
 
+def _print_sandbox_status(name: str) -> None:
+    instance = _instance_dir(name)
+    path = instance / "egress/policy/policy.json"
+    if not (instance / "compose.yaml").is_file():
+        raise SystemExit(f"Instance not found: {name}")
+    if not path.is_file():
+        console_print("No inspection policy installed.")
+    else:
+        policy = json.loads(path.read_text())["destinations"]
+        profiles = sorted({entry["profile"] for entry in policy.values()})
+        console_print(
+            f"Egress policy: {path} ({len(policy)} hosts; profiles: {', '.join(profiles) or 'none configured'})"
+        )
+
+
 async def handle_sandbox_command(args: list[str]) -> None:
     """Dispatch /sandbox subcommands."""
     if not args:
@@ -681,6 +804,8 @@ async def handle_sandbox_command(args: list[str]) -> None:
         feature_str = None
         image = DEFAULT_IMAGE
         timezone: str | None = _UNSET
+        egress_hosts = []
+        egress_policy = None
         for arg in args[2:]:
             if arg.startswith("--features="):
                 feature_str = arg.split("=", 1)[1]
@@ -688,8 +813,22 @@ async def handle_sandbox_command(args: list[str]) -> None:
                 image = arg.split("=", 1)[1]
             elif arg.startswith("--timezone="):
                 timezone = arg.split("=", 1)[1]
+            elif arg.startswith("--egress-host="):
+                egress_hosts.append(arg.split("=", 1)[1].lower())
+            elif arg.startswith("--egress-policy="):
+                egress_policy = arg.split("=", 1)[1]
         features = _parse_features(feature_str)
-        sandbox_init(name, features, image=image, timezone=timezone)
+        if egress_hosts or egress_policy:
+            sandbox_init(
+                name,
+                features,
+                image=image,
+                timezone=timezone,
+                egress_hosts=sorted(set(egress_hosts)),
+                egress_policy=egress_policy,
+            )
+        else:
+            sandbox_init(name, features, image=image, timezone=timezone)
     elif subcmd == "mount":
         _handle_mount_command(args[1:])
     elif subcmd == "run":
@@ -704,6 +843,8 @@ async def handle_sandbox_command(args: list[str]) -> None:
         sandbox_stop(args[1])
     elif subcmd == "list":
         sandbox_list()
+    elif subcmd == "status" and len(args) == 2:
+        _print_sandbox_status(args[1])
     elif subcmd == "service":
         if len(args) < 3 or args[2] not in SERVICE_SUBCOMMANDS:
             console_print("Usage: ai-assist /sandbox service <name> <action>")
@@ -784,7 +925,10 @@ def _print_usage():
     console_print()
     console_print("Commands:")
     console_print("  init <name> [options]                         Create a new sandbox instance")
-    console_print("    --features=ssh,gpg,git,gh,dci,dbus          Features to enable (default: all)")
+    console_print(f"    --features=<list>  Features to enable (default: {','.join(sorted(DEFAULT_FEATURES))})")
+    console_print("    --egress-host=<hostname>[:profile]  Allow inspected HTTPS (repeatable with egress-proxy)")
+    console_print("    --egress-policy=default|PATH         Use the shipped or an operator-defined JSON policy")
+    console_print("  status <name>                                 Show the instance inspection policy")
     console_print(
         "    --image=NAME                                 Container image (default: ai-assist-sandbox:latest)"
     )

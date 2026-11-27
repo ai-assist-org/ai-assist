@@ -372,8 +372,8 @@ ai-assist
 \begin{column}{0.48\textwidth}
 \textbf{Project Stats}
 \begin{itemize}\scriptsize
-  \item 35,000+ lines of production code
-  \item 3,450+ tests across 155 test files
+  \item 35,600+ lines of production code
+  \item 3,450+ tests across 159 test files
   \item 17 core dependencies
   \item Pre-commit hooks: black, ruff, mypy, bandit, pylint similarities, pytest, eval replay, portability, action pins, markdown links
   \item Comprehensive user documentation: \href{https://ai-assist-org.github.io/ai-assist/}{\texttt{ai-assist-org.github.io/ai-assist}}
@@ -1487,8 +1487,7 @@ for their sandbox.
 \textbf{\color{rhred}Feature-Based Configuration}
 \begin{itemize}\scriptsize
   \item Default: \texttt{git,dci,vertex}
-  \item Opt-in: \texttt{ssh,gpg,gh,dbus,litellm}\\
-    (host credentials/control: warned at init)
+  \item Opt-in: \texttt{ssh,gpg,gh,dbus,litellm}
   \item \texttt{vertex} mounts only the ADC file, not \texttt{\textasciitilde/.config/gcloud}
   \item Read-only mounts for reference code, skills, or data
   \item Autonomous mode is container-only and explicit
@@ -1496,8 +1495,7 @@ for their sandbox.
 \end{column}
 \begin{column}{0.48\textwidth}
 \begin{lstlisting}[basicstyle=\ttfamily\fontsize{5}{6}\selectfont,frame=single,language=bash]
-# Create isolated instance (opts into host
-# SSH agent + GitHub credentials)
+# Enable SSH agent and GitHub credentials
 ai-assist /sandbox init pr-review \
   --features=ssh,git,gh,dci
 
@@ -1533,6 +1531,35 @@ ai-assist /sandbox service pr-review logs -f
 \end{tikzpicture}
 \end{column}
 \end{columns}
+\end{frame}
+
+\begin{frame}[fragile]{Experimental Sandbox Egress Control}
+\begin{center}
+\begin{tikzpicture}[font=\small,
+  service/.style={draw=rhdarkgray, rounded corners, fill=rhlightgray,
+    minimum height=8mm, inner xsep=3mm, align=center}]
+  \node[service] (agent) {Agent};
+  \node[service, right=7mm of agent] (sidecars) {Enabled sidecars\\[-1pt]{\scriptsize DCI, LiteLLM}};
+  \draw[{Stealth}-{Stealth}, rhteal, thick] (agent) -- (sidecars);
+  \node[fit=(agent)(sidecars), inner sep=4mm, draw=rhteal, rounded corners,
+    label=above:{\small Internal Compose network}] (bridge) {};
+  \node[service, right=4mm of bridge] (relay) {mitmproxy};
+  \node[service, right=5mm of relay] (api) {Allowed APIs};
+  \draw[-{Stealth}, thick] (bridge) -- (relay);
+  \draw[-{Stealth}, thick] (relay) -- (api);
+\end{tikzpicture}
+\end{center}
+\begin{lstlisting}[language=bash]
+ai-assist /sandbox init offline \
+  --features=dci,egress-proxy \
+  --egress-host=api.distributed-ci.io
+\end{lstlisting}
+\begin{itemize}
+  \item A rootless network guard logs and rejects direct outbound attempts.
+    The agent runs with an empty capability bounding set.
+  \item Repeat \texttt{--egress-host} for each allowed TLS destination.
+    The proxy inspects request bodies using the destination's profile.
+\end{itemize}
 \end{frame}
 
 % ══════════════════════════════════════════════════════════════════

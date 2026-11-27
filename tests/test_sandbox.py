@@ -17,9 +17,11 @@ from ai_assist.sandbox import (
     _compose_cmd,
     _host_timezone,
     _parse_features,
+    _relay_config,
     get_instances_dir,
     sandbox_init,
     sandbox_list,
+    sandbox_run,
     sandbox_service,
 )
 
@@ -43,6 +45,35 @@ class TestGetInstancesDir:
 
 
 class TestBuildCompose:
+    @pytest.mark.parametrize("hostname", ["*.example.org", "example.org:443", "127.0.0.1"])
+    def test_relay_requires_exact_hostname(self, hostname: str) -> None:
+        with pytest.raises(ValueError, match="Invalid egress hostname|Invalid profile"):
+            _relay_config([hostname])
+
+    def test_relay_rejects_mixed_private_and_public_addresses(self) -> None:
+        with patch("socket.gethostbyname_ex", return_value=("model.example.org", [], ["8.8.8.8", "127.0.0.1"])):
+            with pytest.raises(ValueError, match="public IPv4"):
+                _relay_config(["model.example.org"])
+
+    def test_run_uses_instance_model(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("AI_ASSIST_INSTANCES_DIR", str(tmp_path))
+        monkeypatch.setenv("AI_ASSIST_MODEL", "outer")
+        sandbox_init("inner", features=set())
+        (tmp_path / "inner/.env").write_text("AI_ASSIST_MODEL=inner\n")
+        with patch("ai_assist.sandbox.subprocess.run") as run:
+            sandbox_run("inner", ["/query", "hello"])
+        launch = next(call for call in run.call_args_list if "run" in call.args[0])
+        assert launch.kwargs["env"]["AI_ASSIST_MODEL"] == "inner"
+
+    def test_only_relay_has_upstream(self) -> None:
+        compose = _build_compose({"egress-proxy", "dci"}, egress_hosts=["model.example.org"])
+        services = compose["services"]
+        assert services["ai-assist"]["environment"]["HTTPS_PROXY"] == "http://egress-proxy:8080"
+        assert "upstream" in services["egress-proxy"]["networks"]
+        for name in ("ai-assist", "dci-mcp-server"):
+            assert services[name]["network_mode"] == f"service:{name}-network"
+            assert list(services[f"{name}-network"]["networks"]) == ["mcp-net"]
+
     def test_marks_ai_assist_container_as_sandboxed(self):
         env = _build_compose(set())["services"]["ai-assist"]["environment"]
         assert env["AI_ASSIST_SANDBOX"] == "true"
@@ -92,6 +123,19 @@ class TestBuildCompose:
     def test_no_ssh_no_selinux_disable(self):
         compose = _build_compose(set())
         assert "security_opt" not in compose["services"]["ai-assist"]
+        assert "cap_drop" not in compose["services"]["ai-assist"]
+        assert "internal" not in compose["networks"]["mcp-net"]
+
+    def test_egress_proxy_is_opt_in(self) -> None:
+        compose = _build_compose({"egress-proxy", "dci", "litellm"})
+        assert compose["services"]["dci-mcp-server"]["environment"]["UV_NO_SYNC"] == "1"
+        assert compose["networks"]["mcp-net"]["internal"] is True
+        assert all(
+            compose["services"][name]["network_mode"] == f"service:{name}-network"
+            for name in ("ai-assist", "litellm", "dci-mcp-server")
+        )
+        assert compose["services"]["ai-assist"]["security_opt"] == ["no-new-privileges:true"]
+        assert compose["services"]["ai-assist"]["cap_drop"] == ["ALL"]
 
     def test_dbus_adds_socket_and_env(self):
         compose = _build_compose({"dbus"})

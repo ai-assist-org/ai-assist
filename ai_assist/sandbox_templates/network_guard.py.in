@@ -1,0 +1,156 @@
+"""Run in the workload's network namespace, in a separate rootless container."""
+
+import ctypes as c
+import json
+import os
+import socket
+import subprocess
+import threading
+from datetime import datetime, timezone
+from pathlib import Path
+
+from audit_writer import append_line
+
+
+def checked(result):
+    if result is None or result < 0:
+        raise OSError(c.get_errno(), "network queue initialization failed")
+    return result
+
+
+class Queue:
+    def __init__(self, number):
+        self.number = number
+        self.lib = c.CDLL("libnetfilter_queue.so.1", use_errno=True)
+        ptr = c.c_void_p
+        callback = c.CFUNCTYPE(c.c_int, ptr, ptr, ptr, ptr)
+        self.callback = callback(self.decide)
+        for name, result, args in [
+            ("nfq_open", ptr, []),
+            ("nfq_create_queue", ptr, [ptr, c.c_uint16, callback, ptr]),
+            ("nfq_set_mode", c.c_int, [ptr, c.c_uint8, c.c_uint32]),
+            ("nfq_fd", c.c_int, [ptr]),
+            ("nfq_get_msg_packet_hdr", ptr, [ptr]),
+            ("nfq_get_payload", c.c_int, [ptr, c.POINTER(ptr)]),
+            ("nfq_handle_packet", c.c_int, [ptr, c.c_char_p, c.c_int]),
+            ("nfq_set_verdict2", c.c_int, [ptr, c.c_uint32, c.c_uint32, c.c_uint32, c.c_uint32, ptr]),
+        ]:
+            function = getattr(self.lib, name)
+            function.restype, function.argtypes = result, args
+        self.handle = checked(self.lib.nfq_open())
+        self.queue = checked(self.lib.nfq_create_queue(self.handle, number, self.callback, None))
+        checked(self.lib.nfq_set_mode(self.queue, 2, 1024))
+        self.sock = socket.socket(fileno=checked(self.lib.nfq_fd(self.handle)))
+        self.source = os.environ["WORKLOAD"]
+        self.peers = json.loads(os.environ["PEERS"])
+        self.dns_names = set(json.loads(os.environ["DNS_NAMES"]))
+
+    def decide(self, queue, msg, data, context):
+        try:
+            header = self.lib.nfq_get_msg_packet_hdr(data)
+            packet_id = int.from_bytes(c.string_at(header, 4))
+            pointer = c.c_void_p()
+            length = checked(self.lib.nfq_get_payload(data, c.byref(pointer)))
+            packet = c.string_at(pointer, length)
+            if packet[0] >> 4 == 4:
+                host = socket.inet_ntop(socket.AF_INET, packet[16:20])
+                proto, offset = packet[9], (packet[0] & 15) * 4
+            else:
+                host = socket.inet_ntop(socket.AF_INET6, packet[24:40])
+                proto, offset = packet[6], 40
+            port = int.from_bytes(packet[offset + 2 : offset + 4]) if proto in (6, 17) else None
+            peer = self.peers.get(str(port)) if proto == 6 else None
+            allowed = False
+            if self.number == 43:
+                start = offset + (8 if proto == 17 else (packet[offset + 12] >> 4) * 4 + 2)
+                if proto == 6 and len(packet) <= start:
+                    allowed = True
+                else:
+                    pos = start + 12
+                    labels = []
+                    while pos < len(packet) and 0 < packet[pos] <= 63:
+                        size = packet[pos]
+                        labels.append(packet[pos + 1 : pos + 1 + size].decode("ascii", errors="replace"))
+                        pos += size + 1
+                    question = ".".join(labels).lower().removesuffix(".dns.podman")
+                    allowed = pos < len(packet) and packet[pos] == 0 and question in self.dns_names
+                    if not allowed:
+                        # A DNS label can itself contain a credential.
+                        host = "<unlisted-dns>"
+            elif peer:
+                try:
+                    allowed = host in socket.gethostbyname_ex(peer)[2]
+                except socket.gaierror:
+                    pass
+            if not allowed:
+                append_line(
+                    Path("/audit/egress.jsonl"),
+                    json.dumps(
+                        {
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                            "source": self.source,
+                            "destination": host,
+                            "port": port,
+                            "protocol": proto,
+                            "decision": "refused",
+                            "rule_id": "direct-network",
+                            "profile": None,
+                        }
+                    ),
+                )
+            # NF_ACCEPT resumes at the next base chain, which rejects marked packets.
+            return checked(self.lib.nfq_set_verdict2(queue, packet_id, 1, 0 if allowed else 42, 0, None))
+        except Exception:
+            os._exit(1)  # Without a queue listener the kernel drops queued packets.
+
+    def run(self):
+        try:
+            while True:
+                packet = self.sock.recv(65536)
+                checked(self.lib.nfq_handle_packet(self.handle, packet, len(packet)))
+        finally:
+            os._exit(1)  # A dead DNS thread must also invalidate readiness.
+
+
+def main():
+    Path("/run/guard-ready").unlink(missing_ok=True)
+    queue = Queue(42)
+    dns_queue = Queue(43)
+    # Only the internal network's DNS may answer service discovery queries.
+    dns = [
+        line.split()[1] for line in Path("/etc/resolv.conf").read_text().splitlines() if line.startswith("nameserver ")
+    ]
+    dns_rules = "\n".join(
+        f'{"ip6" if ":" in addr else "ip"} daddr {addr} meta l4proto {{ tcp, udp }} th dport 53 queue num 43'
+        for addr in dns
+    )
+    rules = """table inet egress_guard {
+        chain inspect { type filter hook output priority 0; policy drop;
+            oifname lo accept
+            DNS_RULES
+            ct state established,related accept
+            queue num 42
+        }
+        chain deny { type filter hook output priority 10; policy accept;
+            meta mark 42 reject with icmpx type admin-prohibited
+        }
+    }""".replace("DNS_RULES", dns_rules)
+    if subprocess.run(["nft", "list", "table", "inet", "egress_guard"], capture_output=True).returncode == 0:
+        rules = "delete table inet egress_guard\n" + rules
+    subprocess.run(["nft", "-f", "-"], input=rules.encode(), check=True)
+    if subprocess.run(["ip", "link", "show", "egress-deny"], capture_output=True).returncode:
+        subprocess.run(["ip", "link", "add", "egress-deny", "type", "dummy"], check=True)
+    subprocess.run(["ip", "link", "set", "egress-deny", "up"], check=True)
+    subprocess.run(["ip", "route", "replace", "default", "dev", "egress-deny"], check=True)
+    if (
+        Path("/proc/net/if_inet6").is_file()
+        and Path("/proc/sys/net/ipv6/conf/all/disable_ipv6").read_text().strip() == "0"
+    ):
+        subprocess.run(["ip", "-6", "addr", "replace", "2001:db8::1/128", "dev", "egress-deny", "nodad"], check=True)
+        subprocess.run(["ip", "-6", "route", "replace", "default", "dev", "egress-deny"], check=True)
+    threading.Thread(target=dns_queue.run, daemon=True).start()
+    Path("/run/guard-ready").touch()
+    queue.run()
+
+
+main()

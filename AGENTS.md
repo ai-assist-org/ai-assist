@@ -89,6 +89,8 @@ The full tree is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#code-map).
   `${var,,}`), POSIX awk (no `mktime`, `strftime`, `gensub`), BSD userland (no
   `sed -i`, `date -I`, `stat -c`, `grep -P`), and `sha1sum` only with a
   `shasum -a 1` fallback. Enforced by `scripts/check_portability.py`.
+- With `egress-proxy`, keep every workload on the internal Compose network.
+  Only mitmproxy joins the upstream network. Keep its CA key and policy outside the workspace.
 - Sandbox profile Dockerfiles must not set `USER` (it breaks
   `userns_mode: keep-id`).
 
