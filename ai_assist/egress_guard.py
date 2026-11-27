@@ -1,4 +1,4 @@
-"""Payload inspection shared by the HTTPS proxy and the gh command policy."""
+"""Inspect outbound requests at the sandbox HTTPS proxy."""
 
 import hashlib
 import json
@@ -20,6 +20,17 @@ PROFILES = {
 
 def _scan(body: bytes, profile: str) -> str | None:
     return next((name for name, pattern in PROFILES[profile].items() if pattern.search(body)), None)
+
+
+def inspect_metadata(profile: str, method: str, path: str, headers: tuple[tuple[bytes, bytes], ...]) -> str | None:
+    if profile == "none":
+        return None
+    fields = [method.encode(), unquote_to_bytes(path)]
+    for name, value in headers:
+        fields.append(name)
+        if name.lower() not in (b"authorization", b"x-api-key"):
+            fields.append(unquote_to_bytes(value))
+    return _scan(b"\n".join(fields), profile)
 
 
 def _delta_size(data: bytes, pos: int) -> tuple[int, int]:
@@ -195,41 +206,13 @@ def git_rejection(rule: str, body: bytes) -> bytes | None:
     def packet(data: bytes) -> bytes:
         return f"{len(data) + 4:04x}".encode() + data
 
-    message = f"Egress policy {rule}: remove the restricted content and amend the commit before pushing.\n".encode()
+    advice = (
+        "send a self-contained pack with git push --no-thin so the proxy can inspect it"
+        if rule == "not-inspected"
+        else "remove the restricted content and amend the commit before pushing"
+    )
+    message = f"Egress policy {rule}: {advice}.\n".encode()
     status = packet(b"unpack " + message) + b"0000"
     if any(cap.startswith(b"side-band") for cap in capabilities.split()):
         return packet(b"\x02" + message) + packet(b"\x01" + status) + b"0000"
     return status
-
-
-def inspect_gh_args(args: list[str]) -> str | None:
-    """Inspect literal write arguments and refuse bodies read later by gh or the shell."""
-    if not ("api" in args or ("pr" in args and "comment" in args)):
-        return None
-    writes = (
-        any(
-            arg.upper() in {"POST", "PUT", "PATCH", "-XPOST", "-XPUT", "-XPATCH"}
-            or arg.startswith(("-f", "-F", "--field", "--raw-field", "--input", "--body", "-b"))
-            for arg in args
-        )
-        or "comment" in args
-    )
-    if not writes:
-        return None
-    if (
-        "pr" in args
-        and "comment" in args
-        and not any(arg == "--body" or arg.startswith(("--body=", "-b")) for arg in args)
-    ):
-        return "not-inspected"
-    for arg in args:
-        if (
-            arg.startswith(("--input", "--body-file"))
-            or arg == "-F"
-            and any("=@" in s for s in args)
-            or "=@" in arg
-            or "$" in arg
-            or chr(96) in arg
-        ):
-            return "not-inspected"
-    return _scan(" ".join(args).encode(), "full_dlp")

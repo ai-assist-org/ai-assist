@@ -18,12 +18,24 @@ class Origin(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         path, _, query = self.path.partition("?")
         body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
-        if path.startswith("/repo.git/"):
+        if path == "/keepalive":
+            self.protocol_version = "HTTP/1.1"
+            self.close_connection = False
+            body = self.headers["Host"].encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        if path.startswith("/api/v3/render"):
+            with Path("/tmp/render-count").open("ab") as count:
+                count.write(b".")
+        if path.startswith("/team/repo.git/"):
             env = dict(
                 os.environ,
                 GIT_PROJECT_ROOT="/tmp",
                 GIT_HTTP_EXPORT_ALL="1",
-                PATH_INFO=path,
+                PATH_INFO=path.removeprefix("/team"),
                 REQUEST_METHOD=self.command,
                 QUERY_STRING=query,
                 CONTENT_TYPE=self.headers.get("Content-Type", ""),

@@ -627,23 +627,60 @@ See [docs/MULTI_INSTANCE.md](docs/MULTI_INSTANCE.md#systemd-services) for detail
 For an instance with an internal network, use
 `ai-assist /sandbox init offline --features=git,dci,vertex,egress-proxy`.
 This experimental feature also drops the agent's Linux capabilities and
-prevents privilege escalation. To reach specific HTTPS endpoints, append
-`--egress-host=api.enmaas.devshift.net --egress-host=api.distributed-ci.io`
-at creation, or select the shipped policy with `--egress-policy=default`.
+prevents privilege escalation. For a coding sandbox with EnMaaS, DCI, and
+GitHub, include all four destinations at creation:
+
+```sh
+ai-assist /sandbox init coding --features=git,dci,egress-proxy \
+  --egress-host=api.enmaas.devshift.net:secrets_only \
+  --egress-host=api.distributed-ci.io:full_dlp \
+  --egress-host=github.com:full_dlp \
+  --egress-host=api.github.com:full_dlp
+```
+
+Git over HTTPS uses `github.com`; GitHub API requests use `api.github.com`.
+Both receive outbound content inspection. Add the `gh` feature if the agent
+also needs GitHub CLI credentials. Explicit host options define the entire
+allowlist. You can instead select the shipped policy with `--egress-policy=default`.
+The [coding-agent deployment policy](examples/coding-agent-egress.json) is an
+opt-in example. Select it with `--egress-policy=examples/coding-agent-egress.json`
+from the checkout and enable `dci,egress-proxy`. It gives the DCI sidecar
+exclusive access to Red Hat Jira, disables that sidecar's GitHub tools, and
+refuses Jira links and configured internal ticket keys in GitHub publications.
+The example also inspects requests to the Zuul log gateway used by the coding workflow.
+Its `github_git_only` setting reserves repository-content and ref writes for
+inspected HTTPS Git pushes. GitHub API reads and PR, review and comment operations
+remain available. The proxy accepts listed editorial REST routes and parses
+GraphQL operations before forwarding them. Other API mutations, including
+merges and workflow dispatches, are refused in this deployment.
+Set `JIRA_EMAIL` and `JIRA_API_TOKEN` in the instance's `.env` for Jira reads.
 An operator-provided JSON file in the same format is also accepted. With
 neither option the allowlist is empty. Init resolves configured hosts to public IPv4 addresses and prepares
 the embedding cache before starting the isolated stack. Rootless network
 guards own the workload network namespaces and record refused direct packets
 before the kernel rejects them. SSH-agent and host D-Bus mounts are incompatible
-with this mode. Rebuild the base image with `make sandbox-build` to install
+with this mode. The host kernel must provide `nfnetlink_queue`. On an internal
+network without DNS (such as RHEL 8 Podman CNI), pass
+`--egress-subnet=10.89.1.0/24` at init. Choose a private IPv4 subnet unused
+by host routes or other container networks. On hosts that retain old CNI bridges,
+inspect routes with `podman unshare --rootless-netns ip -4 route` and select a
+separate unused upstream range with `--egress-upstream-subnet=CIDR`. The sandbox assigns service addresses
+and maps each allowed hostname to the inspector. Rebuild the base image with `make sandbox-build` to install
 the firewall tools. The generated
 mitmproxy sidecar terminates client TLS using a private per-instance CA and
 verifies the upstream certificate. Only this sidecar has an upstream network.
 Append a profile to an allowed host, for example
 `--egress-host=api.github.com:full_dlp`. `full_dlp` scans credentials and
 internal identifiers, `secrets_only` scans credentials, and `none` permits
-the body without inspection. Unsupported inspected encodings and unresolved
-Git delta objects and multipart uploads are refused. The policy and CA key stay outside the
+the body without inspection. For inspected destinations the proxy checks the
+request path, query, regular HTTP headers, and body. It passes the values of
+`Authorization` and `X-API-Key` to the approved destination for authentication.
+File-backed GitHub comments and API requests are checked as they leave the
+sandbox. Outside an inspected sandbox, this feature provides no content check.
+Unsupported inspected encodings, HTTP trailers, and unresolved
+Git delta objects and multipart uploads are refused. For an uninspectable thin
+pack, retry with `git push --no-thin` and the same remote and ref. The proxy
+checks each complete outgoing object, including protected text inherited from its base. The policy and CA key stay outside the
 workspace. Run `ai-assist /sandbox status <name>` for the policy location;
 request decisions are in the instance's `audit/egress.jsonl`. Recreate
 the instance if upstream addresses change. Existing relay instances retain

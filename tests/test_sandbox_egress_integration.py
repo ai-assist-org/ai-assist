@@ -22,7 +22,10 @@ def test_inspected_egress(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
             pytest.skip(f"requires local image {image}")
     monkeypatch.setenv("AI_ASSIST_INSTANCES_DIR", str(tmp_path))
     name = f"egress-live-{os.getpid()}"
-    sandbox_init(name, {"egress-proxy", "litellm"})
+    rules = json.loads((Path(__file__).resolve().parents[1] / "examples/coding-agent-egress.json").read_text())
+    local_policy = tmp_path / "local-policy.json"
+    local_policy.write_text(json.dumps({**rules, "destinations": {}}))
+    sandbox_init(name, {"egress-proxy", "litellm"}, egress_policy=str(local_policy))
     instance = tmp_path / name
     (instance / ".env").write_text("LITELLM_MASTER_KEY=sk-fixture\n")
     (instance / "sandbox/.ai-assist/litellm_config.yaml").write_text(
@@ -65,7 +68,9 @@ def test_inspected_egress(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
         check=True,
         capture_output=True,
     )
-    (fixture / "extensions").write_text("subjectAltName=DNS:full.test,DNS:model.test,DNS:tracker.test\n")
+    (fixture / "extensions").write_text(
+        "subjectAltName=DNS:full.test,DNS:model.test,DNS:tracker.test,DNS:api.github.com,DNS:github.com\n"
+    )
     subprocess.run(
         [
             "openssl",
@@ -92,10 +97,24 @@ def test_inspected_egress(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
     )
     policy = {
         h: {"profile": p, "addresses": ["origin"]}
-        for h, p in [("full.test", "full_dlp"), ("model.test", "secrets_only"), ("tracker.test", "none")]
+        for h, p in [
+            ("full.test", "full_dlp"),
+            ("model.test", "secrets_only"),
+            ("tracker.test", "none"),
+            ("api.github.com", "full_dlp"),
+            ("github.com", "full_dlp"),
+        ]
     }
     policy_file = instance / "egress/policy/policy.json"
-    policy_file.write_text(json.dumps({**json.loads(policy_file.read_text()), "destinations": policy}))
+    policy_file.write_text(
+        json.dumps(
+            {
+                **rules,
+                "destinations": policy,
+                "required_sources": {"tracker.test": "litellm"},
+            }
+        )
+    )
     manifest = instance / "compose.yaml"
     stack = yaml.safe_load(manifest.read_text())
     stack["networks"]["upstream"]["internal"] = True
@@ -205,14 +224,35 @@ for sni in (None, 'other.test'):
         assert accepted() == before
         client("""
 import httpx
+with httpx.Client(timeout=3) as session:
+    for _ in range(8):
+        assert session.get('https://full.test/keepalive').text == 'full.test'
+with httpx.Client(base_url='https://api.github.com') as api:
+    assert api.get('/repos/team/project/git/refs/heads/main').status_code == 200
+    for path in ['/repos/team/project/pulls', '/repos/team/project/issues/2/comments', '/repos/team/project/pulls/2/reviews']:
+        assert api.post(path, json={'body':'fixture'}).status_code == 200
+    for path in ['/repos/team/project/git/blobs', '/repos/team/project/git/refs']:
+        result = api.post(path, json={'fixture':True})
+        assert result.status_code == 403 and 'inspected Git push' in result.text
+    assert api.post('/graphql',json={'query':'query { viewer { login } }'}).status_code == 200
+    assert api.post('/graphql',json={'query':'mutation { updateRef(input:{}) { clientMutationId } }'}).status_code == 403
 secret = b'AKIA' + b'Q'*16
 for host, body, code in [('full.test', b'CILAB-123',403), ('model.test', b'CILAB-123',200),
-                        ('model.test',secret,403), ('tracker.test',secret,200), ('full.test',b'public',200)]:
+                        ('model.test',secret,403), ('full.test',b'https://redhat.atlassian.net/browse/EXAMPLE-1',403),
+                        ('full.test',b'public',200)]:
     r=httpx.post('https://'+host+'/',content=body)
     assert r.status_code == code, r.status_code
     assert r.content == body if code == 200 else body not in r.content
 r=httpx.post('https://full.test/',headers={'Content-Encoding':'gzip'},content=b'broken')
 assert r.status_code == 403 and 'not-inspected' in r.text
+try: httpx.get('https://tracker.test/',timeout=3)
+except httpx.ProxyError as exc: assert '403' in str(exc)
+else: raise AssertionError('agent reached sidecar-only tracker')
+import ssl
+with httpx.Client(trust_env=False,verify=ssl.create_default_context(cafile='/etc/ai-assist-egress-ca.pem')) as direct:
+    try: direct.get('https://tracker.test/',timeout=3)
+    except httpx.TransportError: pass
+    else: raise AssertionError('tracker accepted direct agent TLS')
 with httpx.stream('GET', 'https://model.test/events',timeout=4) as response:
     lines=response.iter_lines()
     assert next(lines)=='data: first'
@@ -226,12 +266,12 @@ with tempfile.TemporaryDirectory() as root:
     def git(*args,check=True):
         return subprocess.run(['git',*args],check=check,capture_output=True,text=True)
     git('init');git('config','user.name','fixture');git('config','user.email','fixture@example.test')
-    git('commit','--allow-empty','-m','public');git('push','https://full.test/repo.git','HEAD:refs/heads/main')
+    git('commit','--allow-empty','-m','public');git('push','https://github.com/team/repo.git','HEAD:refs/heads/main')
     open('file','w').write('CILAB-123');git('add','file');git('commit','-m','second')
-    r=git('push','https://full.test/repo.git','HEAD:refs/heads/main',check=False)
+    r=git('push','https://github.com/team/repo.git','HEAD:refs/heads/main',check=False)
     assert r.returncode and 'internal-ticket' in r.stderr and 'CILAB-123' not in r.stderr,r.stderr
     open('file','w').write('public replacement');git('add','file');git('commit','--amend','--no-edit')
-    git('push','https://full.test/repo.git','HEAD:refs/heads/main')
+    git('push','https://github.com/team/repo.git','HEAD:refs/heads/main')
 """)
         audit = (instance / "audit/egress.jsonl").read_text()
         assert "CILAB-123" not in audit and "AKIA" not in audit
@@ -259,7 +299,40 @@ with httpx.Client() as session:
             else:
                 requests.append((record["decision"], record["rule_id"]))
         assert requests == [("allowed", None), ("refused", "internal-ticket"), ("refused", "internal-ticket")]
+        client("""
+import json, os, subprocess, tempfile
+from pathlib import Path
+env = dict(os.environ, GH_ENTERPRISE_TOKEN="ghp_" + "X"*36, GH_PROMPT_DISABLED="1")
+with tempfile.TemporaryDirectory() as root:
+    path = Path(root) / "request"
+    for option in ("--input", "-F"):
+        for allowed, text in ((True, "public Markdown"), (False, "CILAB-123")):
+            path.write_text(json.dumps({"text": text}) if option == "--input" else text)
+            args = [option, str(path) if option == "--input" else "text=@" + str(path)]
+            result = subprocess.run(["gh", "api", "--hostname", "full.test", "/render", *args],
+                                    env=env, capture_output=True, text=True, timeout=15)
+            assert (result.returncode == 0) == allowed, (result.stdout, result.stderr)
+            if allowed:
+                assert json.loads(result.stdout)["text"] == text
+            else:
+                assert "internal-ticket" in result.stdout + result.stderr
+import httpx
+for target, headers in [("/api/v3/render/CILAB-123", {}), ("/api/v3/render?q=CILAB%2D123", {}),
+                        ("/api/v3/render", {"X-Review": "CILAB-123"})]:
+    reply = httpx.get("https://full.test" + target, headers=headers)
+    assert reply.status_code == 403 and "internal-ticket" in reply.text
+""")
+        count = run("exec", "-T", "origin", "wc", "-c", "/tmp/render-count")
+        assert int(count.stdout.split()[0]) == 2
         run("up", "-d", "--no-deps", "litellm")
+        run(
+            "exec",
+            "-T",
+            "litellm",
+            "python3",
+            "-c",
+            "import httpx; r=httpx.post('https://tracker.test/',content=b'CILAB-123'); assert r.content==b'CILAB-123' and r.status_code==200",
+        )
         client("""
 import httpx, time
 url = "http://litellm:4000"

@@ -1,6 +1,7 @@
 """Tests for sandbox management module"""
 
 import json
+import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -19,11 +20,69 @@ from ai_assist.sandbox import (
     _parse_features,
     _relay_config,
     get_instances_dir,
+    handle_sandbox_command,
     sandbox_init,
     sandbox_list,
     sandbox_run,
     sandbox_service,
 )
+from ai_assist.sandbox_egress import configure_egress_subnet, write_proxy
+
+
+@pytest.mark.asyncio
+async def test_init_static_egress_from_cli(tmp_path, monkeypatch):
+    monkeypatch.setenv("AI_ASSIST_INSTANCES_DIR", str(tmp_path))
+    await handle_sandbox_command(
+        [
+            "init",
+            "static",
+            "--features=egress-proxy",
+            "--egress-subnet=10.89.1.0/24",
+            "--egress-upstream-subnet=10.89.5.0/24",
+        ]
+    )
+    compose = yaml.safe_load((tmp_path / "static/compose.yaml").read_text())
+    assert compose["networks"]["upstream"]["ipam"]["config"] == [{"subnet": "10.89.5.0/24"}]
+    with pytest.raises(ValueError, match="overlap"):
+        sandbox_init("other", {"egress-proxy"}, egress_subnet="10.89.1.0/24", egress_upstream_subnet="10.89.1.0/25")
+    assert compose["networks"]["mcp-net"]["ipam"]["config"] == [{"subnet": "10.89.1.0/24"}]
+
+
+def test_static_egress_resolves_sandbox_names_without_external_dns():
+    compose = _build_compose({"egress-proxy", "dci", "litellm"}, egress_hosts=["model.example.org"])
+    configure_egress_subnet(compose, "10.89.1.0/28", "test")
+    services = compose["services"]
+    proxy = services["egress-proxy"]
+    proxy_ip = proxy["networks"]["mcp-net"]["ipv4_address"]
+    for name in ("ai-assist", "litellm", "dci-mcp-server"):
+        owner = services[name + "-network"]
+        assert f"model.example.org:{proxy_ip}" in owner["extra_hosts"]
+        assert f"egress-proxy:{proxy_ip}" in owner["extra_hosts"]
+        assert f"{name}:" + owner["networks"]["mcp-net"]["ipv4_address"] in proxy["extra_hosts"]
+        assert "extra_hosts" not in services[name]
+        assert owner["environment"]["DNS_NAMES"] == "[]"
+        if name != "litellm":
+            assert services[name]["userns_mode"] == f"container:{owner['container_name']}"
+            assert owner["userns_mode"].startswith("keep-id")
+            assert services[name]["cap_drop"] == ["ALL"]
+    assert compose["networks"]["mcp-net"]["internal"] is True
+    with pytest.raises(ValueError):
+        configure_egress_subnet(compose, "10.89.1.0/30", "test")
+
+
+def test_proxy_ca_uses_only_instance_extensions(tmp_path, monkeypatch):
+    host_config = tmp_path / "openssl.cnf"
+    host_config.write_text(
+        "[req]\ndistinguished_name=dn\nx509_extensions=site\n[dn]\n[site]\n"
+        "basicConstraints=critical,CA:TRUE\nextendedKeyUsage=clientAuth\n"
+    )
+    monkeypatch.setenv("OPENSSL_CONF", str(host_config))
+    write_proxy(tmp_path, {}, {})
+    cert = tmp_path / "egress/public.pem"
+    details = subprocess.check_output(["openssl", "x509", "-in", str(cert), "-noout", "-text"], text=True)
+    assert "TLS Web Client Authentication" not in details
+    assert details.count("X509v3 Basic Constraints") == 1
+    assert "X509v3 Subject Key Identifier" in details
 
 
 class TestGetInstancesDir:
@@ -45,6 +104,32 @@ class TestGetInstancesDir:
 
 
 class TestBuildCompose:
+    def test_coding_agent_policy_is_opt_in(self, tmp_path, monkeypatch):
+        features = {"egress-proxy", "dci", "gh"}
+        ordinary = _build_compose(features)["services"]
+        assert ordinary["dci-mcp-server"]["environment"]["GITHUB_TOKEN"] == "${GITHUB_TOKEN:-}"
+        monkeypatch.setenv("AI_ASSIST_INSTANCES_DIR", str(tmp_path))
+        policy = Path(__file__).resolve().parents[1] / "examples/coding-agent-egress.json"
+        with (
+            patch("socket.gethostbyname_ex", return_value=("host", [], ["8.8.8.8"])),
+            patch("fastembed.TextEmbedding", side_effect=lambda model, cache_dir, threads: Path(cache_dir).mkdir()),
+        ):
+            sandbox_init("coding", features, egress_policy=str(policy))
+        path = tmp_path / "coding"
+        services = yaml.safe_load((path / "compose.yaml").read_text())["services"]
+        assert services["ai-assist"]["environment"]["GITHUB_TOKEN"] == "${GITHUB_TOKEN:-}"
+        assert services["dci-mcp-server"]["environment"]["GITHUB_TOKEN"] == ""
+        assert services["dci-mcp-server"]["environment"]["JIRA_API_TOKEN"] == "${JIRA_API_TOKEN:-}"
+        assert (
+            json.loads(policy.read_text())["agent_guidance"]
+            in yaml.safe_load((path / "sandbox/.ai-assist/identity.yaml").read_text())["assistant"]["personality"]
+        )
+        resolved = json.loads((path / "egress/policy/policy.json").read_text())
+        gateway = "gateway-cloud-softwarefactory.apps.ocp.cloud.ci.centos.org"
+        assert resolved["destinations"][gateway]["profile"] == "full_dlp"
+        assert resolved["required_sources"]["redhat.atlassian.net"] == "dci-mcp-server"
+        assert resolved["destinations"]["redhat.atlassian.net"]["profile"] == "none"
+
     @pytest.mark.parametrize("hostname", ["*.example.org", "example.org:443", "127.0.0.1"])
     def test_relay_requires_exact_hostname(self, hostname: str) -> None:
         with pytest.raises(ValueError, match="Invalid egress hostname|Invalid profile"):

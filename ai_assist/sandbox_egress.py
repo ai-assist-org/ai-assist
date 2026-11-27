@@ -1,10 +1,55 @@
 """Provision the isolated inspection service and its per-instance CA."""
 
+import ipaddress
 import json
+import os
 import shutil
 import subprocess
 import tempfile
 from pathlib import Path
+
+
+def private_bridge_subnet(subnet: str, minimum_addresses: int) -> ipaddress.IPv4Network:
+    network = ipaddress.IPv4Network(subnet)
+    private = any(
+        network.subnet_of(ipaddress.IPv4Network(block)) for block in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
+    )
+    if not private or network.num_addresses < minimum_addresses:
+        raise ValueError("Choose an unused private IPv4 subnet with space for the gateway and all sandbox services")
+    return network
+
+
+def configure_egress_subnet(compose: dict, subnet: str, instance_name: str) -> None:
+    """Set up internal service discovery on Podman bridges without DNS."""
+    services = compose["services"]
+    if "egress-proxy" not in services:
+        raise ValueError("--egress-subnet requires egress-proxy")
+    owners = {name.removesuffix("-network"): svc for name, svc in services.items() if name.endswith("-network")}
+    owners["egress-proxy"] = services["egress-proxy"]
+    network = private_bridge_subnet(subnet, len(owners) + 3)
+    compose["networks"]["mcp-net"]["ipam"] = {"config": [{"subnet": str(network)}]}
+    peers = {}
+    for index, (name, owner) in enumerate(owners.items(), start=2):
+        peers[name] = str(network[index])
+        owner["networks"]["mcp-net"]["ipv4_address"] = peers[name]
+    proxy = owners["egress-proxy"]
+    aliases = proxy["networks"]["mcp-net"]["aliases"]
+    local_entries = [f"{name}:{ip}" for name, ip in peers.items()]
+    proxy["extra_hosts"] = local_entries
+    for name, owner in owners.items():
+        if name != "egress-proxy":
+            owner["extra_hosts"] = local_entries + [f"{host}:{peers['egress-proxy']}" for host in aliases]
+            owner["environment"]["DNS_NAMES"] = "[]"
+            workload = services[name]
+            if "userns_mode" in workload:
+                # runc needs the owner of the network namespace for sysfs
+                # and exec (including health checks). Preserve host UID mapping.
+                owner["container_name"] = f"{instance_name}_{name}-network_1"
+                owner["userns_mode"] = workload["userns_mode"]
+                user = "1001:1001" if name == "dci-mcp-server" else f"{os.getuid()}:{os.getgid()}"
+                owner["user"] = workload["user"] = user
+                owner["tmpfs"] = ["/run:rw,nosuid,nodev,mode=1777"]
+                workload["userns_mode"] = f"container:{owner['container_name']}"
 
 
 def proxy_service(workloads: dict, hosts: list[str]) -> dict:
@@ -88,6 +133,13 @@ def write_proxy(instance: Path, policy: dict, rules: dict) -> None:
     with tempfile.TemporaryDirectory(dir=private) as staging:
         key = Path(staging) / "key.pem"
         cert = base / "public.pem"
+        # Older OpenSSL versions append -addext to site defaults, duplicating
+        # basicConstraints and producing a CA that strict clients reject.
+        config_file = Path(staging) / "openssl.cnf"
+        config_file.write_text(
+            "[req]\ndistinguished_name=dn\nx509_extensions=ca\n[dn]\n[ca]\n"
+            "basicConstraints=critical,CA:TRUE\nkeyUsage=critical,keyCertSign,cRLSign\nsubjectKeyIdentifier=hash\n"
+        )
         subprocess.run(
             [
                 "openssl",
@@ -100,10 +152,8 @@ def write_proxy(instance: Path, policy: dict, rules: dict) -> None:
                 "365",
                 "-subj",
                 "/CN=ai-assist sandbox egress CA",
-                "-addext",
-                "basicConstraints=critical,CA:TRUE",
-                "-addext",
-                "keyUsage=critical,keyCertSign,cRLSign",
+                "-config",
+                str(config_file),
                 "-keyout",
                 str(key),
                 "-out",
@@ -117,5 +167,17 @@ def write_proxy(instance: Path, policy: dict, rules: dict) -> None:
         cert.chmod(0o644)
     for module in ("audit_writer.py", "egress_guard.py"):
         shutil.copyfile(Path(__file__).with_name(module), config / module)
+    if rules.get("github_git_only"):
+        from importlib.metadata import distribution
+
+        import graphql
+
+        shutil.copyfile(Path(__file__).with_name("github_egress.py"), config / "github_egress.py")
+        shutil.copytree(Path(graphql.__file__).parent, config / "graphql", ignore=shutil.ignore_patterns("__pycache__"))
+        package = distribution("graphql-core")
+        license_text = package.read_text("licenses/LICENSE") or package.read_text("LICENSE")
+        if not license_text:
+            raise ValueError("Missing graphql-core license")
+        (config / "graphql/LICENSE").write_text(license_text)
     shutil.copyfile(Path(__file__).parent / "sandbox_templates/egress_proxy.py.in", config / "proxy.py")
     (config / "policy.json").write_text(json.dumps({**rules, "destinations": policy}, indent=2))

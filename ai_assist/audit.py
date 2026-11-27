@@ -185,7 +185,7 @@ class AuditLogger:
             result_summary += f"... [truncated, {len(result)} chars total]"
 
         result_summary = self._sanitize_value(result_summary)
-        sanitized_args = {} if authorization["rule"] == "egress-policy" else self._sanitize_arguments(arguments)
+        sanitized_args = self._sanitize_arguments(arguments)
 
         entry = {
             "correlation_id": correlation_id,

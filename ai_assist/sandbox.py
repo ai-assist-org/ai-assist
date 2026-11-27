@@ -18,7 +18,7 @@ from dotenv import dotenv_values
 
 from .egress_guard import PROFILES
 from .output import console_print
-from .sandbox_egress import proxy_service, write_proxy
+from .sandbox_egress import configure_egress_subnet, private_bridge_subnet, proxy_service, write_proxy
 
 logger = logging.getLogger(__name__)
 
@@ -384,6 +384,9 @@ def sandbox_init(
     timezone: str | None = _UNSET,
     egress_hosts: list[str] | None = None,
     egress_policy: str | None = None,
+    *,
+    egress_subnet: str | None = None,
+    egress_upstream_subnet: str | None = None,
 ) -> None:
     """Scaffold a new sandbox instance directory."""
     if timezone is _UNSET:
@@ -415,6 +418,24 @@ def sandbox_init(
     elif egress_policy:
         raise ValueError("--egress-policy requires egress-proxy")
     compose = _build_compose(features, image=image, timezone=timezone, egress_hosts=egress_hosts)
+    dci_github_tools = rules.get("dci_github_tools", True)
+    if not isinstance(dci_github_tools, bool):
+        raise ValueError("dci_github_tools must be a boolean")
+    if "dci" in features and not dci_github_tools:
+        # The DCI server registers its GitHub tools only when this token is set.
+        compose["services"]["dci-mcp-server"]["environment"]["GITHUB_TOKEN"] = ""
+    guidance = rules.get("agent_guidance", "")
+    if not isinstance(guidance, str):
+        raise ValueError("agent_guidance must be a string")
+    if egress_subnet is not None:
+        configure_egress_subnet(compose, egress_subnet, name)
+    if egress_upstream_subnet is not None:
+        if "egress-proxy" not in features:
+            raise ValueError("--egress-upstream-subnet requires egress-proxy")
+        upstream = private_bridge_subnet(egress_upstream_subnet, 4)
+        if egress_subnet and upstream.overlaps(ipaddress.IPv4Network(egress_subnet)):
+            raise ValueError("The internal and upstream egress subnets overlap")
+        compose["networks"]["upstream"]["ipam"] = {"config": [{"subnet": str(upstream)}]}
     relay = _relay_config(egress_hosts) if egress_hosts else None
     sandbox = instance / "sandbox"
     if relay:
@@ -437,6 +458,13 @@ def sandbox_init(
         src = TEMPLATES_DIR / template_name
         dst = sandbox / dest_rel
         shutil.copy2(src, dst)
+
+    if guidance:
+        path = sandbox / ".ai-assist/identity.yaml"
+        identity = yaml.safe_load(path.read_text())
+        personality = identity["assistant"]["personality"].rstrip()
+        identity["assistant"]["personality"] = f"{personality}\n{guidance}"
+        path.write_text(yaml.safe_dump(identity, sort_keys=False))
 
     with open(instance / "compose.yaml", "w") as f:
         yaml.dump(compose, f, default_flow_style=False, sort_keys=False)
@@ -806,6 +834,8 @@ async def handle_sandbox_command(args: list[str]) -> None:
         timezone: str | None = _UNSET
         egress_hosts = []
         egress_policy = None
+        egress_subnet = None
+        egress_upstream_subnet = None
         for arg in args[2:]:
             if arg.startswith("--features="):
                 feature_str = arg.split("=", 1)[1]
@@ -817,8 +847,12 @@ async def handle_sandbox_command(args: list[str]) -> None:
                 egress_hosts.append(arg.split("=", 1)[1].lower())
             elif arg.startswith("--egress-policy="):
                 egress_policy = arg.split("=", 1)[1]
+            elif arg.startswith("--egress-subnet="):
+                egress_subnet = arg.split("=", 1)[1]
+            elif arg.startswith("--egress-upstream-subnet="):
+                egress_upstream_subnet = arg.split("=", 1)[1]
         features = _parse_features(feature_str)
-        if egress_hosts or egress_policy:
+        if egress_hosts or egress_policy or egress_subnet is not None or egress_upstream_subnet is not None:
             sandbox_init(
                 name,
                 features,
@@ -826,6 +860,8 @@ async def handle_sandbox_command(args: list[str]) -> None:
                 timezone=timezone,
                 egress_hosts=sorted(set(egress_hosts)),
                 egress_policy=egress_policy,
+                egress_subnet=egress_subnet,
+                egress_upstream_subnet=egress_upstream_subnet,
             )
         else:
             sandbox_init(name, features, image=image, timezone=timezone)
@@ -928,6 +964,8 @@ def _print_usage():
     console_print(f"    --features=<list>  Features to enable (default: {','.join(sorted(DEFAULT_FEATURES))})")
     console_print("    --egress-host=<hostname>[:profile]  Allow inspected HTTPS (repeatable with egress-proxy)")
     console_print("    --egress-policy=default|PATH         Use the shipped or an operator-defined JSON policy")
+    console_print("    --egress-upstream-subnet=CIDR        Select the proxy upstream bridge subnet")
+    console_print("    --egress-subnet=CIDR                 Use fixed internal addresses on a bridge without DNS")
     console_print("  status <name>                                 Show the instance inspection policy")
     console_print(
         "    --image=NAME                                 Container image (default: ai-assist-sandbox:latest)"
