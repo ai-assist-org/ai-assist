@@ -1,6 +1,7 @@
 """Tests for sandbox management module"""
 
 import json
+import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -24,6 +25,22 @@ from ai_assist.sandbox import (
     sandbox_run,
     sandbox_service,
 )
+from ai_assist.sandbox_egress import write_proxy
+
+
+def test_proxy_ca_uses_only_instance_extensions(tmp_path, monkeypatch):
+    host_config = tmp_path / "openssl.cnf"
+    host_config.write_text(
+        "[req]\ndistinguished_name=dn\nx509_extensions=site\n[dn]\n[site]\n"
+        "basicConstraints=critical,CA:TRUE\nextendedKeyUsage=clientAuth\n"
+    )
+    monkeypatch.setenv("OPENSSL_CONF", str(host_config))
+    write_proxy(tmp_path, {}, {})
+    cert = tmp_path / "egress/public.pem"
+    details = subprocess.check_output(["openssl", "x509", "-in", str(cert), "-noout", "-text"], text=True)
+    assert "TLS Web Client Authentication" not in details
+    assert details.count("X509v3 Basic Constraints") == 1
+    assert "X509v3 Subject Key Identifier" in details
 
 
 class TestGetInstancesDir:

@@ -88,6 +88,13 @@ def write_proxy(instance: Path, policy: dict, rules: dict) -> None:
     with tempfile.TemporaryDirectory(dir=private) as staging:
         key = Path(staging) / "key.pem"
         cert = base / "public.pem"
+        # Older OpenSSL versions append -addext to site defaults, duplicating
+        # basicConstraints and producing a CA that strict clients reject.
+        config_file = Path(staging) / "openssl.cnf"
+        config_file.write_text(
+            "[req]\ndistinguished_name=dn\nx509_extensions=ca\n[dn]\n[ca]\n"
+            "basicConstraints=critical,CA:TRUE\nkeyUsage=critical,keyCertSign,cRLSign\nsubjectKeyIdentifier=hash\n"
+        )
         subprocess.run(
             [
                 "openssl",
@@ -100,10 +107,8 @@ def write_proxy(instance: Path, policy: dict, rules: dict) -> None:
                 "365",
                 "-subj",
                 "/CN=ai-assist sandbox egress CA",
-                "-addext",
-                "basicConstraints=critical,CA:TRUE",
-                "-addext",
-                "keyUsage=critical,keyCertSign,cRLSign",
+                "-config",
+                str(config_file),
                 "-keyout",
                 str(key),
                 "-out",

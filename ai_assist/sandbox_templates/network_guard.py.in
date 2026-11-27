@@ -38,7 +38,13 @@ class Queue:
             function = getattr(self.lib, name)
             function.restype, function.argtypes = result, args
         self.handle = checked(self.lib.nfq_open())
-        self.queue = checked(self.lib.nfq_create_queue(self.handle, number, self.callback, None))
+        try:
+            self.queue = checked(self.lib.nfq_create_queue(self.handle, number, self.callback, None))
+        except OSError as exc:
+            raise RuntimeError(
+                f"Cannot open NFQUEUE {number}. Check that the host kernel provides nfnetlink_queue "
+                "and the rootless network guard has NET_ADMIN in its network namespace."
+            ) from exc
         checked(self.lib.nfq_set_mode(self.queue, 2, 1024))
         self.sock = socket.socket(fileno=checked(self.lib.nfq_fd(self.handle)))
         self.source = os.environ["WORKLOAD"]
