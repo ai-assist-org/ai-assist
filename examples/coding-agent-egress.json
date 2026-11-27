@@ -32,5 +32,6 @@
     "internal-marker": "CONFIDENTIAL_INTERNAL_PROJECT|INTERNAL_CUSTOMER_DUMP"
   },
   "dci_github_tools": false,
-  "agent_guidance": "Use internal Jira tickets for research. Describe the technical change in your own words and omit internal ticket keys and links from code, documentation, commits, pull requests, and review comments."
+  "github_git_only": true,
+  "agent_guidance": "Use internal Jira tickets for research. Describe the technical change in your own words and omit internal ticket keys and links from code, documentation, commits, pull requests, and review comments. After a publication refusal, correct the rejected content or report it as blocked. Verify the remote head before reporting a change as published."
 }

@@ -20,6 +20,16 @@ class Guard:
     def __init__(self):
         config = json.loads(Path("/policy/policy.json").read_text())
         self.policy = config["destinations"]
+        self.github_policy = None
+        git_only = config.get("github_git_only", False)
+        if not isinstance(git_only, bool):
+            raise ValueError("github_git_only must be a boolean")
+        if git_only:
+            from github_egress import github_request_allowed
+
+            if any(self.policy[h]["profile"] != "full_dlp" for h in ("github.com", "api.github.com") if h in self.policy):
+                raise ValueError("Git-only GitHub publication requires full_dlp")
+            self.github_policy = github_request_allowed
         self.required_sources = config.get("required_sources", {})
         if not isinstance(self.required_sources, dict) or any(
             source not in ("dci-mcp-server", "litellm") for source in self.required_sources.values()
@@ -72,6 +82,8 @@ class Guard:
 
     def refuse(self, flow, rule):
         message = f"Egress policy {rule}: remove restricted content or contact the sandbox operator."
+        if rule == "github-git-only":
+            message = "Repository writes require an inspected Git push. GitHub reads, pull requests, comments and reviews are available."
         flow.metadata["denied"] = True
         if flow.request.path.endswith("/git-receive-pack"):
             report = git_rejection(rule, flow.request.raw_content or b"")
@@ -162,6 +174,9 @@ class Guard:
                 rule = inspect_body(
                     profile, req.raw_content or b"", req.headers.get("content-encoding", ""), git_push, media_type
                 )
+                if not rule and self.github_policy and req.host in ("github.com", "api.github.com"):
+                    if not self.github_policy(req.host, req.method, req.path, req.headers.fields, media_type, req.content or b""):
+                        rule = "github-git-only"
             if rule:
                 self.refuse(flow, rule)
             else:

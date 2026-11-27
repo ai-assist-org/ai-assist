@@ -167,5 +167,17 @@ def write_proxy(instance: Path, policy: dict, rules: dict) -> None:
         cert.chmod(0o644)
     for module in ("audit_writer.py", "egress_guard.py"):
         shutil.copyfile(Path(__file__).with_name(module), config / module)
+    if rules.get("github_git_only"):
+        from importlib.metadata import distribution
+
+        import graphql
+
+        shutil.copyfile(Path(__file__).with_name("github_egress.py"), config / "github_egress.py")
+        shutil.copytree(Path(graphql.__file__).parent, config / "graphql", ignore=shutil.ignore_patterns("__pycache__"))
+        package = distribution("graphql-core")
+        license_text = package.read_text("licenses/LICENSE") or package.read_text("LICENSE")
+        if not license_text:
+            raise ValueError("Missing graphql-core license")
+        (config / "graphql/LICENSE").write_text(license_text)
     shutil.copyfile(Path(__file__).parent / "sandbox_templates/egress_proxy.py.in", config / "proxy.py")
     (config / "policy.json").write_text(json.dumps({**rules, "destinations": policy}, indent=2))

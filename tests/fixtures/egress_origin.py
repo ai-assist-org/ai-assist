@@ -30,12 +30,12 @@ class Origin(BaseHTTPRequestHandler):
         if path.startswith("/api/v3/render"):
             with Path("/tmp/render-count").open("ab") as count:
                 count.write(b".")
-        if path.startswith("/repo.git/"):
+        if path.startswith("/team/repo.git/"):
             env = dict(
                 os.environ,
                 GIT_PROJECT_ROOT="/tmp",
                 GIT_HTTP_EXPORT_ALL="1",
-                PATH_INFO=path,
+                PATH_INFO=path.removeprefix("/team"),
                 REQUEST_METHOD=self.command,
                 QUERY_STRING=query,
                 CONTENT_TYPE=self.headers.get("Content-Type", ""),

@@ -223,7 +223,13 @@ Deployment policies can restrict a destination to a sidecar using
 the transport peer address against the service address. An optional
 `dci_github_tools: false` clears only the DCI container's GitHub token during
 provisioning, disabling upstream tool registration. Optional `agent_guidance`
-is appended to the instance identity at init.
+is appended to the instance identity at init. An operator can set
+`github_git_only: true` to reserve repository changes for inspected HTTPS Git
+pushes. The proxy checks the HTTP method and route on both GitHub hosts and
+uses graphql-core to parse GitHub GraphQL operations. Queries and explicitly
+supported PR, review and comment mutations can pass the content checks.
+Other repository writes are refused before connecting upstream. The generated
+policy directory includes the parser and its license.
 Allowlists, CA private keys and egress audit records live outside the workspace.
 Each workload joins the namespace of a separate rootless network guard.
 Only that guard has NET_ADMIN there. Its nftables queues inspect outbound

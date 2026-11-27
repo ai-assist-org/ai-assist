@@ -374,7 +374,7 @@ ai-assist
 \begin{itemize}\scriptsize
   \item 35,600+ lines of production code
   \item 3,450+ tests across 159 test files
-  \item 17 core dependencies
+  \item 18 core dependencies
   \item Pre-commit hooks: black, ruff, mypy, bandit, pylint similarities, pytest, eval replay, portability, action pins, markdown links
   \item Comprehensive user documentation: \href{https://ai-assist-org.github.io/ai-assist/}{\texttt{ai-assist-org.github.io/ai-assist}}
 \end{itemize}
@@ -1557,7 +1557,7 @@ ai-assist /sandbox init offline \
 \begin{itemize}
   \item A rootless network guard logs and rejects direct outbound attempts.
     The agent runs with an empty capability bounding set.
-  \item Select a deployment policy: destinations, permitted sources, and content rules.
+  \item The coding-agent policy inspects Git pushes and permits PR reviews through the API.
   \item On bridges without DNS, \texttt{--egress-subnet} assigns internal addresses.
 \end{itemize}
 \end{frame}

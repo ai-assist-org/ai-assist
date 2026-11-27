@@ -648,6 +648,11 @@ from the checkout and enable `dci,egress-proxy`. It gives the DCI sidecar
 exclusive access to Red Hat Jira, disables that sidecar's GitHub tools, and
 refuses Jira links and configured internal ticket keys in GitHub publications.
 The example also inspects requests to the Zuul log gateway used by the coding workflow.
+Its `github_git_only` setting reserves repository-content and ref writes for
+inspected HTTPS Git pushes. GitHub API reads and PR, review and comment operations
+remain available. The proxy accepts listed editorial REST routes and parses
+GraphQL operations before forwarding them. Other API mutations, including
+merges and workflow dispatches, are refused in this deployment.
 Set `JIRA_EMAIL` and `JIRA_API_TOKEN` in the instance's `.env` for Jira reads.
 An operator-provided JSON file in the same format is also accepted. With
 neither option the allowlist is empty. Init resolves configured hosts to public IPv4 addresses and prepares
